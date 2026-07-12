@@ -1,5 +1,0 @@
-func value() int {
-    let result = 1
-}
-
-func main() void {}

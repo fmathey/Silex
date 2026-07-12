@@ -1,9 +1,0 @@
-struct Position {
-    x:int
-    y:int
-}
-
-func main() void {
-    let position = Position { x:"left", y:20 }
-    print(position.x)
-}
