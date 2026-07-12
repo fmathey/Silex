@@ -9,13 +9,72 @@ pub fn generate(allocator: Allocator, program: Semantic.Program) ![]u8 {
     var output: std.ArrayList(u8) = .empty;
     try output.appendSlice(allocator,
         \\#include <cstdint>
+        \\#include <cstdlib>
         \\#include <iostream>
+        \\#include <limits>
         \\#include <string>
+        \\#include <type_traits>
         \\
     );
     try output.appendSlice(allocator,
         \\
         \\namespace SilexGenerated {
+        \\
+        \\[[noreturn]] inline void integerRuntimeError(const char* message) {
+        \\    std::cerr << "silex: runtime error: " << message << '\n';
+        \\    std::abort();
+        \\}
+        \\
+        \\template <typename T> T checkedAdd(T left, T right) {
+        \\    if constexpr (std::is_unsigned_v<T>) {
+        \\        if (left > std::numeric_limits<T>::max() - right) integerRuntimeError("integer overflow in addition");
+        \\    } else if ((right > 0 && left > std::numeric_limits<T>::max() - right) ||
+        \\               (right < 0 && left < std::numeric_limits<T>::min() - right)) {
+        \\        integerRuntimeError("integer overflow in addition");
+        \\    }
+        \\    return static_cast<T>(left + right);
+        \\}
+        \\
+        \\template <typename T> T checkedSubtract(T left, T right) {
+        \\    if constexpr (std::is_unsigned_v<T>) {
+        \\        if (left < right) integerRuntimeError("integer overflow in subtraction");
+        \\    } else if ((right < 0 && left > std::numeric_limits<T>::max() + right) ||
+        \\               (right > 0 && left < std::numeric_limits<T>::min() + right)) {
+        \\        integerRuntimeError("integer overflow in subtraction");
+        \\    }
+        \\    return static_cast<T>(left - right);
+        \\}
+        \\
+        \\template <typename T> T checkedMultiply(T left, T right) {
+        \\    if (left == 0 || right == 0) return T{0};
+        \\    if constexpr (std::is_unsigned_v<T>) {
+        \\        if (left > std::numeric_limits<T>::max() / right) integerRuntimeError("integer overflow in multiplication");
+        \\    } else {
+        \\        if ((left == T{-1} && right == std::numeric_limits<T>::min()) ||
+        \\            (right == T{-1} && left == std::numeric_limits<T>::min())) integerRuntimeError("integer overflow in multiplication");
+        \\        if (left > 0) {
+        \\            if ((right > 0 && left > std::numeric_limits<T>::max() / right) ||
+        \\                (right < 0 && right < std::numeric_limits<T>::min() / left)) integerRuntimeError("integer overflow in multiplication");
+        \\        } else if ((right > 0 && left < std::numeric_limits<T>::min() / right) ||
+        \\                   (right < 0 && left < std::numeric_limits<T>::max() / right)) integerRuntimeError("integer overflow in multiplication");
+        \\    }
+        \\    return static_cast<T>(left * right);
+        \\}
+        \\
+        \\template <typename T> T checkedDivide(T left, T right) {
+        \\    if (right == 0) integerRuntimeError("division by zero");
+        \\    if constexpr (std::is_signed_v<T>) {
+        \\        if (left == std::numeric_limits<T>::min() && right == T{-1}) integerRuntimeError("integer overflow in division");
+        \\    }
+        \\    return static_cast<T>(left / right);
+        \\}
+        \\
+        \\template <typename T> T checkedNegate(T value) {
+        \\    if constexpr (std::is_unsigned_v<T>) {
+        \\        if (value != 0) integerRuntimeError("integer overflow in negation");
+        \\    } else if (value == std::numeric_limits<T>::min()) integerRuntimeError("integer overflow in negation");
+        \\    return static_cast<T>(-value);
+        \\}
         \\
         \\// -----------------------------------------------------------------------------
         \\
@@ -149,7 +208,9 @@ fn generateStatement(
             try indent(allocator, output, indentation);
             try output.appendSlice(allocator, "std::cout << ");
             if (argument.type == .bool) try output.append(allocator, '(');
+            if (argument.type == .int8 or argument.type == .uint8) try output.appendSlice(allocator, "static_cast<int>(");
             try generateExpression(allocator, output, argument);
+            if (argument.type == .int8 or argument.type == .uint8) try output.append(allocator, ')');
             if (argument.type == .bool) try output.appendSlice(allocator, " ? \"true\" : \"false\")");
             try output.appendSlice(allocator, " << '\\n';\n");
         },
@@ -165,8 +226,21 @@ fn generateStatement(
         },
         .assignment => |assignment| {
             try indent(allocator, output, indentation);
+            const checked_integer = isInteger(assignment.target.type) and assignment.operator != .assign;
             try generateExpression(allocator, output, assignment.target);
-            switch (assignment.operator) {
+            if (checked_integer) {
+                try output.appendSlice(allocator, " = ");
+                try output.appendSlice(allocator, checkedAssignmentFunction(assignment.operator));
+                try output.append(allocator, '(');
+                try generateExpression(allocator, output, assignment.target);
+                try output.appendSlice(allocator, ", ");
+                if (assignment.value) |value| {
+                    try generateExpression(allocator, output, value);
+                } else {
+                    try generateIntegerOne(allocator, output, assignment.target.type);
+                }
+                try output.append(allocator, ')');
+            } else switch (assignment.operator) {
                 .assign, .add, .subtract, .multiply, .divide => {
                     try output.appendSlice(allocator, assignmentOperatorText(assignment.operator));
                     try generateExpression(allocator, output, assignment.value.?);
@@ -220,8 +294,17 @@ fn generateStatement(
 fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expression: *const Semantic.Expression) !void {
     switch (expression.value) {
         .integer => |value| {
-            const literal = try std.fmt.allocPrint(allocator, "std::int64_t{{{d}}}", .{value});
+            const literal = if (isUnsignedInteger(expression.type))
+                try std.fmt.allocPrint(allocator, "{s}{{{d}ULL}}", .{ cppType(expression.type), value })
+            else
+                try std.fmt.allocPrint(allocator, "{s}{{{d}}}", .{ cppType(expression.type), value });
             try output.appendSlice(allocator, literal);
+        },
+        .floating => |lexeme| {
+            try output.appendSlice(allocator, cppType(expression.type));
+            try output.append(allocator, '{');
+            try output.appendSlice(allocator, lexeme);
+            try output.appendSlice(allocator, if (expression.type == .float) "F}" else "}");
         },
         .boolean => |value| try output.appendSlice(allocator, if (value) "true" else "false"),
         .string => |value| {
@@ -270,15 +353,47 @@ fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expressi
             try output.appendSlice(allocator, member.generated_name);
         },
         .unary => |unary| {
-            try output.appendSlice(allocator, "(!");
+            if (unary.operator == .numeric_negate and isInteger(expression.type) and unary.operand.value == .integer) {
+                const magnitude = unary.operand.value.integer;
+                const minimum_magnitude = integerMinimumMagnitude(expression.type);
+                if (magnitude == minimum_magnitude) {
+                    try output.appendSlice(allocator, "std::numeric_limits<");
+                    try output.appendSlice(allocator, cppType(expression.type));
+                    try output.appendSlice(allocator, ">::min()");
+                } else {
+                    const literal = try std.fmt.allocPrint(allocator, "{s}{{-{d}}}", .{ cppType(expression.type), magnitude });
+                    try output.appendSlice(allocator, literal);
+                }
+                return;
+            } else if (unary.operator == .numeric_negate and isInteger(expression.type)) {
+                try output.appendSlice(allocator, "checkedNegate(");
+            } else {
+                try output.appendSlice(allocator, if (unary.operator == .logical_not) "(!" else "(-");
+            }
             try generateExpression(allocator, output, unary.operand);
             try output.append(allocator, ')');
         },
         .binary => |binary| {
-            try output.append(allocator, '(');
-            try generateExpression(allocator, output, binary.left);
-            try output.appendSlice(allocator, operatorText(binary.operator));
-            try generateExpression(allocator, output, binary.right);
+            if (isInteger(expression.type) and isArithmetic(binary.operator)) {
+                try output.appendSlice(allocator, checkedBinaryFunction(binary.operator));
+                try output.append(allocator, '(');
+                try generateExpression(allocator, output, binary.left);
+                try output.appendSlice(allocator, ", ");
+                try generateExpression(allocator, output, binary.right);
+                try output.append(allocator, ')');
+            } else {
+                try output.append(allocator, '(');
+                try generateExpression(allocator, output, binary.left);
+                try output.appendSlice(allocator, operatorText(binary.operator));
+                try generateExpression(allocator, output, binary.right);
+                try output.append(allocator, ')');
+            }
+        },
+        .conversion => |conversion| {
+            try output.appendSlice(allocator, "static_cast<");
+            try output.appendSlice(allocator, cppType(conversion.target_type));
+            try output.appendSlice(allocator, ">(");
+            try generateExpression(allocator, output, conversion.operand);
             try output.append(allocator, ')');
         },
     }
@@ -293,9 +408,74 @@ fn cppType(type_name: Semantic.Type) []const u8 {
     return switch (type_name) {
         .void => "void",
         .int => "std::int64_t",
+        .int8 => "std::int8_t",
+        .int16 => "std::int16_t",
+        .int32 => "std::int32_t",
+        .uint8 => "std::uint8_t",
+        .uint16 => "std::uint16_t",
+        .uint32 => "std::uint32_t",
+        .uint64 => "std::uint64_t",
+        .float => "float",
+        .float64 => "double",
         .bool => "bool",
-        .string => "std::string",
+        .str => "std::string",
         .structure => |structure_type| structure_type.generated_name,
+    };
+}
+
+fn isInteger(type_name: Semantic.Type) bool {
+    return switch (type_name) {
+        .int, .int8, .int16, .int32, .uint8, .uint16, .uint32, .uint64 => true,
+        else => false,
+    };
+}
+
+fn isUnsignedInteger(type_name: Semantic.Type) bool {
+    return switch (type_name) {
+        .uint8, .uint16, .uint32, .uint64 => true,
+        else => false,
+    };
+}
+
+fn isArithmetic(operator: Ast.BinaryOperator) bool {
+    return switch (operator) {
+        .add, .subtract, .multiply, .divide => true,
+        else => false,
+    };
+}
+
+fn checkedBinaryFunction(operator: Ast.BinaryOperator) []const u8 {
+    return switch (operator) {
+        .add => "checkedAdd",
+        .subtract => "checkedSubtract",
+        .multiply => "checkedMultiply",
+        .divide => "checkedDivide",
+        else => unreachable,
+    };
+}
+
+fn checkedAssignmentFunction(operator: Ast.AssignmentOperator) []const u8 {
+    return switch (operator) {
+        .add, .increment => "checkedAdd",
+        .subtract, .decrement => "checkedSubtract",
+        .multiply => "checkedMultiply",
+        .divide => "checkedDivide",
+        .assign => unreachable,
+    };
+}
+
+fn generateIntegerOne(allocator: Allocator, output: *std.ArrayList(u8), type_name: Semantic.Type) !void {
+    try output.appendSlice(allocator, cppType(type_name));
+    try output.appendSlice(allocator, "{1}");
+}
+
+fn integerMinimumMagnitude(type_name: Semantic.Type) u64 {
+    return switch (type_name) {
+        .int8 => 1 << 7,
+        .int16 => 1 << 15,
+        .int32 => 1 << 31,
+        .int => 1 << 63,
+        else => 0,
     };
 }
 
@@ -360,7 +540,7 @@ test "generate while loop" {
     const cpp = try generate(allocator, try analyzer.analyze(try parser.parse()));
 
     try std.testing.expect(std.mem.indexOf(u8, cpp, "while ((silexValue0 > std::int64_t{0})) {") != null);
-    try std.testing.expect(std.mem.indexOf(u8, cpp, "silexValue0 = (silexValue0 - std::int64_t{1});") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "silexValue0 = checkedSubtract(silexValue0, std::int64_t{1});") != null);
 }
 
 test "generate function declarations calls and returns" {
@@ -376,7 +556,7 @@ test "generate function declarations calls and returns" {
     var analyzer = Semantic.Analyzer.init(allocator);
     const cpp = try generate(allocator, try analyzer.analyze(try parser.parse()));
     try std.testing.expect(std.mem.indexOf(u8, cpp, "std::int64_t silexFunction1(std::int64_t);") != null);
-    try std.testing.expect(std.mem.indexOf(u8, cpp, "return (silexValue0 * std::int64_t{2});") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "return checkedMultiply(silexValue0, std::int64_t{2});") != null);
     try std.testing.expect(std.mem.indexOf(u8, cpp, "silexFunction1(std::int64_t{5})") != null);
 }
 

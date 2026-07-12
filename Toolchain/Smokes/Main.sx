@@ -37,6 +37,6 @@ func isPositive(value:int) bool {
     return value > 0
 }
 
-func announce(message:string) void {
+func announce(message:str) void {
     print(message)
 }

@@ -14,10 +14,10 @@ arithmétiques entières :
 
 ```sx
 struct Position {
-    x:int
-    y:int = 10
+    x:float
+    y:float = 10.0
 
-    func multiplyX(factor:int) void {
+    func multiplyX(factor:float) void {
         self.x *= factor
     }
 }
@@ -59,10 +59,19 @@ returnType`. Les fonctions utilisateur peuvent être appelées avant leur
 définition.
 
 Une annotation sans initialisateur utilise une valeur déterministe : `0` pour
-`int`, `false` pour `bool`, `""` pour `string`, et les valeurs par défaut de
+les entiers, `0.0` pour les flottants, `false` pour `bool`, `""` pour `str`, et les valeurs par défaut de
 chaque champ pour une `struct`. Les champs peuvent déclarer leur propre défaut
 avec `field:type = value`. Les affectations `+=`, `-=`, `*=`, `/=` ainsi que les
-instructions postfixées `++` et `--` sont disponibles pour les entiers mutables.
+instructions postfixées `++` et `--` sont disponibles pour les valeurs
+numériques mutables.
+
+Les familles numériques sont `int8` à `int64`, `uint8` à `uint64` et
+`float32`/`float64`. `int` désigne `int64`, `uint` désigne `uint64` et `float`
+désigne `float32`. Les
+élargissements compatibles sont implicites, mais les mélanges signé/non signé
+et les conversions flottant vers entier sont refusés. Les opérations entières
+arrêtent le programme sur débordement au lieu de boucler ou de saturer
+silencieusement.
 
 Les instructions se terminent naturellement à la fin de leur ligne ou devant
 `}`. Le point-virgule reste disponible pour placer plusieurs instructions sur

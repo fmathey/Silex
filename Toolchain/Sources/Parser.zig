@@ -106,8 +106,20 @@ pub const Parser = struct {
         const result: Ast.ReturnType = switch (self.current.tag) {
             .keyword_void => .void,
             .keyword_int => .int,
+            .keyword_int8 => .int8,
+            .keyword_int16 => .int16,
+            .keyword_int32 => .int32,
+            .keyword_int64 => .int64,
+            .keyword_uint => .uint,
+            .keyword_uint8 => .uint8,
+            .keyword_uint16 => .uint16,
+            .keyword_uint32 => .uint32,
+            .keyword_uint64 => .uint64,
+            .keyword_float => .float,
+            .keyword_float32 => .float32,
+            .keyword_float64 => .float64,
             .keyword_bool => .bool,
-            .keyword_string => .string,
+            .keyword_str => .str,
             .identifier => .{ .structure = self.current.lexeme },
             else => return self.fail("expected function return type"),
         };
@@ -201,8 +213,20 @@ pub const Parser = struct {
     fn parseTypeName(self: *Parser) ParseError!Ast.TypeName {
         const type_name: Ast.TypeName = switch (self.current.tag) {
             .keyword_int => .int,
+            .keyword_int8 => .int8,
+            .keyword_int16 => .int16,
+            .keyword_int32 => .int32,
+            .keyword_int64 => .int64,
+            .keyword_uint => .uint,
+            .keyword_uint8 => .uint8,
+            .keyword_uint16 => .uint16,
+            .keyword_uint32 => .uint32,
+            .keyword_uint64 => .uint64,
+            .keyword_float => .float,
+            .keyword_float32 => .float32,
+            .keyword_float64 => .float64,
             .keyword_bool => .bool,
-            .keyword_string => .string,
+            .keyword_str => .str,
             .identifier => .{ .structure = self.current.lexeme },
             else => return self.fail("expected type name after ':'"),
         };
@@ -354,7 +378,7 @@ pub const Parser = struct {
     }
 
     fn parseUnary(self: *Parser, allow_line_breaks: bool) ParseError!*Ast.Expression {
-        if (self.current.tag != .bang) return self.parsePrimary();
+        if (self.current.tag != .bang and self.current.tag != .minus) return self.parsePrimary();
 
         const operator_token = self.current;
         try self.advance();
@@ -362,7 +386,7 @@ pub const Parser = struct {
         return self.newExpression(.{
             .position = operator_token.position,
             .value = .{ .unary = .{
-                .operator = .logical_not,
+                .operator = if (operator_token.tag == .bang) .logical_not else .numeric_negate,
                 .operator_position = operator_token.position,
                 .operand = operand,
             } },
@@ -375,6 +399,10 @@ pub const Parser = struct {
             .integer => {
                 try self.advance();
                 return self.newExpression(.{ .position = token.position, .value = .{ .integer = token.lexeme } });
+            },
+            .floating => {
+                try self.advance();
+                return self.newExpression(.{ .position = token.position, .value = .{ .floating = token.lexeme } });
             },
             .keyword_true, .keyword_false => {
                 try self.advance();
@@ -645,7 +673,7 @@ test "parse struct initialization and member assignment" {
     try std.testing.expectEqual(@as(usize, 1), program.structures.len);
     try std.testing.expectEqualStrings("Position", program.structures[0].name);
     try std.testing.expectEqual(@as(usize, 2), program.structures[0].fields.len);
-    try std.testing.expect(program.functions[0].statements[0].variable_declaration.initializer.value == .structure_initializer);
+    try std.testing.expect(program.functions[0].statements[0].variable_declaration.initializer.?.value == .structure_initializer);
     try std.testing.expect(program.functions[0].statements[1].assignment.target.value == .member_access);
 }
 
@@ -690,7 +718,7 @@ test "logical operators follow comparison precedence" {
     );
     const program = try parser.parse();
 
-    const logical_or = program.functions[0].statements[0].variable_declaration.initializer.value.binary;
+    const logical_or = program.functions[0].statements[0].variable_declaration.initializer.?.value.binary;
     try std.testing.expectEqual(Ast.BinaryOperator.logical_or, logical_or.operator);
     try std.testing.expectEqual(Ast.UnaryOperator.logical_not, logical_or.left.value.unary.operator);
     try std.testing.expectEqual(Ast.BinaryOperator.logical_and, logical_or.right.value.binary.operator);

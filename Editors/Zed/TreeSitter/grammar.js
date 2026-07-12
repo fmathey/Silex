@@ -47,7 +47,24 @@ module.exports = grammar({
       ),
 
     void_type: (_) => "void",
-    builtin_type: (_) => choice("int", "bool", "string"),
+    builtin_type: (_) =>
+      choice(
+        "int",
+        "int8",
+        "int16",
+        "int32",
+        "int64",
+        "uint",
+        "uint8",
+        "uint16",
+        "uint32",
+        "uint64",
+        "float",
+        "float32",
+        "float64",
+        "bool",
+        "str",
+      ),
     named_type: ($) => alias($.identifier, $.type_identifier),
     type: ($) => choice($.builtin_type, $.named_type),
     parameter_list: ($) =>
@@ -141,6 +158,7 @@ module.exports = grammar({
         $.member_expression,
         $.parenthesized_expression,
         $.string_literal,
+        $.float_literal,
         $.integer_literal,
         $.boolean_literal,
         $.self_expression,
@@ -262,7 +280,7 @@ module.exports = grammar({
       ),
 
     unary_expression: ($) =>
-      prec(PREC.unary, seq(field("operator", "!"), field("operand", $.expression))),
+      prec(PREC.unary, seq(field("operator", choice("!", "-")), field("operand", $.expression))),
 
     parenthesized_expression: ($) => seq("(", $.expression, ")"),
 
@@ -271,6 +289,7 @@ module.exports = grammar({
 
     escape_sequence: (_) => token(seq("\\", /./)),
     integer_literal: (_) => /\d+/,
+    float_literal: (_) => /\d+\.\d+/,
     boolean_literal: (_) => choice("true", "false"),
     self_expression: (_) => "self",
     identifier: (_) => /[A-Za-z_][A-Za-z0-9_]*/,

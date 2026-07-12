@@ -1,0 +1,35 @@
+struct Motion {
+    position:float
+    speed:float = 1.5
+
+    func advance(delta:float) void {
+        self.position += self.speed * delta
+    }
+}
+
+func promoted() float {
+    return 2
+}
+
+func main() void {
+    var motion:Motion
+    motion.advance(2)
+    print(motion.position)
+
+    let offset = -2.5
+    let mixed = 2 + 0.5
+    let ratio = 5 / 2.0
+    let whole = 5 / 2
+
+    print(offset)
+    print(mixed)
+    print(ratio)
+    print(whole)
+
+    var value:float = 2
+    value++
+    value /= 2
+    print(value)
+    print(2 < 2.5)
+    print(promoted())
+}

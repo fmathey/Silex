@@ -4,7 +4,7 @@ struct Position {
 }
 
 struct Player {
-    name:string = "Ada"
+    name:str = "Ada"
     active:bool
     position:Position = Position { x:3 }
 
@@ -28,7 +28,7 @@ func main() void {
     print(player.position.y)
 
     let zero:int
-    let empty:string
+    let empty:str
     print(zero)
     print(empty)
 

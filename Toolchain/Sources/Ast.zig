@@ -17,20 +17,45 @@ pub const BinaryOperator = enum {
 
 pub const UnaryOperator = enum {
     logical_not,
+    numeric_negate,
 };
 
 pub const TypeName = union(enum) {
     int,
+    int8,
+    int16,
+    int32,
+    int64,
+    uint,
+    uint8,
+    uint16,
+    uint32,
+    uint64,
+    float,
+    float32,
+    float64,
     bool,
-    string,
+    str,
     structure: []const u8,
 };
 
 pub const ReturnType = union(enum) {
     void,
     int,
+    int8,
+    int16,
+    int32,
+    int64,
+    uint,
+    uint8,
+    uint16,
+    uint32,
+    uint64,
+    float,
+    float32,
+    float64,
     bool,
-    string,
+    str,
     structure: []const u8,
 };
 
@@ -53,6 +78,7 @@ pub const Expression = struct {
     position: Source.Position,
     value: union(enum) {
         integer: []const u8,
+        floating: []const u8,
         boolean: bool,
         string: []const u8,
         identifier: []const u8,

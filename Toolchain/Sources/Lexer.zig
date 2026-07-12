@@ -15,11 +15,24 @@ pub const TokenTag = enum {
     keyword_true,
     keyword_false,
     keyword_int,
+    keyword_int8,
+    keyword_int16,
+    keyword_int32,
+    keyword_int64,
+    keyword_uint,
+    keyword_uint8,
+    keyword_uint16,
+    keyword_uint32,
+    keyword_uint64,
+    keyword_float,
+    keyword_float32,
+    keyword_float64,
     keyword_bool,
-    keyword_string,
+    keyword_str,
     keyword_print,
     identifier,
     integer,
+    floating,
     string,
     plus,
     plus_plus,
@@ -94,6 +107,15 @@ pub const Lexer = struct {
             self.advance();
             while (self.index < self.source.len and std.ascii.isDigit(self.source[self.index])) {
                 self.advance();
+            }
+            if (self.index + 1 < self.source.len and self.source[self.index] == '.' and
+                std.ascii.isDigit(self.source[self.index + 1]))
+            {
+                self.advance();
+                while (self.index < self.source.len and std.ascii.isDigit(self.source[self.index])) {
+                    self.advance();
+                }
+                return self.token(.floating, start, position);
             }
             return self.token(.integer, start, position);
         }
@@ -258,8 +280,20 @@ fn keywordTag(lexeme: []const u8) ?TokenTag {
         .{ "true", TokenTag.keyword_true },
         .{ "false", TokenTag.keyword_false },
         .{ "int", TokenTag.keyword_int },
+        .{ "int8", TokenTag.keyword_int8 },
+        .{ "int16", TokenTag.keyword_int16 },
+        .{ "int32", TokenTag.keyword_int32 },
+        .{ "int64", TokenTag.keyword_int64 },
+        .{ "uint", TokenTag.keyword_uint },
+        .{ "uint8", TokenTag.keyword_uint8 },
+        .{ "uint16", TokenTag.keyword_uint16 },
+        .{ "uint32", TokenTag.keyword_uint32 },
+        .{ "uint64", TokenTag.keyword_uint64 },
+        .{ "float", TokenTag.keyword_float },
+        .{ "float32", TokenTag.keyword_float32 },
+        .{ "float64", TokenTag.keyword_float64 },
         .{ "bool", TokenTag.keyword_bool },
-        .{ "string", TokenTag.keyword_string },
+        .{ "str", TokenTag.keyword_str },
         .{ "print", TokenTag.keyword_print },
     };
     inline for (keywords) |keyword| {
@@ -320,4 +354,10 @@ test "recognize compound and update operators" {
         .slash_equal,
     };
     for (expected) |tag| try std.testing.expectEqual(tag, (try lexer.next()).tag);
+}
+
+test "distinguish integer and float literals" {
+    var lexer = Lexer.init("42 4.25");
+    try std.testing.expectEqual(TokenTag.integer, (try lexer.next()).tag);
+    try std.testing.expectEqual(TokenTag.floating, (try lexer.next()).tag);
 }

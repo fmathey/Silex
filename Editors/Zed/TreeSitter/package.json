@@ -1,6 +1,6 @@
 {
   "name": "tree-sitter-silex",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Tree-sitter grammar for Silex",
   "main": "bindings/node",
   "keywords": [

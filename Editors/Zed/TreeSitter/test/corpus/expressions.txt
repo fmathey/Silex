@@ -294,7 +294,7 @@ func add(left:int, right:int) int {
     return left + right
 }
 
-func announce(message:string) void {
+func announce(message:str) void {
     print(message)
     return
 }
@@ -368,7 +368,7 @@ Defaults and compound assignments
 
 struct Settings {
     count:int
-    name:string = "Silex"
+    name:str = "Silex"
 }
 
 func main() void {
@@ -600,3 +600,86 @@ func main() void {
             (method_call_expression
               (identifier)
               (identifier))))))))
+
+=============================
+Float literals and promotion
+=============================
+
+struct Motion {
+    position:float
+    speed:float = 1.5
+}
+
+func main() void {
+    var motion:Motion
+    motion.position += motion.speed * 2
+    let offset = -2.5
+    let ratio = 5 / 2.0
+    print(offset + ratio)
+}
+
+---
+
+(source_file
+  (structure_definition
+    (identifier)
+    (structure_field
+      (identifier)
+      (type
+        (builtin_type)))
+    (structure_field
+      (identifier)
+      (type
+        (builtin_type))
+      (expression
+        (float_literal))))
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (void_type)
+    (block
+      (statement
+        (variable_declaration
+          (identifier)
+          (type_annotation
+            (type
+              (named_type
+                (type_identifier))))))
+      (statement
+        (assignment_statement
+          (member_expression
+            (identifier)
+            (identifier))
+          (expression
+            (binary_expression
+              (expression
+                (member_expression
+                  (identifier)
+                  (identifier)))
+              (expression
+                (integer_literal))))))
+      (statement
+        (variable_declaration
+          (identifier)
+          (expression
+            (unary_expression
+              (expression
+                (float_literal))))))
+      (statement
+        (variable_declaration
+          (identifier)
+          (expression
+            (binary_expression
+              (expression
+                (integer_literal))
+              (expression
+                (float_literal))))))
+      (statement
+        (print_statement
+          (identifier)
+          (expression
+            (binary_expression
+              (expression
+                (identifier))
+              (expression
+                (identifier)))))))))

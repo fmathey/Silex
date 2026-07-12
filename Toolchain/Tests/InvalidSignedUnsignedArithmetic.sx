@@ -1,0 +1,5 @@
+func main() void {
+    var signed:int8 = 1
+    var unsigned:uint8 = 2
+    print(signed + unsigned)
+}

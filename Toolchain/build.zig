@@ -32,7 +32,7 @@ pub fn build(b: *std.Build) void {
     invalid_command.addArgs(&.{ "compile", "Tests/InvalidArithmetic.sx" });
     invalid_command.expectExitCode(1);
     invalid_command.expectStdErrEqual(
-        "Tests/InvalidArithmetic.sx:2:19: error: arithmetic operator requires 'int' operands, found 'string' and 'int'\n",
+        "Tests/InvalidArithmetic.sx:2:19: error: arithmetic operator requires numeric operands, found 'str' and 'int'\n",
     );
 
     const immutable_assignment_command = b.addRunArtifact(executable);
@@ -116,7 +116,7 @@ pub fn build(b: *std.Build) void {
     invalid_struct_field_type_command.addArgs(&.{ "compile", "Tests/InvalidStructFieldType.sx" });
     invalid_struct_field_type_command.expectExitCode(1);
     invalid_struct_field_type_command.expectStdErrEqual(
-        "Tests/InvalidStructFieldType.sx:7:33: error: expected 'int', found 'string'\n",
+        "Tests/InvalidStructFieldType.sx:7:33: error: expected 'int', found 'str'\n",
     );
 
     const immutable_method_call_command = b.addRunArtifact(executable);
@@ -144,7 +144,35 @@ pub fn build(b: *std.Build) void {
     invalid_compound_assignment_command.addArgs(&.{ "compile", "Tests/InvalidCompoundAssignment.sx" });
     invalid_compound_assignment_command.expectExitCode(1);
     invalid_compound_assignment_command.expectStdErrEqual(
-        "Tests/InvalidCompoundAssignment.sx:3:5: error: operator '+=' requires an 'int' target and value, found 'string' and 'string'\n",
+        "Tests/InvalidCompoundAssignment.sx:3:5: error: operator '+=' requires a numeric target and compatible value, found 'str' and 'str'\n",
+    );
+
+    const invalid_float_narrowing_command = b.addRunArtifact(executable);
+    invalid_float_narrowing_command.addArgs(&.{ "compile", "Tests/InvalidFloatNarrowing.sx" });
+    invalid_float_narrowing_command.expectExitCode(1);
+    invalid_float_narrowing_command.expectStdErrEqual(
+        "Tests/InvalidFloatNarrowing.sx:2:21: error: expected 'int', found 'float'\n",
+    );
+
+    const invalid_numeric_negation_command = b.addRunArtifact(executable);
+    invalid_numeric_negation_command.addArgs(&.{ "compile", "Tests/InvalidNumericNegation.sx" });
+    invalid_numeric_negation_command.expectExitCode(1);
+    invalid_numeric_negation_command.expectStdErrEqual(
+        "Tests/InvalidNumericNegation.sx:2:11: error: numeric operator '-' requires an 'int' or 'float' operand, found 'str'\n",
+    );
+
+    const invalid_integer_literal_range_command = b.addRunArtifact(executable);
+    invalid_integer_literal_range_command.addArgs(&.{ "compile", "Tests/InvalidIntegerLiteralRange.sx" });
+    invalid_integer_literal_range_command.expectExitCode(1);
+    invalid_integer_literal_range_command.expectStdErrEqual(
+        "Tests/InvalidIntegerLiteralRange.sx:2:23: error: integer literal is outside the range of 'uint8'\n",
+    );
+
+    const invalid_signed_unsigned_arithmetic_command = b.addRunArtifact(executable);
+    invalid_signed_unsigned_arithmetic_command.addArgs(&.{ "compile", "Tests/InvalidSignedUnsignedArithmetic.sx" });
+    invalid_signed_unsigned_arithmetic_command.expectExitCode(1);
+    invalid_signed_unsigned_arithmetic_command.expectStdErrEqual(
+        "Tests/InvalidSignedUnsignedArithmetic.sx:4:18: error: arithmetic operator requires compatible numeric operands, found 'int8' and 'uint8'\n",
     );
 
     const test_step = b.step("test", "Run the toolchain tests");
@@ -166,6 +194,10 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&untyped_declaration_command.step);
     test_step.dependOn(&invalid_field_default_command.step);
     test_step.dependOn(&invalid_compound_assignment_command.step);
+    test_step.dependOn(&invalid_float_narrowing_command.step);
+    test_step.dependOn(&invalid_numeric_negation_command.step);
+    test_step.dependOn(&invalid_integer_literal_range_command.step);
+    test_step.dependOn(&invalid_signed_unsigned_arithmetic_command.step);
 
     const smoke_command = b.addRunArtifact(executable);
     smoke_command.addArgs(&.{ "run", "Smokes/Main.sx" });
@@ -187,10 +219,26 @@ pub fn build(b: *std.Build) void {
     defaults_command.addArgs(&.{ "run", "Smokes/Defaults.sx" });
     defaults_command.expectStdOutEqual("Ada\nfalse\n1\n7\n0\n\nBob\ntrue\n4\n5\n");
 
+    const floats_command = b.addRunArtifact(executable);
+    floats_command.addArgs(&.{ "run", "Smokes/Floats.sx" });
+    floats_command.expectStdOutEqual("3\n-2.5\n2.5\n2.5\n2\n1.5\ntrue\n2\n");
+
+    const numeric_types_command = b.addRunArtifact(executable);
+    numeric_types_command.addArgs(&.{ "run", "Smokes/NumericTypes.sx" });
+    numeric_types_command.expectStdOutEqual("-128\n32767\n2147483647\n-9223372036854775808\n255\n65535\n4294967295\n18446744073709551615\n42\n1.5\n2.25\n0\n12\n");
+
+    const integer_overflow_command = b.addRunArtifact(executable);
+    integer_overflow_command.addArgs(&.{ "run", "Smokes/IntegerOverflow.sx" });
+    integer_overflow_command.expectExitCode(1);
+    integer_overflow_command.expectStdErrEqual("silex: runtime error: integer overflow in addition\n");
+
     const smoke_step = b.step("smoke", "Compile and run the smoke program");
     smoke_step.dependOn(&smoke_command.step);
     smoke_step.dependOn(&boolean_condition_command.step);
     smoke_step.dependOn(&compact_command.step);
     smoke_step.dependOn(&structures_command.step);
     smoke_step.dependOn(&defaults_command.step);
+    smoke_step.dependOn(&floats_command.step);
+    smoke_step.dependOn(&numeric_types_command.step);
+    smoke_step.dependOn(&integer_overflow_command.step);
 }

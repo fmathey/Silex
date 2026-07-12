@@ -17,7 +17,7 @@ struct Position {
 }
 
 struct Player {
-    name:string
+    name:str
     position:Position
 }
 

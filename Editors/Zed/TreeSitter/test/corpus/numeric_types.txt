@@ -1,0 +1,78 @@
+==================
+Numeric type family
+==================
+
+func widen(value:int8) int64 {
+    return value
+}
+
+func main() void {
+    var byte:uint8 = 255
+    var wide:uint = 42
+    var precise:float64 = 1.5
+    print(byte)
+    print(wide)
+    print(precise)
+}
+
+---
+
+(source_file
+  (function_definition
+    name: (identifier)
+    (parameter_list
+      (parameter
+        name: (identifier)
+        type: (type
+          (builtin_type))))
+    return_type: (type
+      (builtin_type))
+    body: (block
+      (statement
+        (return_statement
+          value: (expression
+            (identifier))))))
+  (function_definition
+    name: (identifier)
+    (parameter_list)
+    return_type: (void_type)
+    body: (block
+      (statement
+        (variable_declaration
+          name: (identifier)
+          (type_annotation
+            type: (type
+              (builtin_type)))
+          initializer: (expression
+            (integer_literal))))
+      (statement
+        (variable_declaration
+          name: (identifier)
+          (type_annotation
+            type: (type
+              (builtin_type)))
+          initializer: (expression
+            (integer_literal))))
+      (statement
+        (variable_declaration
+          name: (identifier)
+          (type_annotation
+            type: (type
+              (builtin_type)))
+          initializer: (expression
+            (float_literal))))
+      (statement
+        (print_statement
+          function: (identifier)
+          argument: (expression
+            (identifier))))
+      (statement
+        (print_statement
+          function: (identifier)
+          argument: (expression
+            (identifier))))
+      (statement
+        (print_statement
+          function: (identifier)
+          argument: (expression
+            (identifier)))))))

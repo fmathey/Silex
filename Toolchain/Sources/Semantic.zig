@@ -8,8 +8,17 @@ const AnalyzeError = Source.Error || Allocator.Error;
 pub const Type = union(enum) {
     void,
     int,
+    int8,
+    int16,
+    int32,
+    uint8,
+    uint16,
+    uint32,
+    uint64,
+    float,
+    float64,
     bool,
-    string,
+    str,
     structure: StructureType,
 };
 
@@ -22,7 +31,8 @@ pub const Expression = struct {
     type: Type,
     position: Source.Position,
     value: union(enum) {
-        integer: i64,
+        integer: u64,
+        floating: []const u8,
         boolean: bool,
         string: []const u8,
         variable: []const u8,
@@ -33,6 +43,7 @@ pub const Expression = struct {
         member_access: MemberAccess,
         unary: Unary,
         binary: Binary,
+        conversion: Conversion,
     },
 
     pub const Unary = struct {
@@ -69,6 +80,11 @@ pub const Expression = struct {
         operator: Ast.BinaryOperator,
         left: *Expression,
         right: *Expression,
+    };
+
+    pub const Conversion = struct {
+        operand: *Expression,
+        target_type: Type,
     };
 };
 
@@ -364,7 +380,8 @@ pub const Analyzer = struct {
             for (structure.fields) |*field| {
                 const ast_initializer = field.ast_initializer orelse continue;
                 try self.validateDefaultShape(ast_initializer, field.type);
-                const value = try self.expression(ast_initializer, &empty_scope);
+                var value = try self.expression(ast_initializer, &empty_scope);
+                value = try self.coerce(value, field.type);
                 if (!typeEqual(field.type, value.type)) {
                     const message = try typeMismatchMessage(self.allocator, field.type, value.type);
                     return self.fail(ast_initializer.position, message);
@@ -380,9 +397,10 @@ pub const Analyzer = struct {
         expected_type: Type,
     ) AnalyzeError!void {
         const valid = switch (expected_type) {
-            .int => ast.value == .integer,
+            .int, .int8, .int16, .int32, .uint8, .uint16, .uint32, .uint64 => ast.value == .integer,
+            .float, .float64 => ast.value == .integer or ast.value == .floating,
             .bool => ast.value == .boolean,
-            .string => ast.value == .string,
+            .str => ast.value == .string,
             .structure => |structure_type| structure_default: {
                 if (ast.value != .structure_initializer) break :structure_default false;
                 const initializer = ast.value.structure_initializer;
@@ -529,7 +547,7 @@ pub const Analyzer = struct {
             try typeFromAnnotation(self, annotation, declaration.name_position)
         else
             null;
-        const initializer = if (declaration.initializer) |ast_initializer|
+        var initializer = if (declaration.initializer) |ast_initializer|
             try self.expression(ast_initializer, scope)
         else
             try self.defaultExpression(declared_annotation_type.?, declaration.name_position);
@@ -538,6 +556,7 @@ pub const Analyzer = struct {
             return self.fail(position, "variable initializer cannot have type 'void'");
         }
         const declared_type = declared_annotation_type orelse initializer.type;
+        initializer = try self.coerce(initializer, declared_type);
         if (!typeEqual(declared_type, initializer.type)) {
             const message = try typeMismatchMessage(self.allocator, declared_type, initializer.type);
             return self.fail(if (declaration.initializer) |value| value.position else declaration.name_position, message);
@@ -593,24 +612,28 @@ pub const Analyzer = struct {
         if (ast.value) |ast_value| value = try self.expression(ast_value, scope);
 
         switch (ast.operator) {
-            .assign => if (!typeEqual(target.type, value.?.type)) {
-                const message = try typeMismatchMessage(self.allocator, target.type, value.?.type);
-                return self.fail(ast.value.?.position, message);
+            .assign => {
+                value = try self.coerce(value.?, target.type);
+                if (!typeEqual(target.type, value.?.type)) {
+                    const message = try typeMismatchMessage(self.allocator, target.type, value.?.type);
+                    return self.fail(ast.value.?.position, message);
+                }
             },
             .add, .subtract, .multiply, .divide => {
-                if (!typeEqual(target.type, .int) or !typeEqual(value.?.type, .int)) {
+                value = try self.coerce(value.?, target.type);
+                if (!isNumeric(target.type) or !typeEqual(target.type, value.?.type)) {
                     const message = try std.fmt.allocPrint(
                         self.allocator,
-                        "operator '{s}' requires an 'int' target and value, found '{s}' and '{s}'",
+                        "operator '{s}' requires a numeric target and compatible value, found '{s}' and '{s}'",
                         .{ assignmentOperatorText(ast.operator), typeName(target.type), typeName(value.?.type) },
                     );
                     return self.fail(ast.position, message);
                 }
             },
-            .increment, .decrement => if (!typeEqual(target.type, .int)) {
+            .increment, .decrement => if (!isNumeric(target.type)) {
                 const message = try std.fmt.allocPrint(
                     self.allocator,
-                    "operator '{s}' requires an 'int' target, found '{s}'",
+                    "operator '{s}' requires a numeric target, found '{s}'",
                     .{ assignmentOperatorText(ast.operator), typeName(target.type) },
                 );
                 return self.fail(ast.position, message);
@@ -670,8 +693,9 @@ pub const Analyzer = struct {
         scope: *const Scope,
     ) AnalyzeError!Statement {
         if (ast.value) |ast_value| {
-            const value = try self.expression(ast_value, scope);
+            var value = try self.expression(ast_value, scope);
             if (typeEqual(self.current_return_type, .void)) return self.fail(ast.position, "void function cannot return a value");
+            value = try self.coerce(value, self.current_return_type);
             if (!typeEqual(value.type, self.current_return_type)) {
                 const message = try typeMismatchMessage(self.allocator, self.current_return_type, value.type);
                 return self.fail(ast_value.position, message);
@@ -688,13 +712,14 @@ pub const Analyzer = struct {
     fn expression(self: *Analyzer, ast: *const Ast.Expression, scope: *const Scope) AnalyzeError!*Expression {
         return switch (ast.value) {
             .integer => |lexeme| self.integerExpression(ast.position, lexeme),
+            .floating => |lexeme| self.floatExpression(ast.position, lexeme),
             .boolean => |value| self.newExpression(.{
                 .type = .bool,
                 .position = ast.position,
                 .value = .{ .boolean = value },
             }),
             .string => |value| self.newExpression(.{
-                .type = .string,
+                .type = .str,
                 .position = ast.position,
                 .value = .{ .string = value },
             }),
@@ -710,7 +735,7 @@ pub const Analyzer = struct {
     }
 
     fn integerExpression(self: *Analyzer, position: Source.Position, lexeme: []const u8) AnalyzeError!*Expression {
-        const value = std.fmt.parseInt(i64, lexeme, 10) catch {
+        const value = std.fmt.parseInt(u64, lexeme, 10) catch {
             return self.fail(position, "integer literal is outside the range of 'int'");
         };
         return self.newExpression(.{
@@ -720,12 +745,25 @@ pub const Analyzer = struct {
         });
     }
 
+    fn floatExpression(self: *Analyzer, position: Source.Position, lexeme: []const u8) AnalyzeError!*Expression {
+        const value = std.fmt.parseFloat(f64, lexeme) catch {
+            return self.fail(position, "float literal is outside the range of 'float'");
+        };
+        if (!std.math.isFinite(value)) return self.fail(position, "float literal is outside the range of 'float'");
+        return self.newExpression(.{
+            .type = .float,
+            .position = position,
+            .value = .{ .floating = lexeme },
+        });
+    }
+
     fn defaultExpression(self: *Analyzer, type_value: Type, position: Source.Position) AnalyzeError!*Expression {
         return switch (type_value) {
             .void => self.fail(position, "type 'void' has no default value"),
-            .int => self.newExpression(.{ .type = .int, .position = position, .value = .{ .integer = 0 } }),
+            .int, .int8, .int16, .int32, .uint8, .uint16, .uint32, .uint64 => self.newExpression(.{ .type = type_value, .position = position, .value = .{ .integer = 0 } }),
+            .float, .float64 => self.newExpression(.{ .type = type_value, .position = position, .value = .{ .floating = "0.0" } }),
             .bool => self.newExpression(.{ .type = .bool, .position = position, .value = .{ .boolean = false } }),
-            .string => self.newExpression(.{ .type = .string, .position = position, .value = .{ .string = "" } }),
+            .str => self.newExpression(.{ .type = .str, .position = position, .value = .{ .string = "" } }),
             .structure => |structure_type| structure_default: {
                 const structure = self.findStructureByGeneratedName(structure_type.generated_name).?;
                 var fields: std.ArrayList(*Expression) = .empty;
@@ -782,25 +820,35 @@ pub const Analyzer = struct {
         binary: Ast.Expression.Binary,
         scope: *const Scope,
     ) AnalyzeError!*Expression {
-        const left = try self.expression(binary.left, scope);
-        const right = try self.expression(binary.right, scope);
+        var left = try self.expression(binary.left, scope);
+        var right = try self.expression(binary.right, scope);
+        if (isContextualIntegerLiteral(left) and isInteger(right.type)) left = try self.coerce(left, right.type);
+        if (isContextualIntegerLiteral(right) and isInteger(left.type)) right = try self.coerce(right, left.type);
         const result_type: Type = switch (binary.operator) {
-            .add, .subtract, .multiply, .divide => try self.requireBinaryOperands(
-                binary.operator_position,
-                "arithmetic operator",
-                .int,
-                left.type,
-                right.type,
-                .int,
-            ),
-            .less, .less_equal, .greater, .greater_equal => try self.requireBinaryOperands(
-                binary.operator_position,
-                "comparison operator",
-                .int,
-                left.type,
-                right.type,
-                .bool,
-            ),
+            .add, .subtract, .multiply, .divide => arithmetic: {
+                try self.requireNumericOperands(binary.operator_position, "arithmetic operator", left.type, right.type);
+                const common_type = commonNumericType(left.type, right.type) orelse {
+                    const message = try std.fmt.allocPrint(
+                        self.allocator,
+                        "arithmetic operator requires compatible numeric operands, found '{s}' and '{s}'",
+                        .{ typeName(left.type), typeName(right.type) },
+                    );
+                    return self.fail(binary.operator_position, message);
+                };
+                left = try self.coerce(left, common_type);
+                right = try self.coerce(right, common_type);
+                break :arithmetic common_type;
+            },
+            .less, .less_equal, .greater, .greater_equal => comparison: {
+                try self.requireNumericOperands(binary.operator_position, "comparison operator", left.type, right.type);
+                const common_type = commonNumericType(left.type, right.type) orelse {
+                    const message = try std.fmt.allocPrint(self.allocator, "comparison operator requires compatible numeric operands, found '{s}' and '{s}'", .{ typeName(left.type), typeName(right.type) });
+                    return self.fail(binary.operator_position, message);
+                };
+                left = try self.coerce(left, common_type);
+                right = try self.coerce(right, common_type);
+                break :comparison .bool;
+            },
             .logical_and, .logical_or => try self.requireBinaryOperands(
                 binary.operator_position,
                 "logical operator",
@@ -810,7 +858,14 @@ pub const Analyzer = struct {
                 .bool,
             ),
             .equal, .not_equal => equality: {
-                if (!typeEqual(left.type, right.type) or isStructure(left.type)) {
+                if (isNumeric(left.type) and isNumeric(right.type)) {
+                    const common_type = commonNumericType(left.type, right.type) orelse {
+                        const message = try std.fmt.allocPrint(self.allocator, "equality operator requires compatible numeric operands, found '{s}' and '{s}'", .{ typeName(left.type), typeName(right.type) });
+                        return self.fail(binary.operator_position, message);
+                    };
+                    left = try self.coerce(left, common_type);
+                    right = try self.coerce(right, common_type);
+                } else if (!typeEqual(left.type, right.type) or isStructure(left.type)) {
                     const message = try std.fmt.allocPrint(
                         self.allocator,
                         "equality operator requires operands of the same type, found '{s}' and '{s}'",
@@ -840,7 +895,8 @@ pub const Analyzer = struct {
         }
         var arguments: std.ArrayList(*Expression) = .empty;
         for (call.arguments, function_symbol.parameter_types, 0..) |argument, expected_type, index| {
-            const value = try self.expression(argument, scope);
+            var value = try self.expression(argument, scope);
+            value = try self.coerce(value, expected_type);
             if (!typeEqual(value.type, expected_type)) {
                 const message = try std.fmt.allocPrint(self.allocator, "argument {d} of '{s}' expects '{s}', found '{s}'", .{ index + 1, call.name, typeName(expected_type), typeName(value.type) });
                 return self.fail(argument.position, message);
@@ -877,7 +933,8 @@ pub const Analyzer = struct {
         }
         var arguments: std.ArrayList(*Expression) = .empty;
         for (call.arguments, method_symbol.parameter_types, 0..) |argument, expected_type, index| {
-            const value = try self.expression(argument, scope);
+            var value = try self.expression(argument, scope);
+            value = try self.coerce(value, expected_type);
             if (!typeEqual(value.type, expected_type)) {
                 const message = try std.fmt.allocPrint(self.allocator, "argument {d} of method '{s}' expects '{s}', found '{s}'", .{ index + 1, call.name, typeName(expected_type), typeName(value.type) });
                 return self.fail(argument.position, message);
@@ -966,10 +1023,11 @@ pub const Analyzer = struct {
                     matching = field;
                 }
             }
-            const value = if (matching) |field|
+            var value = if (matching) |field|
                 try self.expression(field.value, scope)
             else
                 expected_field.default_value orelse try self.defaultExpression(expected_field.type, initializer.name_position);
+            value = try self.coerce(value, expected_field.type);
             if (!typeEqual(value.type, expected_field.type)) {
                 const message = try typeMismatchMessage(self.allocator, expected_field.type, value.type);
                 const position = if (matching) |field| field.value.position else initializer.name_position;
@@ -1086,7 +1144,15 @@ pub const Analyzer = struct {
 
     fn validateExpression(self: *Analyzer, expression_value: *const Expression) AnalyzeError!void {
         switch (expression_value.value) {
-            .integer, .boolean, .string, .variable, .self => {},
+            .integer => |value| if (!integerLiteralFits(value, expression_value.type)) {
+                const message = try std.fmt.allocPrint(self.allocator, "integer literal is outside the range of '{s}'", .{typeName(expression_value.type)});
+                return self.fail(expression_value.position, message);
+            },
+            .floating => |lexeme| if (expression_value.type == .float) {
+                const value = std.fmt.parseFloat(f32, lexeme) catch return self.fail(expression_value.position, "float literal is outside the range of 'float'");
+                if (!std.math.isFinite(value)) return self.fail(expression_value.position, "float literal is outside the range of 'float'");
+            },
+            .boolean, .string, .variable, .self => {},
             .call => |call| for (call.arguments) |argument| try self.validateExpression(argument),
             .method_call => |call| {
                 try self.validateExpression(call.object);
@@ -1106,11 +1172,21 @@ pub const Analyzer = struct {
             },
             .structure_initializer => |initializer| for (initializer.fields) |field| try self.validateExpression(field),
             .member_access => |member| try self.validateExpression(member.object),
-            .unary => |unary| try self.validateExpression(unary.operand),
+            .unary => |unary| {
+                if (unary.operator == .numeric_negate and unary.operand.value == .integer and isInteger(expression_value.type)) {
+                    const bits = integerBits(expression_value.type);
+                    const magnitude = unary.operand.value.integer;
+                    if (isUnsignedInteger(expression_value.type) or magnitude > (@as(u64, 1) << @intCast(bits - 1))) {
+                        const message = try std.fmt.allocPrint(self.allocator, "integer literal is outside the range of '{s}'", .{typeName(expression_value.type)});
+                        return self.fail(expression_value.position, message);
+                    }
+                } else try self.validateExpression(unary.operand);
+            },
             .binary => |binary| {
                 try self.validateExpression(binary.left);
                 try self.validateExpression(binary.right);
             },
+            .conversion => |conversion| try self.validateExpression(conversion.operand),
         }
     }
 
@@ -1120,16 +1196,32 @@ pub const Analyzer = struct {
         scope: *const Scope,
     ) AnalyzeError!*Expression {
         const operand = try self.expression(unary.operand, scope);
-        if (!typeEqual(operand.type, .bool)) {
-            const message = try std.fmt.allocPrint(
-                self.allocator,
-                "logical operator '!' requires a 'bool' operand, found '{s}'",
-                .{typeName(operand.type)},
-            );
-            return self.fail(unary.operator_position, message);
-        }
+        const result_type: Type = switch (unary.operator) {
+            .logical_not => logical: {
+                if (!typeEqual(operand.type, .bool)) {
+                    const message = try std.fmt.allocPrint(
+                        self.allocator,
+                        "logical operator '!' requires a 'bool' operand, found '{s}'",
+                        .{typeName(operand.type)},
+                    );
+                    return self.fail(unary.operator_position, message);
+                }
+                break :logical .bool;
+            },
+            .numeric_negate => numeric: {
+                if (!isNumeric(operand.type)) {
+                    const message = try std.fmt.allocPrint(
+                        self.allocator,
+                        "numeric operator '-' requires an 'int' or 'float' operand, found '{s}'",
+                        .{typeName(operand.type)},
+                    );
+                    return self.fail(unary.operator_position, message);
+                }
+                break :numeric operand.type;
+            },
+        };
         return self.newExpression(.{
-            .type = .bool,
+            .type = result_type,
             .position = unary.operator_position,
             .value = .{ .unary = .{ .operator = unary.operator, .operand = operand } },
         });
@@ -1151,6 +1243,71 @@ pub const Analyzer = struct {
             .{ operator_name, typeName(required_type), typeName(left_type), typeName(right_type) },
         );
         return self.fail(position, message);
+    }
+
+    fn requireNumericOperands(
+        self: *Analyzer,
+        position: Source.Position,
+        operator_name: []const u8,
+        left_type: Type,
+        right_type: Type,
+    ) AnalyzeError!void {
+        if (isNumeric(left_type) and isNumeric(right_type)) return;
+        const message = try std.fmt.allocPrint(
+            self.allocator,
+            "{s} requires numeric operands, found '{s}' and '{s}'",
+            .{ operator_name, typeName(left_type), typeName(right_type) },
+        );
+        return self.fail(position, message);
+    }
+
+    fn coerce(self: *Analyzer, expression_value: *Expression, target_type: Type) AnalyzeError!*Expression {
+        if (typeEqual(expression_value.type, target_type)) {
+            if (expression_value.value == .integer and !integerLiteralFits(expression_value.value.integer, target_type)) {
+                const message = try std.fmt.allocPrint(self.allocator, "integer literal is outside the range of '{s}'", .{typeName(target_type)});
+                return self.fail(expression_value.position, message);
+            }
+            if (expression_value.value == .floating and target_type == .float) {
+                const value = std.fmt.parseFloat(f32, expression_value.value.floating) catch {
+                    return self.fail(expression_value.position, "float literal is outside the range of 'float'");
+                };
+                if (!std.math.isFinite(value)) return self.fail(expression_value.position, "float literal is outside the range of 'float'");
+            }
+            return expression_value;
+        }
+        if (expression_value.value == .integer and isInteger(target_type)) {
+            const value = expression_value.value.integer;
+            if (!integerLiteralFits(value, target_type)) {
+                const message = try std.fmt.allocPrint(self.allocator, "integer literal is outside the range of '{s}'", .{typeName(target_type)});
+                return self.fail(expression_value.position, message);
+            }
+            expression_value.type = target_type;
+            return expression_value;
+        }
+        if (expression_value.value == .floating and target_type == .float64) {
+            expression_value.type = .float64;
+            return expression_value;
+        }
+        if (expression_value.value == .unary and expression_value.value.unary.operator == .numeric_negate and
+            expression_value.value.unary.operand.value == .integer and isInteger(target_type) and !isUnsignedInteger(target_type))
+        {
+            const magnitude = expression_value.value.unary.operand.value.integer;
+            const limit = @as(u64, 1) << @intCast(integerBits(target_type) - 1);
+            if (magnitude > limit) {
+                const message = try std.fmt.allocPrint(self.allocator, "integer literal is outside the range of '{s}'", .{typeName(target_type)});
+                return self.fail(expression_value.position, message);
+            }
+            expression_value.type = target_type;
+            return expression_value;
+        }
+        if (canWiden(expression_value.type, target_type)) {
+            return self.newExpression(.{
+                .type = target_type,
+                .position = expression_value.position,
+                .value = .{ .conversion = .{ .operand = expression_value, .target_type = target_type } },
+            });
+        }
+        return expression_value;
     }
 
     fn newExpression(self: *Analyzer, value: Expression) !*Expression {
@@ -1187,8 +1344,20 @@ fn typeFromAnnotation(
 ) AnalyzeError!Type {
     return switch (annotation) {
         .int => .int,
+        .int8 => .int8,
+        .int16 => .int16,
+        .int32 => .int32,
+        .int64 => .int,
+        .uint => .uint64,
+        .uint8 => .uint8,
+        .uint16 => .uint16,
+        .uint32 => .uint32,
+        .uint64 => .uint64,
+        .float => .float,
+        .float32 => .float,
+        .float64 => .float64,
         .bool => .bool,
-        .string => .string,
+        .str => .str,
         .structure => |name| structure_type: {
             const structure = self.findStructure(name) orelse {
                 const message = try std.fmt.allocPrint(self.allocator, "unknown type '{s}'", .{name});
@@ -1210,8 +1379,20 @@ fn typeFromReturn(
     return switch (return_type) {
         .void => .void,
         .int => .int,
+        .int8 => .int8,
+        .int16 => .int16,
+        .int32 => .int32,
+        .int64 => .int,
+        .uint => .uint64,
+        .uint8 => .uint8,
+        .uint16 => .uint16,
+        .uint32 => .uint32,
+        .uint64 => .uint64,
+        .float => .float,
+        .float32 => .float,
+        .float64 => .float64,
         .bool => .bool,
-        .string => .string,
+        .str => .str,
         .structure => |name| typeFromAnnotation(self, .{ .structure = name }, position),
     };
 }
@@ -1243,8 +1424,17 @@ fn typeEqual(left: Type, right: Type) bool {
     return switch (left) {
         .void => right == .void,
         .int => right == .int,
+        .int8 => right == .int8,
+        .int16 => right == .int16,
+        .int32 => right == .int32,
+        .uint8 => right == .uint8,
+        .uint16 => right == .uint16,
+        .uint32 => right == .uint32,
+        .uint64 => right == .uint64,
+        .float => right == .float,
+        .float64 => right == .float64,
         .bool => right == .bool,
-        .string => right == .string,
+        .str => right == .str,
         .structure => |left_structure| switch (right) {
             .structure => |right_structure| std.mem.eql(u8, left_structure.generated_name, right_structure.generated_name),
             else => false,
@@ -1256,8 +1446,17 @@ fn typeName(value: Type) []const u8 {
     return switch (value) {
         .void => "void",
         .int => "int",
+        .int8 => "int8",
+        .int16 => "int16",
+        .int32 => "int32",
+        .uint8 => "uint8",
+        .uint16 => "uint16",
+        .uint32 => "uint32",
+        .uint64 => "uint64",
+        .float => "float",
+        .float64 => "float64",
         .bool => "bool",
-        .string => "string",
+        .str => "str",
         .structure => |structure_type| structure_type.source_name,
     };
 }
@@ -1269,9 +1468,72 @@ fn isStructure(value: Type) bool {
     };
 }
 
+fn isNumeric(value: Type) bool {
+    return switch (value) {
+        .int, .int8, .int16, .int32, .uint8, .uint16, .uint32, .uint64, .float, .float64 => true,
+        else => false,
+    };
+}
+
+fn isInteger(value: Type) bool {
+    return switch (value) {
+        .int, .int8, .int16, .int32, .uint8, .uint16, .uint32, .uint64 => true,
+        else => false,
+    };
+}
+
+fn isUnsignedInteger(value: Type) bool {
+    return switch (value) {
+        .uint8, .uint16, .uint32, .uint64 => true,
+        else => false,
+    };
+}
+
+fn integerBits(value: Type) u8 {
+    return switch (value) {
+        .int8, .uint8 => 8,
+        .int16, .uint16 => 16,
+        .int32, .uint32 => 32,
+        .int, .uint64 => 64,
+        else => 0,
+    };
+}
+
+fn integerLiteralFits(value: u64, target: Type) bool {
+    if (!isInteger(target)) return false;
+    const bits = integerBits(target);
+    if (isUnsignedInteger(target)) return bits == 64 or value <= (@as(u64, 1) << @intCast(bits)) - 1;
+    return value <= (@as(u64, 1) << @intCast(bits - 1)) - 1;
+}
+
+fn isContextualIntegerLiteral(expression_value: *const Expression) bool {
+    if (expression_value.value == .integer) return true;
+    return expression_value.value == .unary and
+        expression_value.value.unary.operator == .numeric_negate and
+        expression_value.value.unary.operand.value == .integer;
+}
+
+fn canWiden(source: Type, target: Type) bool {
+    if (isInteger(source) and isInteger(target)) {
+        return isUnsignedInteger(source) == isUnsignedInteger(target) and integerBits(source) < integerBits(target);
+    }
+    if (isInteger(source) and (target == .float or target == .float64)) return true;
+    return source == .float and target == .float64;
+}
+
+fn commonNumericType(left: Type, right: Type) ?Type {
+    if (typeEqual(left, right)) return left;
+    if (left == .float64 or right == .float64) return .float64;
+    if (left == .float or right == .float) return .float;
+    if (isInteger(left) and isInteger(right) and isUnsignedInteger(left) == isUnsignedInteger(right)) {
+        return if (integerBits(left) >= integerBits(right)) left else right;
+    }
+    return null;
+}
+
 fn isPrintable(value: Type) bool {
     return switch (value) {
-        .int, .bool, .string => true,
+        .int, .int8, .int16, .int32, .uint8, .uint16, .uint32, .uint64, .float, .float64, .bool, .str => true,
         else => false,
     };
 }
@@ -1414,7 +1676,7 @@ test "reject incompatible type annotation" {
     try std.testing.expectEqualStrings("expected 'bool', found 'int'", analyzer.diagnostic.?.message);
 }
 
-test "reject arithmetic between string and int" {
+test "reject arithmetic between str and int" {
     const Parser = @import("Parser.zig").Parser;
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -1423,7 +1685,7 @@ test "reject arithmetic between string and int" {
     var parser = Parser.init(allocator, "func main() void { print(\"Hello\" + 2); }");
     var analyzer = Analyzer.init(allocator);
     try std.testing.expectError(error.InvalidSource, analyzer.analyze(try parser.parse()));
-    try std.testing.expectEqual(@as(usize, 37), analyzer.diagnostic.?.position.column);
+    try std.testing.expectEqual(@as(usize, 34), analyzer.diagnostic.?.position.column);
 }
 
 test "comparison and logical expressions produce bool" {
@@ -1456,7 +1718,7 @@ test "reject logical operator with int operand" {
     );
 }
 
-test "reject comparison with string operand" {
+test "reject comparison with str operand" {
     const Parser = @import("Parser.zig").Parser;
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -1466,7 +1728,7 @@ test "reject comparison with string operand" {
     var analyzer = Analyzer.init(allocator);
     try std.testing.expectError(error.InvalidSource, analyzer.analyze(try parser.parse()));
     try std.testing.expectEqualStrings(
-        "comparison operator requires 'int' operands, found 'string' and 'int'",
+        "comparison operator requires numeric operands, found 'str' and 'int'",
         analyzer.diagnostic.?.message,
     );
 }
