@@ -76,3 +76,115 @@ void main() {
           (identifier)
           (expression
             (boolean_literal)))))))
+
+=================================
+Logical precedence and else block
+=================================
+
+void main() {
+    let value = 5;
+    if (!(value >= 10) && value != 0 || false) {
+        print("active");
+    } else {
+        print("inactive");
+    }
+}
+
+---
+
+(source_file
+  (function_definition
+    (void_type)
+    (identifier)
+    (parameter_list)
+    (block
+      (statement
+        (variable_declaration
+          (identifier)
+          (expression
+            (integer_literal))))
+      (statement
+        (if_statement
+          (expression
+            (binary_expression
+              (expression
+                (binary_expression
+                  (expression
+                    (unary_expression
+                      (expression
+                        (parenthesized_expression
+                          (expression
+                            (binary_expression
+                              (expression
+                                (identifier))
+                              (expression
+                                (integer_literal))))))))
+                  (expression
+                    (binary_expression
+                      (expression
+                        (identifier))
+                      (expression
+                        (integer_literal))))))
+              (expression
+                (boolean_literal))))
+          (block
+            (statement
+              (print_statement
+                (identifier)
+                (expression
+                  (string_literal)))))
+          (block
+            (statement
+              (print_statement
+                (identifier)
+                (expression
+                  (string_literal))))))))))
+
+====================
+While loop
+====================
+
+void main() {
+    var count = 2;
+    while (count > 0) {
+        print(count);
+        count = count - 1;
+    }
+}
+
+---
+
+(source_file
+  (function_definition
+    (void_type)
+    (identifier)
+    (parameter_list)
+    (block
+      (statement
+        (variable_declaration
+          (identifier)
+          (expression
+            (integer_literal))))
+      (statement
+        (while_statement
+          (expression
+            (binary_expression
+              (expression
+                (identifier))
+              (expression
+                (integer_literal))))
+          (block
+            (statement
+              (print_statement
+                (identifier)
+                (expression
+                  (identifier))))
+            (statement
+              (assignment_statement
+                (identifier)
+                (expression
+                  (binary_expression
+                    (expression
+                      (identifier))
+                    (expression
+                      (integer_literal))))))))))))

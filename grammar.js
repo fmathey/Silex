@@ -1,3 +1,13 @@
+const PREC = {
+  logicalOr: 1,
+  logicalAnd: 2,
+  equality: 3,
+  comparison: 4,
+  additive: 5,
+  multiplicative: 6,
+  unary: 7,
+};
+
 module.exports = grammar({
   name: "silex",
 
@@ -27,6 +37,7 @@ module.exports = grammar({
         $.assignment_statement,
         $.print_statement,
         $.if_statement,
+        $.while_statement,
       ),
 
     variable_declaration: ($) =>
@@ -59,11 +70,28 @@ module.exports = grammar({
       ),
 
     if_statement: ($) =>
-      seq("if", "(", field("condition", $.expression), ")", field("body", $.block)),
+      seq(
+        "if",
+        "(",
+        field("condition", $.expression),
+        ")",
+        field("body", $.block),
+        optional(seq("else", field("alternative", $.block))),
+      ),
+
+    while_statement: ($) =>
+      seq(
+        "while",
+        "(",
+        field("condition", $.expression),
+        ")",
+        field("body", $.block),
+      ),
 
     expression: ($) =>
       choice(
         $.binary_expression,
+        $.unary_expression,
         $.parenthesized_expression,
         $.string_literal,
         $.integer_literal,
@@ -74,7 +102,39 @@ module.exports = grammar({
     binary_expression: ($) =>
       choice(
         prec.left(
-          1,
+          PREC.logicalOr,
+          seq(
+            field("left", $.expression),
+            field("operator", "||"),
+            field("right", $.expression),
+          ),
+        ),
+        prec.left(
+          PREC.logicalAnd,
+          seq(
+            field("left", $.expression),
+            field("operator", "&&"),
+            field("right", $.expression),
+          ),
+        ),
+        prec.left(
+          PREC.equality,
+          seq(
+            field("left", $.expression),
+            field("operator", choice("==", "!=")),
+            field("right", $.expression),
+          ),
+        ),
+        prec.left(
+          PREC.comparison,
+          seq(
+            field("left", $.expression),
+            field("operator", choice("<", "<=", ">", ">=")),
+            field("right", $.expression),
+          ),
+        ),
+        prec.left(
+          PREC.additive,
           seq(
             field("left", $.expression),
             field("operator", choice("+", "-")),
@@ -82,7 +142,7 @@ module.exports = grammar({
           ),
         ),
         prec.left(
-          2,
+          PREC.multiplicative,
           seq(
             field("left", $.expression),
             field("operator", choice("*", "/")),
@@ -90,6 +150,9 @@ module.exports = grammar({
           ),
         ),
       ),
+
+    unary_expression: ($) =>
+      prec(PREC.unary, seq(field("operator", "!"), field("operand", $.expression))),
 
     parenthesized_expression: ($) => seq("(", $.expression, ")"),
 
