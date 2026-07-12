@@ -207,6 +207,10 @@
           "named": true
         },
         {
+          "type": "float_literal",
+          "named": true
+        },
+        {
           "type": "identifier",
           "named": true
         },
@@ -817,6 +821,10 @@
           {
             "type": "!",
             "named": false
+          },
+          {
+            "type": "-",
+            "named": false
           }
         ]
       }
@@ -1058,6 +1066,22 @@
     "named": false
   },
   {
+    "type": "float",
+    "named": false
+  },
+  {
+    "type": "float32",
+    "named": false
+  },
+  {
+    "type": "float64",
+    "named": false
+  },
+  {
+    "type": "float_literal",
+    "named": true
+  },
+  {
     "type": "func",
     "named": false
   },
@@ -1071,6 +1095,22 @@
   },
   {
     "type": "int",
+    "named": false
+  },
+  {
+    "type": "int16",
+    "named": false
+  },
+  {
+    "type": "int32",
+    "named": false
+  },
+  {
+    "type": "int64",
+    "named": false
+  },
+  {
+    "type": "int8",
     "named": false
   },
   {
@@ -1090,7 +1130,7 @@
     "named": true
   },
   {
-    "type": "string",
+    "type": "str",
     "named": false
   },
   {
@@ -1104,6 +1144,26 @@
   {
     "type": "type_identifier",
     "named": true
+  },
+  {
+    "type": "uint",
+    "named": false
+  },
+  {
+    "type": "uint16",
+    "named": false
+  },
+  {
+    "type": "uint32",
+    "named": false
+  },
+  {
+    "type": "uint64",
+    "named": false
+  },
+  {
+    "type": "uint8",
+    "named": false
   },
   {
     "type": "var",

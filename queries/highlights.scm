@@ -42,6 +42,7 @@
 (string_literal) @string
 (escape_sequence) @string.escape
 (integer_literal) @number
+(float_literal) @number
 (boolean_literal) @boolean
 (self_expression) @variable.builtin
 (comment) @comment
