@@ -1,4 +1,0 @@
-func main() void {
-    let count = 5
-    count = 6
-}
