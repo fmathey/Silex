@@ -2,7 +2,7 @@
 Arithmetic precedence
 ==================
 
-void main() {
+func main() void {
     print(1 + 2 * 3);
 }
 
@@ -10,9 +10,9 @@ void main() {
 
 (source_file
   (function_definition
-    (void_type)
     (identifier)
     (parameter_list)
+    (void_type)
     (block
       (statement
         (print_statement
@@ -32,9 +32,9 @@ void main() {
 Variables and conditional block
 ===============================
 
-void main() {
+func main() void {
     let a = 5;
-    var hit: bool = true;
+    var hit:bool = true;
     if (hit) {
         print(a);
     }
@@ -45,9 +45,9 @@ void main() {
 
 (source_file
   (function_definition
-    (void_type)
     (identifier)
     (parameter_list)
+    (void_type)
     (block
       (statement
         (variable_declaration
@@ -58,7 +58,8 @@ void main() {
         (variable_declaration
           (identifier)
           (type_annotation
-            (builtin_type))
+            (type
+              (builtin_type)))
           (expression
             (boolean_literal))))
       (statement
@@ -81,7 +82,7 @@ void main() {
 Logical precedence and else block
 =================================
 
-void main() {
+func main() void {
     let value = 5;
     if (!(value >= 10) && value != 0 || false) {
         print("active");
@@ -94,9 +95,9 @@ void main() {
 
 (source_file
   (function_definition
-    (void_type)
     (identifier)
     (parameter_list)
+    (void_type)
     (block
       (statement
         (variable_declaration
@@ -144,7 +145,7 @@ void main() {
 While loop
 ====================
 
-void main() {
+func main() void {
     var count = 2;
     while (count > 0) {
         print(count);
@@ -156,9 +157,9 @@ void main() {
 
 (source_file
   (function_definition
-    (void_type)
     (identifier)
     (parameter_list)
+    (void_type)
     (block
       (statement
         (variable_declaration
@@ -188,3 +189,414 @@ void main() {
                       (identifier))
                     (expression
                       (integer_literal))))))))))))
+
+=====================
+Automatic terminators
+=====================
+
+func main() void {
+    let a = 1 // comment
+    let b =
+        a +
+        2
+    print(
+        b
+    )
+    var count = 2; count = count - 1; print(count)
+}
+
+---
+
+(source_file
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (void_type)
+    (block
+      (statement
+        (variable_declaration
+          (identifier)
+          (expression
+            (integer_literal)))
+        (comment))
+      (statement
+        (variable_declaration
+          (identifier)
+          (expression
+            (binary_expression
+              (expression
+                (identifier))
+              (expression
+                (integer_literal))))))
+      (statement
+        (print_statement
+          (identifier)
+          (expression
+            (identifier))))
+      (statement
+        (variable_declaration
+          (identifier)
+          (expression
+            (integer_literal))))
+      (statement
+        (assignment_statement
+          (identifier)
+          (expression
+            (binary_expression
+              (expression
+                (identifier))
+              (expression
+                (integer_literal))))))
+      (statement
+        (print_statement
+          (identifier)
+          (expression
+            (identifier)))))))
+
+==============================================
+Missing separator between same-line statements
+==============================================
+
+func main() void {
+    let a = 1 let b = 2
+}
+
+---
+
+(source_file
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (void_type)
+    (block
+      (statement
+        (variable_declaration
+          (identifier)
+          (expression
+            (integer_literal)))
+        (MISSING ";"))
+      (statement
+        (variable_declaration
+          (identifier)
+          (expression
+            (integer_literal)))))))
+
+=============================
+Functions calls and returns
+=============================
+
+func main() void {
+    announce("result")
+    print(add(2, 3))
+}
+
+func add(left:int, right:int) int {
+    return left + right
+}
+
+func announce(message:string) void {
+    print(message)
+    return
+}
+
+---
+
+(source_file
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (void_type)
+    (block
+      (statement
+        (expression_statement
+          (call_expression
+            (identifier)
+            (expression
+              (string_literal)))))
+      (statement
+        (print_statement
+          (identifier)
+          (expression
+            (call_expression
+              (identifier)
+              (expression
+                (integer_literal))
+              (expression
+                (integer_literal))))))))
+  (function_definition
+    (identifier)
+    (parameter_list
+      (parameter
+        (identifier)
+        (type
+          (builtin_type)))
+      (parameter
+        (identifier)
+        (type
+          (builtin_type))))
+    (type
+      (builtin_type))
+    (block
+      (statement
+        (return_statement
+          (expression
+            (binary_expression
+              (expression
+                (identifier))
+              (expression
+                (identifier))))))))
+  (function_definition
+    (identifier)
+    (parameter_list
+      (parameter
+        (identifier)
+        (type
+          (builtin_type))))
+    (void_type)
+    (block
+      (statement
+        (print_statement
+          (identifier)
+          (expression
+            (identifier))))
+      (statement
+        (return_statement)))))
+
+=============================
+Defaults and compound assignments
+=============================
+
+struct Settings {
+    count:int
+    name:string = "Silex"
+}
+
+func main() void {
+    var settings:Settings
+    settings.count += 4
+    settings.count *= 2
+    settings.count--
+    settings.count++
+    let zero:int
+    print(zero)
+}
+
+---
+
+(source_file
+  (structure_definition
+    (identifier)
+    (structure_field
+      (identifier)
+      (type
+        (builtin_type)))
+    (structure_field
+      (identifier)
+      (type
+        (builtin_type))
+      (expression
+        (string_literal))))
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (void_type)
+    (block
+      (statement
+        (variable_declaration
+          (identifier)
+          (type_annotation
+            (type
+              (named_type
+                (type_identifier))))))
+      (statement
+        (assignment_statement
+          (member_expression
+            (identifier)
+            (identifier))
+          (expression
+            (integer_literal))))
+      (statement
+        (assignment_statement
+          (member_expression
+            (identifier)
+            (identifier))
+          (expression
+            (integer_literal))))
+      (statement
+        (update_statement
+          (member_expression
+            (identifier)
+            (identifier))))
+      (statement
+        (update_statement
+          (member_expression
+            (identifier)
+            (identifier))))
+      (statement
+        (variable_declaration
+          (identifier)
+          (type_annotation
+            (type
+              (builtin_type)))))
+      (statement
+        (print_statement
+          (identifier)
+          (expression
+            (identifier)))))))
+
+=============================
+Struct initialization and fields
+=============================
+
+struct Position {
+    x:int
+    y:int
+}
+
+func main() void {
+    var position = Position { y:20, x:10 }
+    position.x = 12
+    print(position.x)
+}
+
+---
+
+(source_file
+  (structure_definition
+    (identifier)
+    (structure_field
+      (identifier)
+      (type
+        (builtin_type)))
+    (structure_field
+      (identifier)
+      (type
+        (builtin_type))))
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (void_type)
+    (block
+      (statement
+        (variable_declaration
+          (identifier)
+          (expression
+            (structure_initializer
+              (identifier)
+              (field_initializer
+                (identifier)
+                (expression
+                  (integer_literal)))
+              (field_initializer
+                (identifier)
+                (expression
+                  (integer_literal)))))))
+      (statement
+        (assignment_statement
+          (member_expression
+            (identifier)
+            (identifier))
+          (expression
+            (integer_literal))))
+      (statement
+        (print_statement
+          (identifier)
+          (expression
+            (member_expression
+              (identifier)
+              (identifier))))))))
+
+=============================
+Struct methods and self
+=============================
+
+struct Counter {
+    value:int
+
+    func current() int {
+        return self.value
+    }
+
+    func increment(amount:int) void {
+        self.value = self.value + amount
+    }
+}
+
+func main() void {
+    var counter = Counter { value:1 }
+    counter.increment(2)
+    print(counter.current())
+}
+
+---
+
+(source_file
+  (structure_definition
+    (identifier)
+    (structure_field
+      (identifier)
+      (type
+        (builtin_type)))
+    (function_definition
+      (identifier)
+      (parameter_list)
+      (type
+        (builtin_type))
+      (block
+        (statement
+          (return_statement
+            (expression
+              (member_expression
+                (self_expression)
+                (identifier)))))))
+    (function_definition
+      (identifier)
+      (parameter_list
+        (parameter
+          (identifier)
+          (type
+            (builtin_type))))
+      (void_type)
+      (block
+        (statement
+          (assignment_statement
+            (member_expression
+              (self_expression)
+              (identifier))
+            (expression
+              (binary_expression
+                (expression
+                  (member_expression
+                    (self_expression)
+                    (identifier)))
+                (expression
+                  (identifier)))))))))
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (void_type)
+    (block
+      (statement
+        (variable_declaration
+          (identifier)
+          (expression
+            (structure_initializer
+              (identifier)
+              (field_initializer
+                (identifier)
+                (expression
+                  (integer_literal)))))))
+      (statement
+        (expression_statement
+          (method_call_expression
+            (identifier)
+            (identifier)
+            (expression
+              (integer_literal)))))
+      (statement
+        (print_statement
+          (identifier)
+          (expression
+            (method_call_expression
+              (identifier)
+              (identifier))))))))
