@@ -45,18 +45,18 @@ func main() void {
         batch++
     }
 
-    let positionChecksum:int64 = (
+    let position_checksum:int64 = (
         component0.position + component1.position
         + component2.position + component3.position
         + component4.position + component5.position
         + component6.position + component7.position
     )
-    let velocityChecksum:int64 = (
+    let velocity_checksum:int64 = (
         component0.velocity + component1.velocity
         + component2.velocity + component3.velocity
         + component4.velocity + component5.velocity
         + component6.velocity + component7.velocity
     )
-    print(positionChecksum)
-    print(velocityChecksum)
+    print(position_checksum)
+    print(velocity_checksum)
 }

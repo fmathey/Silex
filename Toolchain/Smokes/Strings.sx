@@ -7,8 +7,8 @@ func main() void {
     print(greeting)
     print(word)
     print(quote)
-    print(len("Aé\n"))
-    print(len("a\0b"))
+    print("Aé\n".count())
+    print("a\0b".count())
     print(word == "Aé!")
     print(word != "Aé?")
 }

@@ -1,0 +1,4 @@
+func main() void {
+    var values:int[] = []
+    values.take_last()
+}

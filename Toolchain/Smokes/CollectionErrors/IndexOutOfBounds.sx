@@ -1,0 +1,4 @@
+func main() void {
+    let values:int[3] = [10, 20, 30]
+    print(values[3])
+}

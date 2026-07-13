@@ -6,8 +6,8 @@ use Plugins.WindowSession
 use NK.Window.Session as NativeSession
 
 func main() void {
-    let session:WindowSession = Plugins.createWindow()
-    let raw:WindowSession = Plugins.rawCreate()
+    let session:WindowSession = Plugins.create_window()
+    let raw:WindowSession = Plugins.raw_create()
     let native:NativeSession
     print(session.active)
     print(raw.active)

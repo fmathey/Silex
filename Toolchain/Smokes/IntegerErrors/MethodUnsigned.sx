@@ -1,12 +1,12 @@
 struct Player {
     health:uint8 = 10
 
-    func takeDamage(amount:uint8) void {
+    func take_damage(amount:uint8) void {
         self.health -= amount
     }
 }
 
 func main() void {
     var player:Player
-    player.takeDamage(255)
+    player.take_damage(255)
 }

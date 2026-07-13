@@ -51,6 +51,11 @@
 (comment) @comment
 
 [
+  "["
+  "]"
+] @punctuation.bracket
+
+[
   "import"
   "use"
   "pub"
@@ -86,4 +91,5 @@
   "!"
   "&&"
   "||"
+  "^"
 ] @operator

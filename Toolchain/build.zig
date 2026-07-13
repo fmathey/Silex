@@ -270,14 +270,73 @@ pub fn build(b: *std.Build) void {
     invalid_string_length_command.addArgs(&.{ "compile", "Tests/InvalidStringLength.sx" });
     invalid_string_length_command.expectExitCode(1);
     invalid_string_length_command.expectStdErrEqual(
-        "Tests/InvalidStringLength.sx:2:15: error: argument 1 of 'len' expects 'str', found 'int'\n",
+        "Tests/InvalidStringLength.sx:2:13: error: method call requires a struct or collection value\n",
     );
 
     const reserved_length_function_command = b.addRunArtifact(executable);
     reserved_length_function_command.addArgs(&.{ "compile", "Tests/ReservedLengthFunction.sx" });
-    reserved_length_function_command.expectExitCode(1);
-    reserved_length_function_command.expectStdErrEqual(
-        "Tests/ReservedLengthFunction.sx:1:6: error: 'len' is a built-in function\n",
+
+    const invalid_collection_copy_command = b.addRunArtifact(executable);
+    invalid_collection_copy_command.addArgs(&.{ "compile", "Tests/InvalidCollectionCopy.sx" });
+    invalid_collection_copy_command.expectExitCode(1);
+    invalid_collection_copy_command.expectStdErrEqual(
+        "Tests/InvalidCollectionCopy.sx:3:18: error: cannot copy an owning value; use 'move'\n",
+    );
+
+    const invalid_fixed_array_length_command = b.addRunArtifact(executable);
+    invalid_fixed_array_length_command.addArgs(&.{ "compile", "Tests/InvalidFixedArrayLength.sx" });
+    invalid_fixed_array_length_command.expectExitCode(1);
+    invalid_fixed_array_length_command.expectStdErrEqual(
+        "Tests/InvalidFixedArrayLength.sx:2:25: error: array literal expects 3 values, found 2\n",
+    );
+
+    const invalid_empty_collection_literal_command = b.addRunArtifact(executable);
+    invalid_empty_collection_literal_command.addArgs(&.{ "compile", "Tests/InvalidEmptyCollectionLiteral.sx" });
+    invalid_empty_collection_literal_command.expectExitCode(1);
+    invalid_empty_collection_literal_command.expectStdErrEqual(
+        "Tests/InvalidEmptyCollectionLiteral.sx:2:18: error: empty sequence literal requires a collection type\n",
+    );
+
+    const invalid_immutable_list_mutation_command = b.addRunArtifact(executable);
+    invalid_immutable_list_mutation_command.addArgs(&.{ "compile", "Tests/InvalidImmutableListMutation.sx" });
+    invalid_immutable_list_mutation_command.expectExitCode(1);
+    invalid_immutable_list_mutation_command.expectStdErrEqual(
+        "Tests/InvalidImmutableListMutation.sx:3:12: error: cannot call mutating method 'append' on immutable value 'values'\n",
+    );
+
+    const invalid_collection_index_type_command = b.addRunArtifact(executable);
+    invalid_collection_index_type_command.addArgs(&.{ "compile", "Tests/InvalidCollectionIndexType.sx" });
+    invalid_collection_index_type_command.expectExitCode(1);
+    invalid_collection_index_type_command.expectStdErrEqual(
+        "Tests/InvalidCollectionIndexType.sx:3:18: error: collection index expects 'int', found 'bool'\n",
+    );
+
+    const invalid_fixed_array_append_command = b.addRunArtifact(executable);
+    invalid_fixed_array_append_command.addArgs(&.{ "compile", "Tests/InvalidFixedArrayAppend.sx" });
+    invalid_fixed_array_append_command.expectExitCode(1);
+    invalid_fixed_array_append_command.expectStdErrEqual(
+        "Tests/InvalidFixedArrayAppend.sx:3:12: error: method 'append' is not available on 'array'\n",
+    );
+
+    const invalid_immutable_element_assignment_command = b.addRunArtifact(executable);
+    invalid_immutable_element_assignment_command.addArgs(&.{ "compile", "Tests/InvalidImmutableElementAssignment.sx" });
+    invalid_immutable_element_assignment_command.expectExitCode(1);
+    invalid_immutable_element_assignment_command.expectStdErrEqual(
+        "Tests/InvalidImmutableElementAssignment.sx:3:5: error: cannot assign to immutable variable 'values'\n",
+    );
+
+    const invalid_owned_element_copy_command = b.addRunArtifact(executable);
+    invalid_owned_element_copy_command.addArgs(&.{ "compile", "Tests/InvalidOwnedElementCopy.sx" });
+    invalid_owned_element_copy_command.expectExitCode(1);
+    invalid_owned_element_copy_command.expectStdErrEqual(
+        "Tests/InvalidOwnedElementCopy.sx:3:28: error: cannot copy an owning place; borrow it, replace it, or take it from a list\n",
+    );
+
+    const invalid_borrowed_element_mutation_command = b.addRunArtifact(executable);
+    invalid_borrowed_element_mutation_command.addArgs(&.{ "compile", "Tests/InvalidBorrowedElementMutation.sx" });
+    invalid_borrowed_element_mutation_command.expectExitCode(1);
+    invalid_borrowed_element_mutation_command.expectStdErrEqual(
+        "Tests/InvalidBorrowedElementMutation.sx:4:12: error: cannot mutate borrowed variable 'values'\n",
     );
 
     const invalid_structure_equality_command = b.addRunArtifact(executable);
@@ -320,7 +379,7 @@ pub fn build(b: *std.Build) void {
         "silex: native compilation failed for target 'x86_64-linux-musl'; target support, SDKs, or native sources may be unavailable or incomplete\n",
     );
     backend_discovered_target_failure_command.expectStdErrMatch(b.fmt(
-        "silex: backend details: .silex{c}cache{c}v12{c}x86_64-linux-musl{c}",
+        "silex: backend details: .silex{c}cache{c}v14{c}x86_64-linux-musl{c}",
         .{
             std.fs.path.sep,
             std.fs.path.sep,
@@ -429,6 +488,15 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&invalid_unicode_escape_command.step);
     test_step.dependOn(&invalid_string_length_command.step);
     test_step.dependOn(&reserved_length_function_command.step);
+    test_step.dependOn(&invalid_collection_copy_command.step);
+    test_step.dependOn(&invalid_fixed_array_length_command.step);
+    test_step.dependOn(&invalid_empty_collection_literal_command.step);
+    test_step.dependOn(&invalid_immutable_list_mutation_command.step);
+    test_step.dependOn(&invalid_collection_index_type_command.step);
+    test_step.dependOn(&invalid_fixed_array_append_command.step);
+    test_step.dependOn(&invalid_immutable_element_assignment_command.step);
+    test_step.dependOn(&invalid_owned_element_copy_command.step);
+    test_step.dependOn(&invalid_borrowed_element_mutation_command.step);
     test_step.dependOn(&invalid_structure_equality_command.step);
     test_step.dependOn(&invalid_target_command.step);
     test_step.dependOn(&unavailable_cpp_target_command.step);
@@ -496,8 +564,46 @@ pub fn build(b: *std.Build) void {
     strings_command.addArgs(&.{ "run", "Smokes/Strings.sx" });
     strings_command.expectStdOutEqual(hostText(b, "Hello, Silex\n\nAé!\n\"\\\n3\n3\ntrue\ntrue\n"));
 
+    const collections_command = b.addRunArtifact(executable);
+    collections_command.step.dependOn(&strings_command.step);
+    collections_command.addArgs(&.{ "run", "Smokes/Collections.sx" });
+    collections_command.expectStdOutEqual(hostText(b, "1\n3\n20\n20\n1\nfalse\ntrue\n15\n15\n10\n30\n20\n40\n50\n40\n0\ntrue\n2\n7\n9\n"));
+
+    const collection_take_last_empty_command = b.addRunArtifact(executable);
+    collection_take_last_empty_command.step.dependOn(&collections_command.step);
+    collection_take_last_empty_command.addArgs(&.{ "run", "Smokes/CollectionErrors/TakeLastEmpty.sx" });
+    collection_take_last_empty_command.expectExitCode(1);
+    collection_take_last_empty_command.expectStdErrEqual(hostText(
+        b,
+        b.fmt("{s}:3:12: runtime error: collection index ^1 is out of bounds for count 0\n", .{
+            b.pathFromRoot("Smokes/CollectionErrors/TakeLastEmpty.sx"),
+        }),
+    ));
+
+    const collection_index_out_of_bounds_command = b.addRunArtifact(executable);
+    collection_index_out_of_bounds_command.step.dependOn(&collection_take_last_empty_command.step);
+    collection_index_out_of_bounds_command.addArgs(&.{ "run", "Smokes/CollectionErrors/IndexOutOfBounds.sx" });
+    collection_index_out_of_bounds_command.expectExitCode(1);
+    collection_index_out_of_bounds_command.expectStdErrEqual(hostText(
+        b,
+        b.fmt("{s}:3:17: runtime error: collection index 3 is out of bounds for count 3\n", .{
+            b.pathFromRoot("Smokes/CollectionErrors/IndexOutOfBounds.sx"),
+        }),
+    ));
+
+    const collection_reverse_index_zero_command = b.addRunArtifact(executable);
+    collection_reverse_index_zero_command.step.dependOn(&collection_index_out_of_bounds_command.step);
+    collection_reverse_index_zero_command.addArgs(&.{ "run", "Smokes/CollectionErrors/ReverseIndexZero.sx" });
+    collection_reverse_index_zero_command.expectExitCode(1);
+    collection_reverse_index_zero_command.expectStdErrEqual(hostText(
+        b,
+        b.fmt("{s}:3:17: runtime error: collection index ^0 is out of bounds for count 3\n", .{
+            b.pathFromRoot("Smokes/CollectionErrors/ReverseIndexZero.sx"),
+        }),
+    ));
+
     const structure_equality_command = b.addRunArtifact(executable);
-    structure_equality_command.step.dependOn(&strings_command.step);
+    structure_equality_command.step.dependOn(&collection_reverse_index_zero_command.step);
     structure_equality_command.addArgs(&.{ "run", "Smokes/StructureEquality.sx" });
     structure_equality_command.expectStdOutEqual(hostText(b, "true\ntrue\ntrue\ntrue\n"));
 

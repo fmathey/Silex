@@ -17,7 +17,7 @@ struct Position {
     x:float
     y:float = 10.0
 
-    func multiplyX(factor:float) void {
+    func multiply_x(factor:float) void {
         self.x *= factor
     }
 }
@@ -29,7 +29,7 @@ func main() void {
     print("Hello World")
 
     if (hit && position.x < position.y) {
-        position.multiplyX(2)
+        position.multiply_x(2)
         print(position.x)
     } else {
         print("blocked")
@@ -55,7 +55,7 @@ ainsi que les opérateurs logiques `!`, `&&` et `||`. Une condition `if` exige
 une expression booléenne et peut être suivie d'un bloc `else`. Une boucle
 `while` réévalue une condition booléenne avant chaque itération.
 Les fonctions et méthodes utilisent la signature `func name(param:type)
-returnType`. Les fonctions utilisateur peuvent être appelées avant leur
+return_type`. Les fonctions utilisateur peuvent être appelées avant leur
 définition.
 
 Une annotation sans initialisateur utilise une valeur déterministe : `0` pour

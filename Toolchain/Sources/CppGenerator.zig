@@ -19,9 +19,11 @@ pub fn generateWithSources(
 ) ![]u8 {
     var output: std.ArrayList(u8) = .empty;
     try output.appendSlice(allocator,
+        \\#include <algorithm>
         \\#include <cstddef>
         \\#include <cstdint>
         \\#include <cstdlib>
+        \\#include <array>
         \\#include <bit>
         \\#include <cmath>
         \\#include <iostream>
@@ -29,6 +31,7 @@ pub fn generateWithSources(
         \\#include <string>
         \\#include <type_traits>
         \\#include <utility>
+        \\#include <vector>
         \\
     );
     try output.appendSlice(allocator,
@@ -135,6 +138,95 @@ pub fn generateWithSources(
         \\        if ((byte & 0xC0) != 0x80) ++length;
         \\    }
         \\    return length;
+        \\}
+        \\
+        \\std::int64_t silexCollectionCount(std::size_t value, SilexSourceLocation location) {
+        \\    if (value > static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max())) [[unlikely]] {
+        \\        std::cerr << silexSourcePath(location) << ':' << location.line << ':' << location.column
+        \\                  << ": runtime error: collection count is outside the range of 'int'\n";
+        \\        std::exit(1);
+        \\    }
+        \\    return static_cast<std::int64_t>(value);
+        \\}
+        \\
+        \\std::size_t silexCollectionOffset(
+        \\    std::size_t count,
+        \\    std::int64_t index,
+        \\    bool fromEnd,
+        \\    bool allowEnd,
+        \\    SilexSourceLocation location
+        \\) {
+        \\    bool valid = false;
+        \\    std::size_t offset = 0;
+        \\    if (fromEnd) {
+        \\        valid = index > 0 && static_cast<std::uint64_t>(index) <= count;
+        \\        if (valid) offset = count - static_cast<std::size_t>(index);
+        \\    } else {
+        \\        valid = index >= 0 && static_cast<std::uint64_t>(index) <= count;
+        \\        if (valid) {
+        \\            offset = static_cast<std::size_t>(index);
+        \\            valid = allowEnd || offset < count;
+        \\        }
+        \\    }
+        \\    if (!valid) [[unlikely]] {
+        \\        std::cerr << silexSourcePath(location) << ':' << location.line << ':' << location.column
+        \\                  << ": runtime error: collection index ";
+        \\        if (fromEnd) std::cerr << '^';
+        \\        std::cerr << index << " is out of bounds for count " << count << '\n';
+        \\        std::exit(1);
+        \\    }
+        \\    return offset;
+        \\}
+        \\
+        \\template <typename Collection>
+        \\decltype(auto) silexCollectionAt(Collection&& values, std::int64_t index, bool fromEnd, SilexSourceLocation location) {
+        \\    const auto offset = silexCollectionOffset(values.size(), index, fromEnd, false, location);
+        \\    return std::forward<Collection>(values)[offset];
+        \\}
+        \\
+        \\template <typename T>
+        \\void silexListPrepend(std::vector<T>& values, T value) {
+        \\    values.insert(values.begin(), std::move(value));
+        \\}
+        \\
+        \\template <typename T>
+        \\void silexListInsert(std::vector<T>& values, std::int64_t index, T value, SilexSourceLocation location) {
+        \\    const auto offset = silexCollectionOffset(values.size(), index, false, true, location);
+        \\    values.insert(values.begin() + static_cast<std::ptrdiff_t>(offset), std::move(value));
+        \\}
+        \\
+        \\template <typename T>
+        \\T silexListTake(std::vector<T>& values, std::int64_t index, SilexSourceLocation location) {
+        \\    const auto offset = silexCollectionOffset(values.size(), index, false, false, location);
+        \\    T value = std::move(values[offset]);
+        \\    values.erase(values.begin() + static_cast<std::ptrdiff_t>(offset));
+        \\    return value;
+        \\}
+        \\
+        \\template <typename T>
+        \\T silexListTakeLast(std::vector<T>& values, SilexSourceLocation location) {
+        \\    const auto offset = silexCollectionOffset(values.size(), 1, true, false, location);
+        \\    T value = std::move(values[offset]);
+        \\    values.pop_back();
+        \\    return value;
+        \\}
+        \\
+        \\template <typename Collection, typename T>
+        \\T silexCollectionReplace(Collection& values, std::int64_t index, T value, SilexSourceLocation location) {
+        \\    const auto offset = silexCollectionOffset(values.size(), index, false, false, location);
+        \\    return std::exchange(values[offset], std::move(value));
+        \\}
+        \\
+        \\template <typename Collection>
+        \\void silexCollectionSwap(Collection& values, std::int64_t left, std::int64_t right, SilexSourceLocation location) {
+        \\    const auto leftOffset = silexCollectionOffset(values.size(), left, false, false, location);
+        \\    const auto rightOffset = silexCollectionOffset(values.size(), right, false, false, location);
+        \\    std::swap(values[leftOffset], values[rightOffset]);
+        \\}
+        \\
+        \\template <typename Collection>
+        \\void silexCollectionReverse(Collection& values) {
+        \\    std::reverse(values.begin(), values.end());
         \\}
         \\
         \\template <typename T>
@@ -528,6 +620,114 @@ fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expressi
             try generateExpression(allocator, output, argument);
             try output.append(allocator, ')');
         },
+        .sequence_literal => |values| {
+            try appendCppType(allocator, output, expression.type);
+            try output.append(allocator, '{');
+            for (values, 0..) |value, index| {
+                if (index != 0) try output.appendSlice(allocator, ", ");
+                try generateExpression(allocator, output, value);
+            }
+            try output.append(allocator, '}');
+        },
+        .collection_method => |method| {
+            switch (method.operation) {
+                .count => {
+                    try output.appendSlice(allocator, "silexCollectionCount(");
+                    try generateExpression(allocator, output, method.object);
+                    try output.appendSlice(allocator, ".size(), ");
+                    try appendCppSourceLocation(allocator, output, method.position);
+                    try output.append(allocator, ')');
+                },
+                .is_empty => {
+                    try generateExpression(allocator, output, method.object);
+                    try output.appendSlice(allocator, ".empty()");
+                },
+                .append => {
+                    try generateExpression(allocator, output, method.object);
+                    try output.appendSlice(allocator, ".push_back(");
+                    try generateExpression(allocator, output, method.arguments[0]);
+                    try output.append(allocator, ')');
+                },
+                .prepend => {
+                    try output.appendSlice(allocator, "silexListPrepend(");
+                    try generateExpression(allocator, output, method.object);
+                    try output.appendSlice(allocator, ", ");
+                    try generateExpression(allocator, output, method.arguments[0]);
+                    try output.append(allocator, ')');
+                },
+                .insert => {
+                    try output.appendSlice(allocator, "silexListInsert(");
+                    try generateExpression(allocator, output, method.object);
+                    try output.appendSlice(allocator, ", ");
+                    try generateExpression(allocator, output, method.arguments[0]);
+                    try output.appendSlice(allocator, ", ");
+                    try generateExpression(allocator, output, method.arguments[1]);
+                    try output.appendSlice(allocator, ", ");
+                    try appendCppSourceLocation(allocator, output, method.position);
+                    try output.append(allocator, ')');
+                },
+                .take, .take_first => {
+                    try output.appendSlice(allocator, "silexListTake(");
+                    try generateExpression(allocator, output, method.object);
+                    try output.appendSlice(allocator, ", ");
+                    if (method.operation == .take) {
+                        try generateExpression(allocator, output, method.arguments[0]);
+                    } else {
+                        try output.appendSlice(allocator, "std::int64_t{0}");
+                    }
+                    try output.appendSlice(allocator, ", ");
+                    try appendCppSourceLocation(allocator, output, method.position);
+                    try output.append(allocator, ')');
+                },
+                .take_last => {
+                    try output.appendSlice(allocator, "silexListTakeLast(");
+                    try generateExpression(allocator, output, method.object);
+                    try output.appendSlice(allocator, ", ");
+                    try appendCppSourceLocation(allocator, output, method.position);
+                    try output.append(allocator, ')');
+                },
+                .replace => {
+                    try output.appendSlice(allocator, "silexCollectionReplace(");
+                    try generateExpression(allocator, output, method.object);
+                    try output.appendSlice(allocator, ", ");
+                    try generateExpression(allocator, output, method.arguments[0]);
+                    try output.appendSlice(allocator, ", ");
+                    try generateExpression(allocator, output, method.arguments[1]);
+                    try output.appendSlice(allocator, ", ");
+                    try appendCppSourceLocation(allocator, output, method.position);
+                    try output.append(allocator, ')');
+                },
+                .swap => {
+                    try output.appendSlice(allocator, "silexCollectionSwap(");
+                    try generateExpression(allocator, output, method.object);
+                    try output.appendSlice(allocator, ", ");
+                    try generateExpression(allocator, output, method.arguments[0]);
+                    try output.appendSlice(allocator, ", ");
+                    try generateExpression(allocator, output, method.arguments[1]);
+                    try output.appendSlice(allocator, ", ");
+                    try appendCppSourceLocation(allocator, output, method.position);
+                    try output.append(allocator, ')');
+                },
+                .reverse => {
+                    try output.appendSlice(allocator, "silexCollectionReverse(");
+                    try generateExpression(allocator, output, method.object);
+                    try output.append(allocator, ')');
+                },
+                .clear => {
+                    try generateExpression(allocator, output, method.object);
+                    try output.appendSlice(allocator, ".clear()");
+                },
+            }
+        },
+        .index_access => |access| {
+            try output.appendSlice(allocator, "silexCollectionAt(");
+            try generateExpression(allocator, output, access.object);
+            try output.appendSlice(allocator, ", ");
+            try generateExpression(allocator, output, access.index);
+            try output.appendSlice(allocator, if (access.from_end) ", true, " else ", false, ");
+            try appendCppSourceLocation(allocator, output, expression.position);
+            try output.append(allocator, ')');
+        },
         .variable => |generated_name| try output.appendSlice(allocator, generated_name),
         .self => try output.appendSlice(allocator, "*this"),
         .call => |call| {
@@ -702,6 +902,14 @@ fn generateRuntimeArguments(
     try appendCppStringLiteral(allocator, output, silexTypeName(type_name));
 }
 
+fn appendCppSourceLocation(allocator: Allocator, output: *std.ArrayList(u8), position: Source.Position) !void {
+    try output.appendSlice(allocator, try std.fmt.allocPrint(
+        allocator,
+        "SilexSourceLocation{{{d}, {d}, {d}}}",
+        .{ position.file, position.line, position.column },
+    ));
+}
+
 fn indent(allocator: Allocator, output: *std.ArrayList(u8), level: usize) !void {
     var index: usize = 0;
     while (index < level) : (index += 1) try output.appendSlice(allocator, "    ");
@@ -722,6 +930,7 @@ fn cppType(type_name: Semantic.Type) []const u8 {
         .float64 => "double",
         .bool => "bool",
         .str => "std::string",
+        .list, .fixed_array => unreachable,
         .structure => |structure_type| structure_type.generated_name,
         .reference => unreachable,
     };
@@ -733,6 +942,16 @@ fn appendCppType(allocator: Allocator, output: *std.ArrayList(u8), type_name: Se
             if (!reference.mutable) try output.appendSlice(allocator, "const ");
             try appendCppType(allocator, output, reference.target.*);
             try output.append(allocator, '*');
+        },
+        .list => |element| {
+            try output.appendSlice(allocator, "std::vector<");
+            try appendCppType(allocator, output, element.*);
+            try output.append(allocator, '>');
+        },
+        .fixed_array => |array| {
+            try output.appendSlice(allocator, "std::array<");
+            try appendCppType(allocator, output, array.element.*);
+            try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, ", {d}>", .{array.length}));
         },
         else => try output.appendSlice(allocator, cppType(type_name)),
     }
@@ -753,6 +972,8 @@ fn silexTypeName(type_name: Semantic.Type) []const u8 {
         .float64 => "float64",
         .bool => "bool",
         .str => "str",
+        .list => "list",
+        .fixed_array => "array",
         .structure => |structure_type| structure_type.source_name,
         .reference => |reference| if (reference.mutable) "reference&" else "reference@",
     };
@@ -881,7 +1102,7 @@ test "generate UTF-8 strings and their length" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    var parser = Parser.init(allocator, "func main() void { print(len(\"A\\u{00E9}\\0\")); }");
+    var parser = Parser.init(allocator, "func main() void { print(\"A\\u{00E9}\\0\".count()); }");
     var analyzer = Semantic.Analyzer.init(allocator);
     const cpp = try generate(allocator, try analyzer.analyze(try parser.parse()));
 

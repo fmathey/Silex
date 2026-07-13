@@ -188,6 +188,8 @@ pub const Parser = struct {
             .bool => .bool,
             .str => .str,
             .structure => |name| .{ .structure = name },
+            .list => |element| .{ .list = element },
+            .fixed_array => |array| .{ .fixed_array = array },
             .reference => |reference| .{ .reference = reference },
         };
     }
@@ -302,12 +304,29 @@ pub const Parser = struct {
             else => return self.fail(message),
         };
         if (type_name != .structure) try self.advance();
+        var result = type_name;
+        while (self.current.tag == .left_bracket) {
+            try self.advance();
+            if (self.current.tag == .right_bracket) {
+                try self.advance();
+                const element = try self.newTypeName(result);
+                result = .{ .list = element };
+                continue;
+            }
+            if (self.current.tag != .integer) return self.fail("expected array length or ']'");
+            const length = self.current.lexeme;
+            try self.advance();
+            try self.expect(.right_bracket, "expected ']' after array length");
+            const element = try self.newTypeName(result);
+            result = .{ .fixed_array = .{ .element = element, .length = length } };
+        }
         if (self.current.tag == .amp or self.current.tag == .at) {
             const mutable = self.current.tag == .amp;
             try self.advance();
-            return .{ .reference = .{ .target = try self.newTypeName(type_name), .mutable = mutable } };
+            const target = try self.newTypeName(result);
+            return .{ .reference = .{ .target = target, .mutable = mutable } };
         }
-        return type_name;
+        return result;
     }
 
     fn parseIdentifierStatement(self: *Parser) ParseError!Ast.Statement {
@@ -525,23 +544,24 @@ pub const Parser = struct {
         switch (token.tag) {
             .integer => {
                 try self.advance();
-                return self.newExpression(.{ .position = token.position, .value = .{ .integer = token.lexeme } });
+                return self.parsePostfix(try self.newExpression(.{ .position = token.position, .value = .{ .integer = token.lexeme } }));
             },
             .floating => {
                 try self.advance();
-                return self.newExpression(.{ .position = token.position, .value = .{ .floating = token.lexeme } });
+                return self.parsePostfix(try self.newExpression(.{ .position = token.position, .value = .{ .floating = token.lexeme } }));
             },
             .keyword_true, .keyword_false => {
                 try self.advance();
-                return self.newExpression(.{
+                return self.parsePostfix(try self.newExpression(.{
                     .position = token.position,
                     .value = .{ .boolean = token.tag == .keyword_true },
-                });
+                }));
             },
             .string => {
                 try self.advance();
-                return self.newExpression(.{ .position = token.position, .value = .{ .string = token.lexeme } });
+                return self.parsePostfix(try self.newExpression(.{ .position = token.position, .value = .{ .string = token.lexeme } }));
             },
+            .left_bracket => return self.parsePostfix(try self.parseSequenceLiteral()),
             .identifier, .keyword_self => {
                 return self.parseIdentifierExpression();
             },
@@ -549,10 +569,23 @@ pub const Parser = struct {
                 try self.advance();
                 const expression = try self.parseExpression(true);
                 try self.expect(.right_parenthesis, "expected ')'");
-                return expression;
+                return self.parsePostfix(expression);
             },
             else => return self.fail("expected expression"),
         }
+    }
+
+    fn parseSequenceLiteral(self: *Parser) ParseError!*Ast.Expression {
+        const position = self.current.position;
+        try self.expect(.left_bracket, "expected '['");
+        var values: std.ArrayList(*Ast.Expression) = .empty;
+        while (self.current.tag != .right_bracket) {
+            try values.append(self.allocator, try self.parseExpression(true));
+            if (self.current.tag != .comma) break;
+            try self.advance();
+        }
+        try self.expect(.right_bracket, "expected ']' after sequence literal");
+        return self.newExpression(.{ .position = position, .value = .{ .sequence_literal = try values.toOwnedSlice(self.allocator) } });
     }
 
     fn parseIdentifierExpression(self: *Parser) ParseError!*Ast.Expression {
@@ -571,7 +604,36 @@ pub const Parser = struct {
         else
             try self.newExpression(.{ .position = token.position, .value = .{ .identifier = token.lexeme } });
 
-        while (self.current.tag == .dot) {
+        expression = try self.parsePostfix(expression);
+        if (self.current.tag == .left_brace) {
+            if (try self.expressionPath(expression)) |path| {
+                return self.parseStructureInitializer(path, token.position);
+            }
+        }
+        return expression;
+    }
+
+    fn parsePostfix(self: *Parser, initial: *Ast.Expression) ParseError!*Ast.Expression {
+        var expression = initial;
+        while (self.current.tag == .dot or self.current.tag == .left_bracket) {
+            if (self.current.tag == .left_bracket) {
+                const bracket_position = self.current.position;
+                try self.advance();
+                const from_end = self.current.tag == .caret;
+                if (from_end) try self.advance();
+                const index = try self.parseExpression(true);
+                try self.expect(.right_bracket, "expected ']' after collection index");
+                expression = try self.newExpression(.{
+                    .position = expression.position,
+                    .value = .{ .index_access = .{
+                        .object = expression,
+                        .index = index,
+                        .from_end = from_end,
+                        .bracket_position = bracket_position,
+                    } },
+                });
+                continue;
+            }
             try self.advance();
             if (self.current.tag != .identifier) return self.fail("expected field name after '.'");
             const name = self.current.lexeme;
@@ -588,11 +650,6 @@ pub const Parser = struct {
                         .name_position = position,
                     } },
                 });
-            }
-        }
-        if (self.current.tag == .left_brace) {
-            if (try self.expressionPath(expression)) |path| {
-                return self.parseStructureInitializer(path, token.position);
             }
         }
         return expression;
@@ -1039,4 +1096,15 @@ test "parse functions parameters calls and returns" {
     try std.testing.expectEqual(@as(usize, 2), program.functions[1].parameters.len);
     try std.testing.expectEqualStrings("add", program.functions[0].statements[0].print.argument.value.call.name);
     try std.testing.expect(program.functions[1].statements[0].return_statement.value != null);
+}
+
+test "parse fixed arrays and lists" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var parser = Parser.init(arena.allocator(), "func main(values:int[], fixed:int[3]) void {}");
+    const program = try parser.parse();
+    try std.testing.expect(program.functions[0].parameters[0].type == .list);
+    try std.testing.expect(program.functions[0].parameters[0].type.list.* == .int);
+    try std.testing.expect(program.functions[0].parameters[1].type == .fixed_array);
+    try std.testing.expect(program.functions[0].parameters[1].type.fixed_array.element.* == .int);
 }

@@ -5,7 +5,7 @@ String escapes and concatenation
 func main() void {
     var message = "Hello, " + "Silex\n"
     message += "\u{1F642}"
-    print(len(message))
+    print(message.count())
 }
 
 ---
@@ -36,7 +36,6 @@ func main() void {
         (print_statement
           function: (identifier)
           argument: (expression
-            (call_expression
-              function: (identifier)
-              (expression
-                (identifier)))))))))
+            (method_call_expression
+              object: (identifier)
+              method: (identifier))))))))

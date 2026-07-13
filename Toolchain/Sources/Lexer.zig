@@ -59,6 +59,7 @@ pub const TokenTag = enum {
     amp_amp,
     amp,
     at,
+    caret,
     pipe_pipe,
     colon,
     comma,
@@ -67,6 +68,8 @@ pub const TokenTag = enum {
     right_parenthesis,
     left_brace,
     right_brace,
+    left_bracket,
+    right_bracket,
     semicolon,
     end,
 };
@@ -133,12 +136,15 @@ pub const Lexer = struct {
         return switch (character) {
             ':' => self.token(.colon, start, position),
             '@' => self.token(.at, start, position),
+            '^' => self.token(.caret, start, position),
             ',' => self.token(.comma, start, position),
             '.' => self.token(.dot, start, position),
             '(' => self.token(.left_parenthesis, start, position),
             ')' => self.token(.right_parenthesis, start, position),
             '{' => self.token(.left_brace, start, position),
             '}' => self.token(.right_brace, start, position),
+            '[' => self.token(.left_bracket, start, position),
+            ']' => self.token(.right_bracket, start, position),
             ';' => self.token(.semicolon, start, position),
             else => self.fail(position, "invalid character"),
         };

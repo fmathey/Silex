@@ -6,7 +6,7 @@ func main() void {
 
     announce(message)
 
-    if (hit && isPositive(a) && a < b) {
+    if (hit && is_positive(a) && a < b) {
         print(multiply(a, b))
     } else {
         print("unexpected branch")
@@ -33,7 +33,7 @@ func multiply(left:int, right:int) int {
     return left * right
 }
 
-func isPositive(value:int) bool {
+func is_positive(value:int) bool {
     return value > 0
 }
 

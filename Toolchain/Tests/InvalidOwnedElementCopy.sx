@@ -1,0 +1,4 @@
+func main() void {
+    let values:int[][] = [[10]]
+    let copy:int[] = values[0]
+}

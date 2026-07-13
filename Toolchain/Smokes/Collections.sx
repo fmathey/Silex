@@ -1,0 +1,46 @@
+func print_ref(value:int@) void {
+    print(*value)
+}
+
+func main() void {
+    var fixed:int[3] = [1, 2, 3]
+    print(fixed[0])
+    print(fixed[^1])
+    fixed[1] = 20
+    print(fixed[1])
+    print(fixed.replace(1, 2))
+    fixed.swap(0, 2)
+    fixed.reverse()
+    print(fixed[0])
+    print(fixed.is_empty())
+
+    var values:int[] = []
+    print(values.is_empty())
+    values.append(20)
+    values.prepend(10)
+    values.insert(1, 15)
+    print(values[^2])
+    print(values.take(1))
+    print(values.take_first())
+    values.append(30)
+    print(values.take_last())
+    print(values.replace(0, 40))
+    values.append(50)
+    values.swap(0, 1)
+    values.reverse()
+    print(values[0])
+    print(values[^1])
+    print_ref(&values[0])
+    values.clear()
+    print(values.count())
+    print(values.is_empty())
+
+    var nested:int[][] = []
+    var row:int[] = [7, 8]
+    nested.append(move row)
+    print(nested[0].count())
+    let previous:int[] = nested.replace(0, [9])
+    print(previous[0])
+    let last_row:int[] = nested.take_last()
+    print(last_row[0])
+}

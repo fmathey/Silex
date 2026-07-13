@@ -40,7 +40,14 @@ pub const TypeName = union(enum) {
     bool,
     str,
     structure: []const u8,
+    list: *TypeName,
+    fixed_array: FixedArray,
     reference: Reference,
+
+    pub const FixedArray = struct {
+        element: *TypeName,
+        length: []const u8,
+    };
 
     pub const Reference = struct {
         target: *TypeName,
@@ -66,6 +73,8 @@ pub const ReturnType = union(enum) {
     bool,
     str,
     structure: []const u8,
+    list: *TypeName,
+    fixed_array: TypeName.FixedArray,
     reference: TypeName.Reference,
 };
 
@@ -91,12 +100,14 @@ pub const Expression = struct {
         floating: []const u8,
         boolean: bool,
         string: []const u8,
+        sequence_literal: []const *Expression,
         identifier: []const u8,
         self,
         call: Call,
         method_call: MethodCall,
         structure_initializer: StructureInitializer,
         member_access: MemberAccess,
+        index_access: IndexAccess,
         unary: Unary,
         conversion: Conversion,
         binary: Binary,
@@ -137,6 +148,13 @@ pub const Expression = struct {
         object: *Expression,
         name: []const u8,
         name_position: Source.Position,
+    };
+
+    pub const IndexAccess = struct {
+        object: *Expression,
+        index: *Expression,
+        from_end: bool,
+        bracket_position: Source.Position,
     };
 
     pub const Conversion = struct {

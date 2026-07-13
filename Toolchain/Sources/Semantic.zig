@@ -20,6 +20,8 @@ pub const Type = union(enum) {
     bool,
     str,
     structure: StructureType,
+    list: *const Type,
+    fixed_array: FixedArrayType,
     reference: ReferenceType,
 };
 
@@ -31,6 +33,11 @@ pub const StructureType = struct {
 pub const ReferenceType = struct {
     target: *const Type,
     mutable: bool,
+};
+
+pub const FixedArrayType = struct {
+    element: *const Type,
+    length: usize,
 };
 
 const BindingState = struct {
@@ -56,12 +63,15 @@ pub const Expression = struct {
         boolean: bool,
         string: []const u8,
         string_length: *Expression,
+        sequence_literal: []const *Expression,
+        collection_method: CollectionMethod,
         variable: []const u8,
         self,
         call: Call,
         method_call: MethodCall,
         structure_initializer: StructureInitializer,
         member_access: MemberAccess,
+        index_access: IndexAccess,
         unary: Unary,
         binary: Binary,
         conversion: Conversion,
@@ -87,6 +97,28 @@ pub const Expression = struct {
         position: Source.Position,
     };
 
+    pub const CollectionMethod = struct {
+        object: *Expression,
+        operation: Operation,
+        arguments: []const *Expression,
+        position: Source.Position,
+
+        pub const Operation = enum {
+            count,
+            is_empty,
+            append,
+            prepend,
+            insert,
+            take,
+            take_first,
+            take_last,
+            replace,
+            swap,
+            reverse,
+            clear,
+        };
+    };
+
     pub const StructureInitializer = struct {
         generated_name: []const u8,
         fields: []const *Expression,
@@ -95,6 +127,12 @@ pub const Expression = struct {
     pub const MemberAccess = struct {
         object: *Expression,
         generated_name: []const u8,
+    };
+
+    pub const IndexAccess = struct {
+        object: *Expression,
+        index: *Expression,
+        from_end: bool,
     };
 
     pub const Binary = struct {
@@ -384,9 +422,6 @@ pub const Analyzer = struct {
     fn collectFunctions(self: *Analyzer, ast_functions: []const Ast.Function) AnalyzeError!void {
         var main_count: usize = 0;
         for (ast_functions, 0..) |ast_function, index| {
-            if (std.mem.eql(u8, ast_function.name, "len")) {
-                return self.fail(ast_function.name_position, "'len' is a built-in function");
-            }
             if (self.findFunction(ast_function.name) != null) {
                 const message = try std.fmt.allocPrint(self.allocator, "function '{s}' is already declared", .{ast_function.name});
                 return self.fail(ast_function.name_position, message);
@@ -421,7 +456,7 @@ pub const Analyzer = struct {
             for (structure.fields) |*field| {
                 const ast_initializer = field.ast_initializer orelse continue;
                 try self.validateDefaultShape(ast_initializer, field.type);
-                var value = try self.expression(ast_initializer, &empty_scope);
+                var value = try self.expressionForExpected(ast_initializer, &empty_scope, field.type);
                 value = try self.coerce(value, field.type);
                 if (!typeEqual(field.type, value.type)) {
                     const message = try typeMismatchMessage(self.allocator, field.type, value.type);
@@ -442,6 +477,7 @@ pub const Analyzer = struct {
             .float, .float64 => ast.value == .integer or ast.value == .floating,
             .bool => ast.value == .boolean,
             .str => ast.value == .string,
+            .list, .fixed_array => false,
             .reference => false,
             .structure => |structure_type| structure_default: {
                 if (ast.value != .structure_initializer) break :structure_default false;
@@ -593,7 +629,7 @@ pub const Analyzer = struct {
         else
             null;
         var initializer = if (declaration.initializer) |ast_initializer|
-            try self.expressionForBorrow(ast_initializer, scope, referenceMutability(declared_annotation_type))
+            try self.expressionForExpected(ast_initializer, scope, declared_annotation_type)
         else
             try self.defaultExpression(declared_annotation_type.?, declaration.name_position);
         if (typeEqual(initializer.type, .void)) {
@@ -653,7 +689,7 @@ pub const Analyzer = struct {
             const reference = operand.type.reference;
             if (!reference.mutable) return self.fail(ast.position, "cannot assign through an immutable reference");
             var value: ?*Expression = null;
-            if (ast.value) |ast_value| value = try self.expression(ast_value, scope);
+            if (ast.value) |ast_value| value = try self.expressionForExpected(ast_value, scope, target.type);
             return self.checkedAssignment(ast, target, value);
         }
 
@@ -692,10 +728,11 @@ pub const Analyzer = struct {
             },
         }
 
-        var value: ?*Expression = null;
-        if (ast.value) |ast_value| value = try self.expression(ast_value, scope);
         if (reinitializing_state) |state| state.moved = false;
         const target = try self.expression(ast.target, scope);
+
+        var value: ?*Expression = null;
+        if (ast.value) |ast_value| value = try self.expressionForExpected(ast_value, scope, target.type);
 
         return self.checkedAssignment(ast, target, value);
     }
@@ -807,8 +844,8 @@ pub const Analyzer = struct {
         scope: *const Scope,
     ) AnalyzeError!Statement {
         if (ast.value) |ast_value| {
-            var value = try self.expression(ast_value, scope);
             if (typeEqual(self.current_return_type, .void)) return self.fail(ast.position, "void function cannot return a value");
+            var value = try self.expressionForExpected(ast_value, scope, self.current_return_type);
             value = try self.coerce(value, self.current_return_type);
             if (!typeEqual(value.type, self.current_return_type)) {
                 const message = try typeMismatchMessage(self.allocator, self.current_return_type, value.type);
@@ -845,16 +882,28 @@ pub const Analyzer = struct {
                 .value = .{ .boolean = value },
             }),
             .string => |value| self.stringExpression(ast.position, value),
+            .sequence_literal => |values| self.sequenceLiteralExpression(values, ast.position, scope, null),
             .identifier => |name| self.variableExpression(ast.position, name, scope),
             .self => self.selfExpression(ast.position),
             .call => |call| self.callExpression(call, scope),
             .method_call => |call| self.methodCallExpression(call, scope),
             .structure_initializer => |initializer| self.structureInitializerExpression(initializer, scope),
             .member_access => |member| self.memberAccessExpression(member, scope),
+            .index_access => |access| self.indexAccessExpression(access, scope),
             .unary => |unary| self.unaryExpression(unary, scope),
             .conversion => |conversion| self.conversionExpression(conversion, scope),
             .binary => |binary| self.binaryExpression(binary, scope),
         };
+    }
+
+    fn expressionForExpected(
+        self: *Analyzer,
+        ast: *const Ast.Expression,
+        scope: *const Scope,
+        expected_type: ?Type,
+    ) AnalyzeError!*Expression {
+        if (ast.value == .sequence_literal) return self.sequenceLiteralExpression(ast.value.sequence_literal, ast.position, scope, expected_type);
+        return self.expressionForBorrow(ast, scope, referenceMutability(expected_type));
     }
 
     fn integerExpression(self: *Analyzer, position: Source.Position, lexeme: []const u8) AnalyzeError!*Expression {
@@ -894,6 +943,59 @@ pub const Analyzer = struct {
             .type = .str,
             .position = position,
             .value = .{ .string = try self.decodeStringLiteral(position, lexeme) },
+        });
+    }
+
+    fn sequenceLiteralExpression(
+        self: *Analyzer,
+        ast_values: []const *Ast.Expression,
+        position: Source.Position,
+        scope: *const Scope,
+        expected_type: ?Type,
+    ) AnalyzeError!*Expression {
+        var element_type: Type = undefined;
+        var result_type: Type = undefined;
+        switch (expected_type orelse .void) {
+            .list => |element| {
+                element_type = element.*;
+                result_type = expected_type.?;
+            },
+            .fixed_array => |array| {
+                if (ast_values.len != array.length) {
+                    const message = try std.fmt.allocPrint(self.allocator, "array literal expects {d} values, found {d}", .{ array.length, ast_values.len });
+                    return self.fail(position, message);
+                }
+                element_type = array.element.*;
+                result_type = expected_type.?;
+            },
+            .void => {
+                if (ast_values.len == 0) return self.fail(position, "empty sequence literal requires a collection type");
+                const first = try self.expression(ast_values[0], scope);
+                element_type = first.type;
+                const element = try self.allocator.create(Type);
+                element.* = element_type;
+                result_type = .{ .list = element };
+            },
+            else => return self.fail(position, "sequence literal requires an array or list type"),
+        }
+
+        var values: std.ArrayList(*Expression) = .empty;
+        for (ast_values, 0..) |ast_value, index| {
+            var value = if (expected_type == null and index == 0)
+                try self.expression(ast_value, scope)
+            else
+                try self.expressionForExpected(ast_value, scope, element_type);
+            value = try self.coerce(value, element_type);
+            if (!typeEqual(value.type, element_type)) {
+                const message = try typeMismatchMessage(self.allocator, element_type, value.type);
+                return self.fail(ast_value.position, message);
+            }
+            try values.append(self.allocator, value);
+        }
+        return self.newExpression(.{
+            .type = result_type,
+            .position = position,
+            .value = .{ .sequence_literal = try values.toOwnedSlice(self.allocator) },
         });
     }
 
@@ -938,6 +1040,7 @@ pub const Analyzer = struct {
             .float, .float64 => self.newExpression(.{ .type = type_value, .position = position, .value = .{ .floating = "0.0" } }),
             .bool => self.newExpression(.{ .type = .bool, .position = position, .value = .{ .boolean = false } }),
             .str => self.newExpression(.{ .type = .str, .position = position, .value = .{ .string = "" } }),
+            .list, .fixed_array => self.newExpression(.{ .type = type_value, .position = position, .value = .{ .sequence_literal = &.{} } }),
             .reference => self.fail(position, "a reference requires an initializer"),
             .structure => |structure_type| structure_default: {
                 const structure = self.findStructureByGeneratedName(structure_type.generated_name).?;
@@ -1093,7 +1196,6 @@ pub const Analyzer = struct {
     }
 
     fn callExpression(self: *Analyzer, call: Ast.Expression.Call, scope: *const Scope) AnalyzeError!*Expression {
-        if (std.mem.eql(u8, call.name, "len")) return self.stringLengthExpression(call, scope);
         const function_symbol = self.findFunction(call.name) orelse {
             const message = try std.fmt.allocPrint(self.allocator, "unknown function '{s}'", .{call.name});
             return self.fail(call.name_position, message);
@@ -1105,7 +1207,7 @@ pub const Analyzer = struct {
         }
         var arguments: std.ArrayList(*Expression) = .empty;
         for (call.arguments, function_symbol.parameter_types, 0..) |argument, expected_type, index| {
-            var value = try self.expressionForBorrow(argument, scope, referenceMutability(expected_type));
+            var value = try self.expressionForExpected(argument, scope, expected_type);
             value = try self.coerce(value, expected_type);
             if (!typeEqual(value.type, expected_type)) {
                 const message = try std.fmt.allocPrint(self.allocator, "argument {d} of '{s}' expects '{s}', found '{s}'", .{ index + 1, call.name, typeName(expected_type), typeName(value.type) });
@@ -1117,37 +1219,18 @@ pub const Analyzer = struct {
         return self.newExpression(.{ .type = function_symbol.return_type, .position = call.name_position, .value = .{ .call = .{ .generated_name = function_symbol.generated_name, .arguments = try arguments.toOwnedSlice(self.allocator) } } });
     }
 
-    fn stringLengthExpression(
-        self: *Analyzer,
-        call: Ast.Expression.Call,
-        scope: *const Scope,
-    ) AnalyzeError!*Expression {
-        if (call.arguments.len != 1) {
-            const message = try std.fmt.allocPrint(self.allocator, "function 'len' expects 1 argument, found {d}", .{call.arguments.len});
-            return self.fail(call.name_position, message);
-        }
-        const argument = try self.expression(call.arguments[0], scope);
-        if (!typeEqual(argument.type, .str)) {
-            const message = try std.fmt.allocPrint(self.allocator, "argument 1 of 'len' expects 'str', found '{s}'", .{typeName(argument.type)});
-            return self.fail(call.arguments[0].position, message);
-        }
-        return self.newExpression(.{
-            .type = .int,
-            .position = call.name_position,
-            .value = .{ .string_length = argument },
-        });
-    }
-
     fn methodCallExpression(
         self: *Analyzer,
         call: Ast.Expression.MethodCall,
         scope: *const Scope,
     ) AnalyzeError!*Expression {
         const object = try self.expression(call.object, scope);
-        const generated_structure_name = switch (object.type) {
-            .structure => |structure_type| structure_type.generated_name,
-            else => return self.fail(call.name_position, "method call requires a struct value"),
-        };
+        switch (object.type) {
+            .list, .fixed_array, .str => return self.collectionMethodCallExpression(call, object, scope),
+            .structure => {},
+            else => return self.fail(call.name_position, "method call requires a struct or collection value"),
+        }
+        const generated_structure_name = object.type.structure.generated_name;
         const structure_index = self.findStructureIndexByGeneratedName(generated_structure_name).?;
         const structure = self.structures.items[structure_index];
         var method_index: ?usize = null;
@@ -1165,7 +1248,7 @@ pub const Analyzer = struct {
         }
         var arguments: std.ArrayList(*Expression) = .empty;
         for (call.arguments, method_symbol.parameter_types, 0..) |argument, expected_type, index| {
-            var value = try self.expressionForBorrow(argument, scope, referenceMutability(expected_type));
+            var value = try self.expressionForExpected(argument, scope, expected_type);
             value = try self.coerce(value, expected_type);
             if (!typeEqual(value.type, expected_type)) {
                 const message = try std.fmt.allocPrint(self.allocator, "argument {d} of method '{s}' expects '{s}', found '{s}'", .{ index + 1, call.name, typeName(expected_type), typeName(value.type) });
@@ -1191,6 +1274,131 @@ pub const Analyzer = struct {
                 .position = call.name_position,
             } },
         });
+    }
+
+    fn collectionMethodCallExpression(
+        self: *Analyzer,
+        call: Ast.Expression.MethodCall,
+        object: *Expression,
+        scope: *const Scope,
+    ) AnalyzeError!*Expression {
+        const operation: Expression.CollectionMethod.Operation = if (std.mem.eql(u8, call.name, "count"))
+            .count
+        else if (std.mem.eql(u8, call.name, "is_empty"))
+            .is_empty
+        else if (std.mem.eql(u8, call.name, "append"))
+            .append
+        else if (std.mem.eql(u8, call.name, "prepend"))
+            .prepend
+        else if (std.mem.eql(u8, call.name, "insert"))
+            .insert
+        else if (std.mem.eql(u8, call.name, "take"))
+            .take
+        else if (std.mem.eql(u8, call.name, "take_first"))
+            .take_first
+        else if (std.mem.eql(u8, call.name, "take_last"))
+            .take_last
+        else if (std.mem.eql(u8, call.name, "replace"))
+            .replace
+        else if (std.mem.eql(u8, call.name, "swap"))
+            .swap
+        else if (std.mem.eql(u8, call.name, "reverse"))
+            .reverse
+        else if (std.mem.eql(u8, call.name, "clear"))
+            .clear
+        else {
+            const message = try std.fmt.allocPrint(self.allocator, "type '{s}' has no method '{s}'", .{ typeName(object.type), call.name });
+            return self.fail(call.name_position, message);
+        };
+        const element_type: ?Type = switch (object.type) {
+            .list => |element| element.*,
+            .fixed_array => |array| array.element.*,
+            .str => null,
+            else => unreachable,
+        };
+        const allows = switch (operation) {
+            .count => object.type == .str or element_type != null,
+            .is_empty => element_type != null,
+            .replace, .swap, .reverse => element_type != null,
+            .append, .prepend, .insert, .take, .take_first, .take_last, .clear => object.type == .list,
+        };
+        if (!allows) {
+            const message = try std.fmt.allocPrint(self.allocator, "method '{s}' is not available on '{s}'", .{ call.name, typeName(object.type) });
+            return self.fail(call.name_position, message);
+        }
+        const expected_arguments: usize = switch (operation) {
+            .count, .is_empty, .take_first, .take_last, .reverse, .clear => 0,
+            .append, .prepend, .take => 1,
+            .insert, .replace, .swap => 2,
+        };
+        if (call.arguments.len != expected_arguments) {
+            const message = try std.fmt.allocPrint(self.allocator, "method '{s}' expects {d} arguments, found {d}", .{ call.name, expected_arguments, call.arguments.len });
+            return self.fail(call.name_position, message);
+        }
+        switch (operation) {
+            .count, .is_empty => {},
+            else => try self.requireMutableCollectionReceiver(call.object, scope, call.name_position, call.name),
+        }
+
+        var arguments: std.ArrayList(*Expression) = .empty;
+        for (call.arguments, 0..) |argument, index| {
+            const expects_element = switch (operation) {
+                .append, .prepend => true,
+                .insert, .replace => index == 1,
+                else => false,
+            };
+            const expected_type: Type = if (expects_element) element_type.? else .int;
+            var value = try self.expressionForExpected(argument, scope, expected_type);
+            value = try self.coerce(value, expected_type);
+            if (!typeEqual(value.type, expected_type)) {
+                const message = try std.fmt.allocPrint(self.allocator, "argument {d} of method '{s}' expects '{s}', found '{s}'", .{ index + 1, call.name, typeName(expected_type), typeName(value.type) });
+                return self.fail(argument.position, message);
+            }
+            try arguments.append(self.allocator, value);
+        }
+        const result_type: Type = switch (operation) {
+            .count => .int,
+            .is_empty => .bool,
+            .append, .prepend, .insert, .swap, .reverse, .clear => .void,
+            .take, .take_first, .take_last, .replace => element_type.?,
+        };
+        if (object.type == .str and operation == .count) {
+            return self.newExpression(.{ .type = .int, .position = call.name_position, .value = .{ .string_length = object } });
+        }
+        return self.newExpression(.{
+            .type = result_type,
+            .position = call.name_position,
+            .value = .{ .collection_method = .{
+                .object = object,
+                .operation = operation,
+                .arguments = try arguments.toOwnedSlice(self.allocator),
+                .position = call.name_position,
+            } },
+        });
+    }
+
+    fn requireMutableCollectionReceiver(
+        self: *Analyzer,
+        ast_object: *const Ast.Expression,
+        scope: *const Scope,
+        position: Source.Position,
+        method_name: []const u8,
+    ) AnalyzeError!void {
+        const root = assignmentRoot(ast_object) orelse return self.fail(position, "cannot call mutating collection method on a temporary value");
+        switch (root) {
+            .self => return,
+            .variable => |name| {
+                const symbol = findSymbol(scope, name) orelse return self.fail(position, "unknown collection receiver");
+                if (symbol.mutability == .immutable) {
+                    const message = try std.fmt.allocPrint(self.allocator, "cannot call mutating method '{s}' on immutable value '{s}'", .{ method_name, name });
+                    return self.fail(position, message);
+                }
+                if (symbol.state.immutable_borrows != 0 or symbol.state.mutable_borrow) {
+                    const message = try std.fmt.allocPrint(self.allocator, "cannot mutate borrowed variable '{s}'", .{name});
+                    return self.fail(position, message);
+                }
+            },
+        }
     }
 
     fn findFunction(self: *const Analyzer, name: []const u8) ?FunctionSymbol {
@@ -1256,7 +1464,7 @@ pub const Analyzer = struct {
                 }
             }
             var value = if (matching) |field|
-                try self.expression(field.value, scope)
+                try self.expressionForExpected(field.value, scope, expected_field.type)
             else
                 expected_field.default_value orelse try self.defaultExpression(expected_field.type, initializer.name_position);
             value = try self.coerce(value, expected_field.type);
@@ -1305,6 +1513,34 @@ pub const Analyzer = struct {
         }
         const message = try std.fmt.allocPrint(self.allocator, "struct '{s}' has no field '{s}'", .{ structure.source_name, member.name });
         return self.fail(member.name_position, message);
+    }
+
+    fn indexAccessExpression(
+        self: *Analyzer,
+        access: Ast.Expression.IndexAccess,
+        scope: *const Scope,
+    ) AnalyzeError!*Expression {
+        const object = try self.expression(access.object, scope);
+        const element_type: Type = switch (object.type) {
+            .list => |element| element.*,
+            .fixed_array => |array| array.element.*,
+            else => return self.fail(access.bracket_position, "indexed access requires an array or list value"),
+        };
+        var index = try self.expressionForExpected(access.index, scope, .int);
+        index = try self.coerce(index, .int);
+        if (!typeEqual(index.type, .int)) {
+            const message = try std.fmt.allocPrint(self.allocator, "collection index expects 'int', found '{s}'", .{typeName(index.type)});
+            return self.fail(access.index.position, message);
+        }
+        return self.newExpression(.{
+            .type = element_type,
+            .position = access.bracket_position,
+            .value = .{ .index_access = .{
+                .object = object,
+                .index = index,
+                .from_end = access.from_end,
+            } },
+        });
     }
 
     fn findStructureByGeneratedName(self: *const Analyzer, name: []const u8) ?*const StructureSymbol {
@@ -1386,6 +1622,11 @@ pub const Analyzer = struct {
             },
             .boolean, .string, .variable, .self => {},
             .string_length => |argument| try self.validateExpression(argument),
+            .sequence_literal => |values| for (values) |value| try self.validateExpression(value),
+            .collection_method => |collection_method| {
+                try self.validateExpression(collection_method.object);
+                for (collection_method.arguments) |argument| try self.validateExpression(argument);
+            },
             .call => |call| for (call.arguments) |argument| try self.validateExpression(argument),
             .method_call => |call| {
                 try self.validateExpression(call.object);
@@ -1405,6 +1646,10 @@ pub const Analyzer = struct {
             },
             .structure_initializer => |initializer| for (initializer.fields) |field| try self.validateExpression(field),
             .member_access => |member| try self.validateExpression(member.object),
+            .index_access => |access| {
+                try self.validateExpression(access.object);
+                try self.validateExpression(access.index);
+            },
             .unary => |unary| {
                 if (unary.operator == .numeric_negate and unary.operand.value == .integer and isInteger(expression_value.type)) {
                     const bits = integerBits(expression_value.type);
@@ -1565,6 +1810,7 @@ pub const Analyzer = struct {
 
     fn coerce(self: *Analyzer, expression_value: *Expression, target_type: Type) AnalyzeError!*Expression {
         if (typeEqual(expression_value.type, target_type)) {
+            try self.requireCopyableValue(expression_value, target_type);
             if (expression_value.value == .integer and !integerLiteralFits(expression_value.value.integer, target_type)) {
                 const message = try std.fmt.allocPrint(self.allocator, "integer literal is outside the range of '{s}'", .{typeName(target_type)});
                 return self.fail(expression_value.position, message);
@@ -1612,6 +1858,30 @@ pub const Analyzer = struct {
         return expression_value;
     }
 
+    fn requireCopyableValue(self: *Analyzer, expression_value: *const Expression, type_value: Type) AnalyzeError!void {
+        if (self.isCopyable(type_value)) return;
+        switch (expression_value.value) {
+            .variable => return self.fail(expression_value.position, "cannot copy an owning value; use 'move'"),
+            .member_access, .index_access => return self.fail(expression_value.position, "cannot copy an owning place; borrow it, replace it, or take it from a list"),
+            else => {},
+        }
+    }
+
+    fn isCopyable(self: *const Analyzer, type_value: Type) bool {
+        return switch (type_value) {
+            .void => false,
+            .list => false,
+            .fixed_array => |array| self.isCopyable(array.element.*),
+            .reference => |reference| !reference.mutable,
+            .structure => |structure_type| structure: {
+                const structure = self.findStructureByGeneratedName(structure_type.generated_name) orelse break :structure false;
+                for (structure.fields) |field| if (!self.isCopyable(field.type)) break :structure false;
+                break :structure true;
+            },
+            else => true,
+        };
+    }
+
     fn newExpression(self: *Analyzer, value: Expression) !*Expression {
         const result = try self.allocator.create(Expression);
         result.* = value;
@@ -1654,7 +1924,8 @@ pub const Analyzer = struct {
         const name = switch (ast_expression.value) {
             .identifier => |value| value,
             .member_access => |member| return self.placeRootSymbol(member.object, scope, position),
-            else => return self.fail(position, "a reference must borrow a variable or one of its fields"),
+            .index_access => |access| return self.placeRootSymbol(access.object, scope, position),
+            else => return self.fail(position, "a reference must borrow a variable, field, or collection element"),
         };
         const symbol = findSymbol(scope, name) orelse {
             const message = try std.fmt.allocPrint(self.allocator, "unknown variable '{s}'", .{name});
@@ -1705,6 +1976,19 @@ fn typeFromAnnotation(
         .float64 => .float64,
         .bool => .bool,
         .str => .str,
+        .list => |element_annotation| list_type: {
+            const element = try self.allocator.create(Type);
+            element.* = try typeFromAnnotation(self, element_annotation.*, position);
+            if (element.* == .void or element.* == .reference) return self.fail(position, "a collection element cannot have this type");
+            break :list_type .{ .list = element };
+        },
+        .fixed_array => |array_annotation| fixed_array_type: {
+            const element = try self.allocator.create(Type);
+            element.* = try typeFromAnnotation(self, array_annotation.element.*, position);
+            if (element.* == .void or element.* == .reference) return self.fail(position, "a collection element cannot have this type");
+            const length = try parseFixedArrayLength(self, array_annotation.length, position);
+            break :fixed_array_type .{ .fixed_array = .{ .element = element, .length = length } };
+        },
         .reference => |reference| try typeFromReference(self, reference, position),
         .structure => |name| structure_type: {
             const structure = self.findStructure(name) orelse {
@@ -1741,6 +2025,8 @@ fn typeFromReturn(
         .float64 => .float64,
         .bool => .bool,
         .str => .str,
+        .list => |element| typeFromAnnotation(self, .{ .list = element }, position),
+        .fixed_array => |array| typeFromAnnotation(self, .{ .fixed_array = array }, position),
         .structure => |name| typeFromAnnotation(self, .{ .structure = name }, position),
         .reference => |reference| typeFromReference(self, reference, position),
     };
@@ -1755,6 +2041,18 @@ fn typeFromReference(
     target.* = try typeFromAnnotation(self, reference.target.*, position);
     if (target.* == .reference) return self.fail(position, "a reference cannot target another reference");
     return .{ .reference = .{ .target = target, .mutable = reference.mutable } };
+}
+
+fn parseFixedArrayLength(self: *Analyzer, lexeme: []const u8, position: Source.Position) AnalyzeError!usize {
+    const normalized = try normalizeNumericLiteral(self.allocator, lexeme);
+    const base: u8 = if (normalized.len > 2 and normalized[0] == '0') switch (normalized[1]) {
+        'b', 'B' => 2,
+        'o', 'O' => 8,
+        'x', 'X' => 16,
+        else => 10,
+    } else 10;
+    const digits = if (base == 10) normalized else normalized[2..];
+    return std.fmt.parseInt(usize, digits, base) catch self.fail(position, "array length is outside the supported range");
 }
 
 fn blockAlwaysReturns(statements: []const Statement) bool {
@@ -1835,6 +2133,14 @@ fn typeEqual(left: Type, right: Type) bool {
         .float64 => right == .float64,
         .bool => right == .bool,
         .str => right == .str,
+        .list => |left_element| switch (right) {
+            .list => |right_element| typeEqual(left_element.*, right_element.*),
+            else => false,
+        },
+        .fixed_array => |left_array| switch (right) {
+            .fixed_array => |right_array| left_array.length == right_array.length and typeEqual(left_array.element.*, right_array.element.*),
+            else => false,
+        },
         .reference => |left_reference| switch (right) {
             .reference => |right_reference| left_reference.mutable == right_reference.mutable and typeEqual(left_reference.target.*, right_reference.target.*),
             else => false,
@@ -1861,6 +2167,8 @@ fn typeName(value: Type) []const u8 {
         .float64 => "float64",
         .bool => "bool",
         .str => "str",
+        .list => "list",
+        .fixed_array => "array",
         .reference => |reference| if (reference.mutable) "reference&" else "reference@",
         .structure => |structure_type| structure_type.source_name,
     };
@@ -1953,6 +2261,7 @@ fn assignmentRoot(expression: *const Ast.Expression) ?AssignmentRoot {
         .self => .self,
         .identifier => |name| .{ .variable = name },
         .member_access => |member| assignmentRoot(member.object),
+        .index_access => |access| assignmentRoot(access.object),
         else => null,
     };
 }
@@ -1968,6 +2277,7 @@ fn receiverFor(expression: *const Ast.Expression, scope: *const Scope) Receiver 
                 .{ .immutable = name };
         },
         .member_access => |member| receiverFor(member.object, scope),
+        .index_access => |access| receiverFor(access.object, scope),
         else => .temporary,
     };
 }
@@ -2122,7 +2432,7 @@ test "resolve string escapes concatenation and length" {
 
     var parser = Parser.init(
         allocator,
-        "func main() void { var value = \"A\\u{00E9}\\0\"; value += \"!\"; let count = len(value); }",
+        "func main() void { var value = \"A\\u{00E9}\\0\"; value += \"!\"; let count = value.count(); }",
     );
     var analyzer = Analyzer.init(allocator);
     const program = try analyzer.analyze(try parser.parse());

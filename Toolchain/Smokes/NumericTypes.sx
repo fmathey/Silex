@@ -11,11 +11,11 @@ func main() void {
     var unsigned16:uint16 = 65535
     var unsigned32:uint32 = 4294967295
     var unsigned64:uint64 = 18446744073709551615
-    var unsignedAlias:uint = 42
+    var unsigned_alias:uint = 42
     var single:float32 = 1.5
     var precise:float64 = 2.25
-    var signedMath:int8 = 1
-    signedMath += -1
+    var signed_math:int8 = 1
+    signed_math += -1
 
     print(signed8)
     print(signed16)
@@ -25,9 +25,9 @@ func main() void {
     print(unsigned16)
     print(unsigned32)
     print(unsigned64)
-    print(unsignedAlias)
+    print(unsigned_alias)
     print(single)
     print(precise)
-    print(signedMath)
+    print(signed_math)
     print(widen(12))
 }

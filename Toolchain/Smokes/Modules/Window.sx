@@ -2,10 +2,10 @@ pub struct Session {
     active:bool = true
 }
 
-pub func createSession() Session {
+pub func create_session() Session {
     return Session {}
 }
 
-func validateSession(session:Session) bool {
+func validate_session(session:Session) bool {
     return session.active
 }
