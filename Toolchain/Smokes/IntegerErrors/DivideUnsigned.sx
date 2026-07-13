@@ -1,4 +1,0 @@
-func main() void {
-    var value:uint64 = 1
-    print(value / 0)
-}

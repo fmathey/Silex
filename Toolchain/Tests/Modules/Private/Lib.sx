@@ -1,3 +1,0 @@
-func hidden() int {
-    return 1
-}

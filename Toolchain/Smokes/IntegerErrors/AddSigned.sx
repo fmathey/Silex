@@ -1,4 +1,0 @@
-func main() void {
-    var value:int8 = 127
-    print(value + 1)
-}

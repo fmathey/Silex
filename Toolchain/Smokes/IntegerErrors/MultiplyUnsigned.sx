@@ -1,4 +1,0 @@
-func main() void {
-    var value:uint32 = 4294967295
-    value *= 2
-}

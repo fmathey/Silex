@@ -1,4 +1,0 @@
-func main() void {
-    var value:uint8 = 255
-    value++
-}

@@ -1,4 +1,0 @@
-func main() void {
-    var value:int16 = -32768
-    value -= 1
-}

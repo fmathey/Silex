@@ -1,6 +1,0 @@
-{
-  "target": "App",
-  "modules": [
-    { "name": "App", "sources": ["Main.sx"] }
-  ]
-}

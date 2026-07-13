@@ -1,5 +1,0 @@
-import Lib as Shared
-
-use Shared.Value as Shared
-
-func main() void {}

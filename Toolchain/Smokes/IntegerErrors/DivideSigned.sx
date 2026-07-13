@@ -1,4 +1,0 @@
-func main() void {
-    var value:int64 = -9223372036854775808
-    value /= -1
-}
