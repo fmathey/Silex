@@ -292,14 +292,98 @@ pub fn build(b: *std.Build) void {
     numeric_types_command.addArgs(&.{ "run", "Smokes/NumericTypes.sx" });
     numeric_types_command.expectStdOutEqual(hostText(b, "-128\n32767\n2147483647\n-9223372036854775808\n255\n65535\n4294967295\n18446744073709551615\n42\n1.5\n2.25\n0\n12\n"));
 
+    const integer_semantics_output = "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n";
+    const integer_semantics_command = b.addRunArtifact(executable);
+    integer_semantics_command.step.dependOn(&numeric_types_command.step);
+    integer_semantics_command.addArgs(&.{ "run", "Smokes/IntegerSemantics.sx" });
+    integer_semantics_command.expectStdOutEqual(hostText(b, integer_semantics_output));
+
+    const emit_integer_semantics = b.addRunArtifact(executable);
+    emit_integer_semantics.step.dependOn(&integer_semantics_command.step);
+    emit_integer_semantics.addArgs(&.{ "compile", "Smokes/IntegerSemantics.sx", "--emit-cpp" });
+
+    const unoptimized_semantics_path = if (b.graph.host.result.os.tag == .windows)
+        ".silex/integer-semantics-o0.exe"
+    else
+        ".silex/integer-semantics-o0";
+    const compile_unoptimized_semantics = b.addSystemCommand(&.{
+        b.graph.zig_exe,
+        "c++",
+        "-O0",
+        "-std=c++23",
+        ".silex/generated/IntegerSemantics.cpp",
+        "-o",
+        unoptimized_semantics_path,
+    });
+    compile_unoptimized_semantics.step.dependOn(&emit_integer_semantics.step);
+
+    const run_unoptimized_semantics = b.addSystemCommand(&.{unoptimized_semantics_path});
+    run_unoptimized_semantics.step.dependOn(&compile_unoptimized_semantics.step);
+    run_unoptimized_semantics.expectStdOutEqual(hostText(b, integer_semantics_output));
+
     const integer_overflow_command = b.addRunArtifact(executable);
-    integer_overflow_command.step.dependOn(&numeric_types_command.step);
+    integer_overflow_command.step.dependOn(&run_unoptimized_semantics.step);
     integer_overflow_command.addArgs(&.{ "run", "Smokes/IntegerOverflow.sx" });
     integer_overflow_command.expectExitCode(1);
     integer_overflow_command.expectStdErrEqual(hostText(b, "silex: runtime error: integer overflow in addition\n"));
 
+    const integer_error_cases = [_]struct {
+        source: []const u8,
+        message: []const u8,
+    }{
+        .{ .source = "Smokes/IntegerErrors/AddSigned.sx", .message = "integer overflow in addition" },
+        .{ .source = "Smokes/IntegerErrors/AddUnsigned.sx", .message = "integer overflow in addition" },
+        .{ .source = "Smokes/IntegerErrors/SubtractSigned.sx", .message = "integer overflow in subtraction" },
+        .{ .source = "Smokes/IntegerErrors/SubtractUnsigned.sx", .message = "integer overflow in subtraction" },
+        .{ .source = "Smokes/IntegerErrors/MultiplySigned.sx", .message = "integer overflow in multiplication" },
+        .{ .source = "Smokes/IntegerErrors/MultiplyUnsigned.sx", .message = "integer overflow in multiplication" },
+        .{ .source = "Smokes/IntegerErrors/DivideSigned.sx", .message = "integer overflow in division" },
+        .{ .source = "Smokes/IntegerErrors/DivideUnsigned.sx", .message = "division by zero" },
+        .{ .source = "Smokes/IntegerErrors/NegateSigned.sx", .message = "integer overflow in negation" },
+        .{ .source = "Smokes/IntegerErrors/NegateUnsigned.sx", .message = "integer overflow in negation" },
+    };
+    const integer_error_suffix = if (b.graph.host.result.os.tag == .windows) ".exe" else "";
+    var previous_integer_error_step: *std.Build.Step = &integer_overflow_command.step;
+    for (integer_error_cases) |case| {
+        const optimized_command = b.addRunArtifact(executable);
+        optimized_command.step.dependOn(previous_integer_error_step);
+        optimized_command.addArgs(&.{ "run", case.source });
+        optimized_command.expectExitCode(1);
+        optimized_command.expectStdErrEqual(hostText(
+            b,
+            b.fmt("silex: runtime error: {s}\n", .{case.message}),
+        ));
+
+        const emit_command = b.addRunArtifact(executable);
+        emit_command.step.dependOn(&optimized_command.step);
+        emit_command.addArgs(&.{ "compile", case.source, "--emit-cpp" });
+
+        const program_name = std.fs.path.stem(case.source);
+        const generated_path = b.fmt(".silex/generated/{s}.cpp", .{program_name});
+        const unoptimized_path = b.fmt(".silex/{s}-o0{s}", .{ program_name, integer_error_suffix });
+        const compile_unoptimized = b.addSystemCommand(&.{
+            b.graph.zig_exe,
+            "c++",
+            "-O0",
+            "-std=c++23",
+            generated_path,
+            "-o",
+            unoptimized_path,
+        });
+        compile_unoptimized.step.dependOn(&emit_command.step);
+
+        const unoptimized_command = b.addSystemCommand(&.{unoptimized_path});
+        unoptimized_command.step.dependOn(&compile_unoptimized.step);
+        unoptimized_command.expectExitCode(1);
+        unoptimized_command.expectStdErrEqual(hostText(
+            b,
+            b.fmt("silex: runtime error: {s}\n", .{case.message}),
+        ));
+        previous_integer_error_step = &unoptimized_command.step;
+    }
+
     const native_source_command = b.addRunArtifact(executable);
-    native_source_command.step.dependOn(&integer_overflow_command.step);
+    native_source_command.step.dependOn(previous_integer_error_step);
     native_source_command.addArgs(&.{
         "run",
         "Smokes/Native/Main.sx",
@@ -311,6 +395,80 @@ pub fn build(b: *std.Build) void {
     const smoke_step = b.step("smoke", "Compile and run the smoke program");
     smoke_step.dependOn(&native_source_command.step);
 
+    const benchmark_suffix = if (b.graph.host.result.os.tag == .windows) ".exe" else "";
+    const silex_benchmark_path = b.fmt("zig-out/bin/IntegerLoopsSilex{s}", .{benchmark_suffix});
+    const cpp_benchmark_path = b.fmt("zig-out/bin/IntegerLoopsCpp{s}", .{benchmark_suffix});
+    const process_baseline_path = b.fmt("zig-out/bin/ProcessBaseline{s}", .{benchmark_suffix});
+    const benchmark_runner_path = b.fmt("zig-out/bin/IntegerBenchmarkRunner{s}", .{benchmark_suffix});
+
+    const compile_silex_benchmark = b.addRunArtifact(executable);
+    compile_silex_benchmark.step.dependOn(b.getInstallStep());
+    compile_silex_benchmark.addArgs(&.{
+        "compile",
+        "Benchmarks/IntegerLoops.sx",
+        "-o",
+        silex_benchmark_path,
+    });
+
+    const compile_cpp_benchmark = b.addSystemCommand(&.{
+        b.graph.zig_exe,
+        "c++",
+        "-O2",
+        "-std=c++23",
+        "Benchmarks/IntegerLoops.cpp",
+        "-o",
+        cpp_benchmark_path,
+    });
+    compile_cpp_benchmark.step.dependOn(b.getInstallStep());
+
+    const compile_process_baseline = b.addSystemCommand(&.{
+        b.graph.zig_exe,
+        "c++",
+        "-O2",
+        "-std=c++23",
+        "Benchmarks/ProcessBaseline.cpp",
+        "-o",
+        process_baseline_path,
+    });
+    compile_process_baseline.step.dependOn(b.getInstallStep());
+
+    const compile_benchmark_runner = b.addSystemCommand(&.{
+        b.graph.zig_exe,
+        "c++",
+        "-O2",
+        "-std=c++23",
+        "Benchmarks/Runner.cpp",
+        "-o",
+        benchmark_runner_path,
+    });
+    compile_benchmark_runner.step.dependOn(b.getInstallStep());
+
+    const benchmark_output = hostText(b, "-705898\n-4\n");
+    const validate_silex_benchmark = b.addSystemCommand(&.{silex_benchmark_path});
+    validate_silex_benchmark.step.dependOn(&compile_silex_benchmark.step);
+    validate_silex_benchmark.expectStdOutEqual(benchmark_output);
+
+    const validate_cpp_benchmark = b.addSystemCommand(&.{cpp_benchmark_path});
+    validate_cpp_benchmark.step.dependOn(&compile_cpp_benchmark.step);
+    validate_cpp_benchmark.expectStdOutEqual(benchmark_output);
+
+    const benchmark_runner = b.addSystemCommand(&.{
+        benchmark_runner_path,
+        silex_benchmark_path,
+        cpp_benchmark_path,
+        process_baseline_path,
+    });
+    benchmark_runner.step.dependOn(&compile_benchmark_runner.step);
+    benchmark_runner.step.dependOn(&compile_process_baseline.step);
+    benchmark_runner.step.dependOn(&validate_silex_benchmark.step);
+    benchmark_runner.step.dependOn(&validate_cpp_benchmark.step);
+
+    const benchmark_step = b.step(
+        "benchmark-integers",
+        "Measure robust Silex integer statistics against equivalent checked C++",
+    );
+    benchmark_step.dependOn(&benchmark_runner.step);
+
     const cross_smoke_command = b.addRunArtifact(executable);
     cross_smoke_command.addArgs(&.{
         "compile",
@@ -321,8 +479,19 @@ pub fn build(b: *std.Build) void {
         ".silex/cross-smoke/Main-x86_64-linux",
     });
 
-    const cross_smoke_step = b.step("cross-smoke", "Cross-compile the smoke program for x86_64 Linux");
-    cross_smoke_step.dependOn(&cross_smoke_command.step);
+    const cross_integer_semantics_command = b.addRunArtifact(executable);
+    cross_integer_semantics_command.step.dependOn(&cross_smoke_command.step);
+    cross_integer_semantics_command.addArgs(&.{
+        "compile",
+        "Smokes/IntegerSemantics.sx",
+        "--target",
+        "x86_64-linux-musl",
+        "-o",
+        ".silex/cross-smoke/IntegerSemantics-x86_64-linux",
+    });
+
+    const cross_smoke_step = b.step("cross-smoke", "Cross-compile smoke programs for x86_64 Linux");
+    cross_smoke_step.dependOn(&cross_integer_semantics_command.step);
 
     const cross_native_smoke_command = b.addRunArtifact(executable);
     cross_native_smoke_command.addArgs(&.{
@@ -356,7 +525,7 @@ pub fn build(b: *std.Build) void {
         .root_module = distribution_module,
     });
     const host = b.graph.host.result;
-    const distribution_name = b.fmt("silex-0.6.5-{s}-{s}", .{
+    const distribution_name = b.fmt("silex-0.6.6-{s}-{s}", .{
         @tagName(host.cpu.arch),
         @tagName(host.os.tag),
     });

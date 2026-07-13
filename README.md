@@ -89,8 +89,9 @@ silex compile path/to/Main.sx
 silex run path/to/Main.sx
 ```
 
-La compilation est native par défaut. Une cible Zig explicite permet de
-produire un autre système, une autre architecture ou une autre ABI :
+La compilation est native et optimisée par défaut. La configuration native
+participe à l'identité du cache. Une cible Zig explicite permet de produire un
+autre système, une autre architecture ou une autre ABI :
 
 ```sh
 silex compile path/to/Main.sx --target x86_64-linux-musl
@@ -125,7 +126,8 @@ Silex/
 └── Toolchain/         projet Zig autonome
     ├── Sources/       implémentation de la commande silex
     ├── Tests/         programmes invalides et diagnostics attendus
-    └── Smokes/        programmes .sx compilés de bout en bout
+    ├── Smokes/        programmes .sx compilés de bout en bout
+    └── Benchmarks/    charges Silex et références C++ de même sémantique
 ```
 
 ## Construire la toolchain
@@ -167,6 +169,15 @@ zig build test
 zig build smoke
 zig build cross-smoke
 zig build cross-native-smoke
+```
+
+La mesure comparative des boucles entières vérifiées est volontairement
+séparée des tests et ne fixe aucun seuil de performance. Elle alterne les deux
+exécutables après échauffement, puis rapporte la médiane, le 90e percentile,
+l'étendue, le delta apparié et le coût de lancement d'un processus vide :
+
+```sh
+zig build benchmark-integers
 ```
 
 Le workflow `Distribution matrix` exécute ces vérifications et `dist-check`

@@ -1,0 +1,122 @@
+func checkInt8() bool {
+    var value:int8 = 10
+    value += 5
+    value *= 2
+    value -= 6
+    value /= 3
+    value++
+    value--
+    let negative:int8 = -value
+    let minimum:int8 = -128
+    let maximum:int8 = 127
+    return value == 8 && negative == -8 && minimum / 1 == -128 && maximum * 1 == 127
+}
+
+func checkInt16() bool {
+    var value:int16 = 10
+    value += 5
+    value *= 2
+    value -= 6
+    value /= 3
+    value++
+    value--
+    let negative:int16 = -value
+    let minimum:int16 = -32768
+    let maximum:int16 = 32767
+    return value == 8 && negative == -8 && minimum - 0 == -32768 && maximum + 0 == 32767
+}
+
+func checkInt32() bool {
+    var value:int32 = 10
+    value += 5
+    value *= 2
+    value -= 6
+    value /= 3
+    value++
+    value--
+    let negative:int32 = -value
+    let minimum:int32 = -2147483648
+    let maximum:int32 = 2147483647
+    return value == 8 && negative == -8 && minimum / 1 == -2147483648 && maximum * 1 == 2147483647
+}
+
+func checkInt64() bool {
+    var value:int64 = 10
+    value += 5
+    value *= 2
+    value -= 6
+    value /= 3
+    value++
+    value--
+    let negative:int64 = -value
+    let minimum:int64 = -9223372036854775808
+    let maximum:int64 = 9223372036854775807
+    return value == 8 && negative == -8 && minimum - 0 == -9223372036854775808 && maximum + 0 == 9223372036854775807
+}
+
+func checkUint8() bool {
+    var value:uint8 = 10
+    value += 5
+    value *= 2
+    value -= 6
+    value /= 3
+    value++
+    value--
+    let zero:uint8 = 0
+    let negated:uint8 = -zero
+    let maximum:uint8 = 255
+    return value == 8 && negated == 0 && maximum + 0 == 255 && zero - 0 == 0
+}
+
+func checkUint16() bool {
+    var value:uint16 = 10
+    value += 5
+    value *= 2
+    value -= 6
+    value /= 3
+    value++
+    value--
+    let zero:uint16 = 0
+    let negated:uint16 = -zero
+    let maximum:uint16 = 65535
+    return value == 8 && negated == 0 && maximum * 1 == 65535 && maximum / 1 == 65535
+}
+
+func checkUint32() bool {
+    var value:uint32 = 10
+    value += 5
+    value *= 2
+    value -= 6
+    value /= 3
+    value++
+    value--
+    let zero:uint32 = 0
+    let negated:uint32 = -zero
+    let maximum:uint32 = 4294967295
+    return value == 8 && negated == 0 && maximum + 0 == 4294967295 && zero - 0 == 0
+}
+
+func checkUint64() bool {
+    var value:uint64 = 10
+    value += 5
+    value *= 2
+    value -= 6
+    value /= 3
+    value++
+    value--
+    let zero:uint64 = 0
+    let negated:uint64 = -zero
+    let maximum:uint64 = 18446744073709551615
+    return value == 8 && negated == 0 && maximum * 1 == 18446744073709551615 && maximum / 1 == 18446744073709551615
+}
+
+func main() void {
+    print(checkInt8())
+    print(checkInt16())
+    print(checkInt32())
+    print(checkInt64())
+    print(checkUint8())
+    print(checkUint16())
+    print(checkUint32())
+    print(checkUint64())
+}

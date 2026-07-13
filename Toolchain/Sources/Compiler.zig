@@ -10,6 +10,20 @@ const NativeDependency = @import("NativeDependency.zig");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
+const NativeConfiguration = enum {
+    unoptimized,
+    optimized,
+
+    fn optimizationFlag(self: NativeConfiguration) ?[]const u8 {
+        return switch (self) {
+            .unoptimized => null,
+            .optimized => "-O2",
+        };
+    }
+};
+
+const default_native_configuration: NativeConfiguration = .optimized;
+
 pub const Compilation = struct {
     executable_path: []const u8,
     cpp_path: []const u8,
@@ -66,7 +80,14 @@ pub fn compile(
             return error.Reported;
         }
     }
-    const cache_key = try cacheKey(allocator, io, cpp, target, native_dependencies);
+    const cache_key = try cacheKey(
+        allocator,
+        io,
+        cpp,
+        target,
+        native_dependencies,
+        default_native_configuration,
+    );
     const cache_dir = try std.fs.path.join(allocator, &.{ project_path, ".silex", "cache", target_name, &cache_key });
     try Io.Dir.cwd().createDirPath(io, cache_dir);
 
@@ -88,6 +109,7 @@ pub fn compile(
         var arguments: std.ArrayList([]const u8) = .empty;
         try arguments.appendSlice(allocator, &.{ zig_path, "c++" });
         if (target.zig_triple) |triple| try arguments.appendSlice(allocator, &.{ "-target", triple });
+        if (default_native_configuration.optimizationFlag()) |flag| try arguments.append(allocator, flag);
         try arguments.appendSlice(allocator, &.{ "-std=c++23", "-Wno-nullability-completeness", cpp_path });
         for (native_dependencies) |dependency| try arguments.appendSlice(allocator, dependency.sources);
         try arguments.appendSlice(allocator, &.{ "-o", temporary_executable_path });
@@ -172,9 +194,12 @@ fn cacheKey(
     cpp: []const u8,
     target: TargetModule.Target,
     native_dependencies: []const NativeDependency.Dependency,
+    native_configuration: NativeConfiguration,
 ) ![64]u8 {
     var hasher = std.crypto.hash.sha2.Sha256.init(.{});
-    hasher.update("silex-cache-v10\x00");
+    hasher.update("silex-cache-v11\x00");
+    hasher.update(@tagName(native_configuration));
+    hasher.update("\x00");
     hasher.update(@tagName(target.cpu_arch));
     hasher.update("\x00");
     hasher.update(@tagName(target.os_tag));
@@ -231,11 +256,22 @@ fn fileExists(io: Io, path: []const u8) !bool {
 
 test "cache key follows generated content" {
     const target = TargetModule.Target.native();
-    const first = try cacheKey(std.testing.allocator, std.testing.io, "first", target, &.{});
-    const repeated = try cacheKey(std.testing.allocator, std.testing.io, "first", target, &.{});
-    const changed = try cacheKey(std.testing.allocator, std.testing.io, "second", target, &.{});
+    const first = try cacheKey(std.testing.allocator, std.testing.io, "first", target, &.{}, .optimized);
+    const repeated = try cacheKey(std.testing.allocator, std.testing.io, "first", target, &.{}, .optimized);
+    const changed = try cacheKey(std.testing.allocator, std.testing.io, "second", target, &.{}, .optimized);
     try std.testing.expectEqualSlices(u8, &first, &repeated);
     try std.testing.expect(!std.mem.eql(u8, &first, &changed));
+}
+
+test "cache key separates native configurations" {
+    const target = TargetModule.Target.native();
+    const optimized = try cacheKey(std.testing.allocator, std.testing.io, "program", target, &.{}, .optimized);
+    const unoptimized = try cacheKey(std.testing.allocator, std.testing.io, "program", target, &.{}, .unoptimized);
+    try std.testing.expect(!std.mem.eql(u8, &optimized, &unoptimized));
+}
+
+test "default native configuration enables optimization" {
+    try std.testing.expectEqualStrings("-O2", default_native_configuration.optimizationFlag().?);
 }
 
 test "default output belongs to current project" {

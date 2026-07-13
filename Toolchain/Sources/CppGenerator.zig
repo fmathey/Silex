@@ -1,4 +1,6 @@
 const std = @import("std");
+const builtin = @import("builtin");
+const build_options = @import("build_options");
 const Ast = @import("Ast.zig");
 const Semantic = @import("Semantic.zig");
 
@@ -20,60 +22,51 @@ pub fn generate(allocator: Allocator, program: Semantic.Program) ![]u8 {
         \\
         \\namespace SilexGenerated {
         \\
-        \\[[noreturn]] inline void integerRuntimeError(const char* message) {
+        \\[[noreturn, gnu::cold, gnu::noinline]] void integerRuntimeError(const char* message) {
         \\    std::cerr << "silex: runtime error: " << message << '\n';
         \\    std::exit(1);
         \\}
         \\
-        \\template <typename T> T checkedAdd(T left, T right) {
-        \\    if constexpr (std::is_unsigned_v<T>) {
-        \\        if (left > std::numeric_limits<T>::max() - right) integerRuntimeError("integer overflow in addition");
-        \\    } else if ((right > 0 && left > std::numeric_limits<T>::max() - right) ||
-        \\               (right < 0 && left < std::numeric_limits<T>::min() - right)) {
+        \\template <typename T> inline T checkedAdd(T left, T right) {
+        \\    T result;
+        \\    if (__builtin_add_overflow(left, right, &result)) [[unlikely]] {
         \\        integerRuntimeError("integer overflow in addition");
         \\    }
-        \\    return static_cast<T>(left + right);
+        \\    return result;
         \\}
         \\
-        \\template <typename T> T checkedSubtract(T left, T right) {
-        \\    if constexpr (std::is_unsigned_v<T>) {
-        \\        if (left < right) integerRuntimeError("integer overflow in subtraction");
-        \\    } else if ((right < 0 && left > std::numeric_limits<T>::max() + right) ||
-        \\               (right > 0 && left < std::numeric_limits<T>::min() + right)) {
+        \\template <typename T> inline T checkedSubtract(T left, T right) {
+        \\    T result;
+        \\    if (__builtin_sub_overflow(left, right, &result)) [[unlikely]] {
         \\        integerRuntimeError("integer overflow in subtraction");
         \\    }
-        \\    return static_cast<T>(left - right);
+        \\    return result;
         \\}
         \\
-        \\template <typename T> T checkedMultiply(T left, T right) {
-        \\    if (left == 0 || right == 0) return T{0};
-        \\    if constexpr (std::is_unsigned_v<T>) {
-        \\        if (left > std::numeric_limits<T>::max() / right) integerRuntimeError("integer overflow in multiplication");
-        \\    } else {
-        \\        if ((left == T{-1} && right == std::numeric_limits<T>::min()) ||
-        \\            (right == T{-1} && left == std::numeric_limits<T>::min())) integerRuntimeError("integer overflow in multiplication");
-        \\        if (left > 0) {
-        \\            if ((right > 0 && left > std::numeric_limits<T>::max() / right) ||
-        \\                (right < 0 && right < std::numeric_limits<T>::min() / left)) integerRuntimeError("integer overflow in multiplication");
-        \\        } else if ((right > 0 && left < std::numeric_limits<T>::min() / right) ||
-        \\                   (right < 0 && left < std::numeric_limits<T>::max() / right)) integerRuntimeError("integer overflow in multiplication");
+        \\template <typename T> inline T checkedMultiply(T left, T right) {
+        \\    T result;
+        \\    if (__builtin_mul_overflow(left, right, &result)) [[unlikely]] {
+        \\        integerRuntimeError("integer overflow in multiplication");
         \\    }
-        \\    return static_cast<T>(left * right);
+        \\    return result;
         \\}
         \\
-        \\template <typename T> T checkedDivide(T left, T right) {
-        \\    if (right == 0) integerRuntimeError("division by zero");
+        \\template <typename T> inline T checkedDivide(T left, T right) {
+        \\    if (right == 0) [[unlikely]] integerRuntimeError("division by zero");
         \\    if constexpr (std::is_signed_v<T>) {
-        \\        if (left == std::numeric_limits<T>::min() && right == T{-1}) integerRuntimeError("integer overflow in division");
+        \\        if (left == std::numeric_limits<T>::min() && right == T{-1}) [[unlikely]] {
+        \\            integerRuntimeError("integer overflow in division");
+        \\        }
         \\    }
-        \\    return static_cast<T>(left / right);
+        \\    return left / right;
         \\}
         \\
-        \\template <typename T> T checkedNegate(T value) {
-        \\    if constexpr (std::is_unsigned_v<T>) {
-        \\        if (value != 0) integerRuntimeError("integer overflow in negation");
-        \\    } else if (value == std::numeric_limits<T>::min()) integerRuntimeError("integer overflow in negation");
-        \\    return static_cast<T>(-value);
+        \\template <typename T> inline T checkedNegate(T value) {
+        \\    T result;
+        \\    if (__builtin_sub_overflow(T{0}, value, &result)) [[unlikely]] {
+        \\        integerRuntimeError("integer overflow in negation");
+        \\    }
+        \\    return result;
         \\}
         \\
         \\// -----------------------------------------------------------------------------
@@ -541,6 +534,139 @@ test "generate while loop" {
 
     try std.testing.expect(std.mem.indexOf(u8, cpp, "while ((silexValue0 > std::int64_t{0})) {") != null);
     try std.testing.expect(std.mem.indexOf(u8, cpp, "silexValue0 = checkedSubtract(silexValue0, std::int64_t{1});") != null);
+}
+
+test "generate checked integer operations with backend overflow primitives" {
+    const Parser = @import("Parser.zig").Parser;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var parser = Parser.init(allocator,
+        \\func main() void {
+        \\    var value:int8 = 2
+        \\    value += 1
+        \\    value -= 1
+        \\    value *= 2
+        \\    value /= 2
+        \\    value++
+        \\    value--
+        \\    print(-value)
+        \\}
+    );
+    var analyzer = Semantic.Analyzer.init(allocator);
+    const cpp = try generate(allocator, try analyzer.analyze(try parser.parse()));
+
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "__builtin_add_overflow(left, right, &result)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "__builtin_sub_overflow(left, right, &result)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "__builtin_mul_overflow(left, right, &result)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "__builtin_sub_overflow(T{0}, value, &result)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "gnu::cold, gnu::noinline") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "if (right == 0) [[unlikely]]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "silexValue0 = checkedAdd(silexValue0, std::int8_t{1});") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "silexValue0 = checkedSubtract(silexValue0, std::int8_t{1});") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "silexValue0 = checkedMultiply(silexValue0, std::int8_t{2});") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "silexValue0 = checkedDivide(silexValue0, std::int8_t{2});") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "checkedNegate(silexValue0)") != null);
+}
+
+test "optimized backend eliminates a provably unnecessary integer check" {
+    if (build_options.developer_zig.len == 0) return error.SkipZigTest;
+
+    const Parser = @import("Parser.zig").Parser;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var parser = Parser.init(allocator,
+        \\func main() void {
+        \\    let value:int = 7
+        \\    let numerator:int = 84
+        \\    print((40 + 2) * 2 - 4)
+        \\    print(-value)
+        \\    print(numerator / 2)
+        \\}
+    );
+    var analyzer = Semantic.Analyzer.init(allocator);
+    const cpp = try generate(allocator, try analyzer.analyze(try parser.parse()));
+
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "Probe.cpp", .data = cpp });
+
+    const result = try std.process.run(std.testing.allocator, std.testing.io, .{
+        .argv = &.{
+            build_options.developer_zig,
+            "c++",
+            "-O2",
+            "-std=c++23",
+            "-S",
+            "-emit-llvm",
+            "Probe.cpp",
+            "-o",
+            "Probe.ll",
+        },
+        .cwd = .{ .dir = temporary.dir },
+        .stdout_limit = .limited(1024 * 1024),
+        .stderr_limit = .limited(1024 * 1024),
+    });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try std.testing.expectEqual(@as(u8, 0), switch (result.term) {
+        .exited => |code| code,
+        else => 1,
+    });
+
+    const llvm_ir = try temporary.dir.readFileAlloc(
+        std.testing.io,
+        "Probe.ll",
+        std.testing.allocator,
+        .limited(4 * 1024 * 1024),
+    );
+    defer std.testing.allocator.free(llvm_ir);
+    try std.testing.expect(std.mem.indexOf(u8, llvm_ir, "llvm.sadd.with.overflow") == null);
+    try std.testing.expect(std.mem.indexOf(u8, llvm_ir, "llvm.ssub.with.overflow") == null);
+    try std.testing.expect(std.mem.indexOf(u8, llvm_ir, "llvm.smul.with.overflow") == null);
+    try std.testing.expect(std.mem.indexOf(u8, llvm_ir, "checkedDivide") == null);
+    try std.testing.expect(std.mem.indexOf(u8, llvm_ir, "checkedNegate") == null);
+
+    const executable_name = if (builtin.os.tag == .windows) "Probe.exe" else "Probe";
+    const compile_executable = try std.process.run(std.testing.allocator, std.testing.io, .{
+        .argv = &.{
+            build_options.developer_zig,
+            "c++",
+            "-O2",
+            "-std=c++23",
+            "Probe.cpp",
+            "-o",
+            executable_name,
+        },
+        .cwd = .{ .dir = temporary.dir },
+        .stdout_limit = .limited(1024 * 1024),
+        .stderr_limit = .limited(1024 * 1024),
+    });
+    defer std.testing.allocator.free(compile_executable.stdout);
+    defer std.testing.allocator.free(compile_executable.stderr);
+    try std.testing.expectEqual(@as(u8, 0), switch (compile_executable.term) {
+        .exited => |code| code,
+        else => 1,
+    });
+
+    const executable_argument = if (builtin.os.tag == .windows) ".\\Probe.exe" else "./Probe";
+    const execution = try std.process.run(std.testing.allocator, std.testing.io, .{
+        .argv = &.{executable_argument},
+        .cwd = .{ .dir = temporary.dir },
+        .stdout_limit = .limited(1024 * 1024),
+        .stderr_limit = .limited(1024 * 1024),
+    });
+    defer std.testing.allocator.free(execution.stdout);
+    defer std.testing.allocator.free(execution.stderr);
+    try std.testing.expectEqual(@as(u8, 0), switch (execution.term) {
+        .exited => |code| code,
+        else => 1,
+    });
+    try std.testing.expectEqualStrings("80\n-7\n42\n", execution.stdout);
+    try std.testing.expectEqualStrings("", execution.stderr);
 }
 
 test "generate function declarations calls and returns" {
