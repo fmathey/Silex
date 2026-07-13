@@ -260,36 +260,36 @@ pub fn build(b: *std.Build) void {
 
     const smoke_command = b.addRunArtifact(executable);
     smoke_command.addArgs(&.{ "run", "Smokes/Main.sx" });
-    smoke_command.expectStdOutEqual("Hello from Silex smoke test\n50\nlogic works\ntrue\nfalse\n2\n1\n");
+    smoke_command.expectStdOutEqual(hostText(b, "Hello from Silex smoke test\n50\nlogic works\ntrue\nfalse\n2\n1\n"));
 
     const boolean_condition_command = b.addRunArtifact(executable);
     boolean_condition_command.addArgs(&.{ "run", "Smokes/BooleanCondition.sx" });
-    boolean_condition_command.expectStdOutEqual("true branch\n");
+    boolean_condition_command.expectStdOutEqual(hostText(b, "true branch\n"));
 
     const compact_command = b.addRunArtifact(executable);
     compact_command.addArgs(&.{ "run", "Smokes/Compact.sx" });
-    compact_command.expectStdOutEqual("50\n");
+    compact_command.expectStdOutEqual(hostText(b, "50\n"));
 
     const structures_command = b.addRunArtifact(executable);
     structures_command.addArgs(&.{ "run", "Smokes/Structures.sx" });
-    structures_command.expectStdOutEqual("Ada\n32\n0\n");
+    structures_command.expectStdOutEqual(hostText(b, "Ada\n32\n0\n"));
 
     const defaults_command = b.addRunArtifact(executable);
     defaults_command.addArgs(&.{ "run", "Smokes/Defaults.sx" });
-    defaults_command.expectStdOutEqual("Ada\nfalse\n1\n7\n0\n\nBob\ntrue\n4\n5\n");
+    defaults_command.expectStdOutEqual(hostText(b, "Ada\nfalse\n1\n7\n0\n\nBob\ntrue\n4\n5\n"));
 
     const floats_command = b.addRunArtifact(executable);
     floats_command.addArgs(&.{ "run", "Smokes/Floats.sx" });
-    floats_command.expectStdOutEqual("3\n-2.5\n2.5\n2.5\n2\n1.5\ntrue\n2\n");
+    floats_command.expectStdOutEqual(hostText(b, "3\n-2.5\n2.5\n2.5\n2\n1.5\ntrue\n2\n"));
 
     const numeric_types_command = b.addRunArtifact(executable);
     numeric_types_command.addArgs(&.{ "run", "Smokes/NumericTypes.sx" });
-    numeric_types_command.expectStdOutEqual("-128\n32767\n2147483647\n-9223372036854775808\n255\n65535\n4294967295\n18446744073709551615\n42\n1.5\n2.25\n0\n12\n");
+    numeric_types_command.expectStdOutEqual(hostText(b, "-128\n32767\n2147483647\n-9223372036854775808\n255\n65535\n4294967295\n18446744073709551615\n42\n1.5\n2.25\n0\n12\n"));
 
     const integer_overflow_command = b.addRunArtifact(executable);
     integer_overflow_command.addArgs(&.{ "run", "Smokes/IntegerOverflow.sx" });
     integer_overflow_command.expectExitCode(1);
-    integer_overflow_command.expectStdErrEqual("silex: runtime error: integer overflow in addition\n");
+    integer_overflow_command.expectStdErrEqual(hostText(b, "silex: runtime error: integer overflow in addition\n"));
 
     const native_source_command = b.addRunArtifact(executable);
     native_source_command.addArgs(&.{
@@ -298,7 +298,7 @@ pub fn build(b: *std.Build) void {
         "--native",
         "Smokes/Native/dependency.json",
     });
-    native_source_command.expectStdOutEqual("Native wrapper initialized\nSilex with native source\n");
+    native_source_command.expectStdOutEqual(hostText(b, "Native wrapper initialized\nSilex with native source\n"));
 
     const smoke_step = b.step("smoke", "Compile and run the smoke program");
     smoke_step.dependOn(&smoke_command.step);
@@ -356,7 +356,7 @@ pub fn build(b: *std.Build) void {
         .root_module = distribution_module,
     });
     const host = b.graph.host.result;
-    const distribution_name = b.fmt("silex-0.6.2-{s}-{s}", .{
+    const distribution_name = b.fmt("silex-0.6.3-{s}-{s}", .{
         @tagName(host.cpu.arch),
         @tagName(host.os.tag),
     });
@@ -389,9 +389,14 @@ pub fn build(b: *std.Build) void {
     const verify_distribution = b.addSystemCommand(&.{ installed_silex, "run", "Main.sx" });
     verify_distribution.setCwd(distribution_check_files.getDirectory());
     verify_distribution.setEnvironmentVariable("PATH", "");
-    verify_distribution.expectStdOutEqual("Hello from Silex smoke test\n50\nlogic works\ntrue\nfalse\n2\n1\n");
+    verify_distribution.expectStdOutEqual(hostText(b, "Hello from Silex smoke test\n50\nlogic works\ntrue\nfalse\n2\n1\n"));
     verify_distribution.step.dependOn(distribution_step);
 
     const distribution_check_step = b.step("dist-check", "Build and verify the self-contained host distribution");
     distribution_check_step.dependOn(&verify_distribution.step);
+}
+
+fn hostText(b: *std.Build, text: []const u8) []const u8 {
+    if (b.graph.host.result.os.tag != .windows) return text;
+    return std.mem.replaceOwned(u8, b.allocator, text, "\n", "\r\n") catch @panic("OOM");
 }
