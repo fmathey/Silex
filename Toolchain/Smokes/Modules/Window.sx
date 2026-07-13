@@ -1,0 +1,11 @@
+pub struct Session {
+    active:bool = true
+}
+
+pub func createSession() Session {
+    return Session {}
+}
+
+func validateSession(session:Session) bool {
+    return session.active
+}

@@ -20,26 +20,87 @@ pub const Parser = struct {
         return .{ .allocator = allocator, .lexer = .init(source) };
     }
 
+    pub fn initFile(allocator: Allocator, source: []const u8, file: usize) Parser {
+        return .{ .allocator = allocator, .lexer = .initFile(source, file) };
+    }
+
     pub fn parse(self: *Parser) !Ast.Program {
         try self.advance();
+        var imports: std.ArrayList(Ast.Import) = .empty;
+        var uses: std.ArrayList(Ast.Use) = .empty;
         var structures: std.ArrayList(Ast.Structure) = .empty;
         var functions: std.ArrayList(Ast.Function) = .empty;
         while (self.current.tag != .end) {
-            if (self.current.tag == .keyword_struct) {
-                try structures.append(self.allocator, try self.parseStructure());
+            if (self.current.tag == .keyword_import) {
+                try imports.append(self.allocator, try self.parseImport());
+            } else if (self.current.tag == .keyword_use) {
+                try uses.append(self.allocator, try self.parseUse(false));
+            } else if (self.current.tag == .keyword_pub) {
+                try self.advance();
+                if (self.current.tag == .keyword_use) {
+                    try uses.append(self.allocator, try self.parseUse(true));
+                } else if (self.current.tag == .keyword_struct) {
+                    try structures.append(self.allocator, try self.parseStructure(true));
+                } else if (self.current.tag == .keyword_func) {
+                    try functions.append(self.allocator, try self.parseFunction(true));
+                } else return self.fail("expected 'struct', 'func', or 'use' after 'pub'");
+            } else if (self.current.tag == .keyword_struct) {
+                try structures.append(self.allocator, try self.parseStructure(false));
             } else if (self.current.tag == .keyword_func) {
-                try functions.append(self.allocator, try self.parseFunction());
+                try functions.append(self.allocator, try self.parseFunction(false));
             } else {
-                return self.fail("expected 'struct' or 'func'");
+                return self.fail("expected import, use, struct, or func declaration");
             }
         }
         return .{
+            .imports = try imports.toOwnedSlice(self.allocator),
+            .uses = try uses.toOwnedSlice(self.allocator),
             .structures = try structures.toOwnedSlice(self.allocator),
             .functions = try functions.toOwnedSlice(self.allocator),
         };
     }
 
-    fn parseStructure(self: *Parser) ParseError!Ast.Structure {
+    fn parseImport(self: *Parser) ParseError!Ast.Import {
+        const position = self.current.position;
+        try self.advance();
+        const path = try self.parseQualifiedName("expected module name after 'import'");
+        const alias = try self.parseOptionalAlias();
+        try self.expectStatementTerminator();
+        return .{ .path = path, .alias = alias, .position = position };
+    }
+
+    fn parseUse(self: *Parser, is_public: bool) ParseError!Ast.Use {
+        const position = self.current.position;
+        try self.advance();
+        const path = try self.parseQualifiedName("expected declaration path after 'use'");
+        const alias = try self.parseOptionalAlias();
+        try self.expectStatementTerminator();
+        return .{ .path = path, .alias = alias, .is_public = is_public, .position = position };
+    }
+
+    fn parseOptionalAlias(self: *Parser) ParseError!?[]const u8 {
+        if (self.current.tag != .keyword_as) return null;
+        try self.advance();
+        if (self.current.tag != .identifier) return self.fail("expected alias after 'as'");
+        const alias = self.current.lexeme;
+        try self.advance();
+        return alias;
+    }
+
+    fn parseQualifiedName(self: *Parser, message: []const u8) ParseError![]const u8 {
+        if (self.current.tag != .identifier) return self.fail(message);
+        var result = self.current.lexeme;
+        try self.advance();
+        while (self.current.tag == .dot) {
+            try self.advance();
+            if (self.current.tag != .identifier) return self.fail("expected name after '.'");
+            result = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ result, self.current.lexeme });
+            try self.advance();
+        }
+        return result;
+    }
+
+    fn parseStructure(self: *Parser, is_public: bool) ParseError!Ast.Structure {
         const position = self.current.position;
         try self.advance();
         if (self.current.tag != .identifier) return self.fail("expected struct name");
@@ -51,7 +112,7 @@ pub const Parser = struct {
         var methods: std.ArrayList(Ast.Function) = .empty;
         while (self.current.tag != .right_brace and self.current.tag != .end) {
             if (self.current.tag == .keyword_func) {
-                try methods.append(self.allocator, try self.parseFunction());
+                try methods.append(self.allocator, try self.parseFunction(false));
                 continue;
             }
             if (self.current.tag != .identifier) return self.fail("expected field name");
@@ -75,6 +136,7 @@ pub const Parser = struct {
         }
         try self.expect(.right_brace, "expected '}'");
         return .{
+            .is_public = is_public,
             .position = position,
             .name = name,
             .name_position = name_position,
@@ -83,7 +145,7 @@ pub const Parser = struct {
         };
     }
 
-    fn parseFunction(self: *Parser) ParseError!Ast.Function {
+    fn parseFunction(self: *Parser, is_public: bool) ParseError!Ast.Function {
         const position = self.current.position;
         try self.expect(.keyword_func, "expected 'func'");
         if (self.current.tag != .identifier) return self.fail("expected function name");
@@ -93,6 +155,7 @@ pub const Parser = struct {
         const parameters = try self.parseParameters();
         const return_type = try self.parseReturnType();
         return .{
+            .is_public = is_public,
             .position = position,
             .name = name,
             .name_position = name_position,
@@ -103,6 +166,9 @@ pub const Parser = struct {
     }
 
     fn parseReturnType(self: *Parser) ParseError!Ast.ReturnType {
+        if (self.current.tag == .identifier) {
+            return .{ .structure = try self.parseQualifiedName("expected function return type") };
+        }
         const result: Ast.ReturnType = switch (self.current.tag) {
             .keyword_void => .void,
             .keyword_int => .int,
@@ -120,7 +186,6 @@ pub const Parser = struct {
             .keyword_float64 => .float64,
             .keyword_bool => .bool,
             .keyword_str => .str,
-            .identifier => .{ .structure = self.current.lexeme },
             else => return self.fail("expected function return type"),
         };
         try self.advance();
@@ -211,6 +276,9 @@ pub const Parser = struct {
     }
 
     fn parseTypeName(self: *Parser) ParseError!Ast.TypeName {
+        if (self.current.tag == .identifier) {
+            return .{ .structure = try self.parseQualifiedName("expected type name after ':'") };
+        }
         const type_name: Ast.TypeName = switch (self.current.tag) {
             .keyword_int => .int,
             .keyword_int8 => .int8,
@@ -227,7 +295,6 @@ pub const Parser = struct {
             .keyword_float64 => .float64,
             .keyword_bool => .bool,
             .keyword_str => .str,
-            .identifier => .{ .structure = self.current.lexeme },
             else => return self.fail("expected type name after ':'"),
         };
         try self.advance();
@@ -459,7 +526,23 @@ pub const Parser = struct {
                 });
             }
         }
+        if (self.current.tag == .left_brace) {
+            if (try self.expressionPath(expression)) |path| {
+                return self.parseStructureInitializer(path, token.position);
+            }
+        }
         return expression;
+    }
+
+    fn expressionPath(self: *Parser, expression: *const Ast.Expression) !?[]const u8 {
+        return switch (expression.value) {
+            .identifier => |name| name,
+            .member_access => |member| if (try self.expressionPath(member.object)) |prefix|
+                try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ prefix, member.name })
+            else
+                null,
+            else => null,
+        };
     }
 
     fn parseStructureInitializer(

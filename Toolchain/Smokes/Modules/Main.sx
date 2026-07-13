@@ -1,0 +1,18 @@
+import NK.Plugins as Plugins
+import Prefix.Shared
+import Prefix.Shared.Deep
+
+use Plugins.WindowSession
+use NK.Window.Session as NativeSession
+
+func main() void {
+    let session:WindowSession = Plugins.createWindow()
+    let raw:WindowSession = Plugins.rawCreate()
+    let native:NativeSession
+    print(session.active)
+    print(raw.active)
+    print(native.active)
+    print(Prefix.Shared.value())
+    print(Prefix.Shared.Deep.value())
+    print(message())
+}

@@ -36,11 +36,11 @@ fn runCli(init: std.process.Init) !u8 {
 
 fn compileCommand(allocator: Allocator, io: Io, args: []const []const u8) !u8 {
     if (args.len == 0) {
-        std.debug.print("silex: missing source file\n\n{s}", .{usage});
+        std.debug.print("silex: missing source or project manifest\n\n{s}", .{usage});
         return 1;
     }
 
-    const source_path = args[0];
+    const input_path = args[0];
     var output_path: ?[]const u8 = null;
     var emit_cpp = false;
     var target = TargetModule.Target.native();
@@ -83,7 +83,7 @@ fn compileCommand(allocator: Allocator, io: Io, args: []const []const u8) !u8 {
         }
     }
 
-    const compilation = try Compiler.compile(allocator, io, source_path, target, native_dependencies.items);
+    const compilation = try Compiler.compile(allocator, io, input_path, target, native_dependencies.items);
     const output = output_path orelse try Compiler.defaultOutputPath(
         allocator,
         compilation.project_path,
@@ -101,13 +101,13 @@ fn compileCommand(allocator: Allocator, io: Io, args: []const []const u8) !u8 {
     }
 
     const status = if (compilation.cache_hit) "Up to date" else "Compiled";
-    std.debug.print("{s} {s} -> {s}\n", .{ status, source_path, output });
+    std.debug.print("{s} {s} -> {s}\n", .{ status, input_path, output });
     return 0;
 }
 
 fn runCommand(allocator: Allocator, io: Io, args: []const []const u8) !u8 {
     if (args.len == 0) {
-        std.debug.print("silex: run expects a source file\n\n{s}", .{usage});
+        std.debug.print("silex: run expects a source or project manifest\n\n{s}", .{usage});
         return 1;
     }
 
@@ -147,9 +147,9 @@ fn isHelp(argument: []const u8) bool {
 
 const usage =
     \\Usage:
-    \\  silex compile <source.sx> [-o <executable>] [--emit-cpp]
+    \\  silex compile <source.sx|project.json> [-o <executable>] [--emit-cpp]
     \\      [--target <arch-os-abi>] [--native <dependency.json>]
-    \\  silex run <source.sx> [--native <dependency.json>]
+    \\  silex run <source.sx|project.json> [--native <dependency.json>]
     \\  silex --help
     \\  silex --version
     \\

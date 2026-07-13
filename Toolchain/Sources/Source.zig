@@ -1,6 +1,7 @@
 pub const Position = struct {
     line: usize,
     column: usize,
+    file: usize = 0,
 };
 
 pub const Diagnostic = struct {

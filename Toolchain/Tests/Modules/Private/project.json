@@ -1,0 +1,7 @@
+{
+  "target": "App",
+  "modules": [
+    { "name": "Lib", "sources": ["Lib.sx"] },
+    { "name": "App", "sources": ["Main.sx"] }
+  ]
+}

@@ -1,0 +1,3 @@
+import Math.Vec3
+
+func main() void {}

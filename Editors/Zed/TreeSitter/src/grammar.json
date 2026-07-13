@@ -10,14 +10,228 @@
         "members": [
           {
             "type": "SYMBOL",
+            "name": "import_declaration"
+          },
+          {
+            "type": "SYMBOL",
+            "name": "use_declaration"
+          },
+          {
+            "type": "SYMBOL",
             "name": "structure_definition"
           },
           {
             "type": "SYMBOL",
             "name": "function_definition"
+          },
+          {
+            "type": "SYMBOL",
+            "name": "public_declaration"
           }
         ]
       }
+    },
+    "import_declaration": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "import"
+        },
+        {
+          "type": "FIELD",
+          "name": "module",
+          "content": {
+            "type": "SYMBOL",
+            "name": "module_path"
+          }
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SEQ",
+              "members": [
+                {
+                  "type": "STRING",
+                  "value": "as"
+                },
+                {
+                  "type": "FIELD",
+                  "name": "alias",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "identifier"
+                  }
+                }
+              ]
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "STRING",
+              "value": ";"
+            },
+            {
+              "type": "SYMBOL",
+              "name": "_automatic_semicolon"
+            }
+          ]
+        }
+      ]
+    },
+    "use_declaration": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "visibility",
+              "content": {
+                "type": "STRING",
+                "value": "pub"
+              }
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "STRING",
+          "value": "use"
+        },
+        {
+          "type": "FIELD",
+          "name": "declaration",
+          "content": {
+            "type": "SYMBOL",
+            "name": "qualified_name"
+          }
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SEQ",
+              "members": [
+                {
+                  "type": "STRING",
+                  "value": "as"
+                },
+                {
+                  "type": "FIELD",
+                  "name": "alias",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "identifier"
+                  }
+                }
+              ]
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "STRING",
+              "value": ";"
+            },
+            {
+              "type": "SYMBOL",
+              "name": "_automatic_semicolon"
+            }
+          ]
+        }
+      ]
+    },
+    "public_declaration": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "FIELD",
+          "name": "visibility",
+          "content": {
+            "type": "STRING",
+            "value": "pub"
+          }
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "structure_definition"
+            },
+            {
+              "type": "SYMBOL",
+              "name": "function_definition"
+            }
+          ]
+        }
+      ]
+    },
+    "module_path": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "identifier"
+        },
+        {
+          "type": "REPEAT",
+          "content": {
+            "type": "SEQ",
+            "members": [
+              {
+                "type": "STRING",
+                "value": "."
+              },
+              {
+                "type": "SYMBOL",
+                "name": "identifier"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "qualified_name": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "identifier"
+        },
+        {
+          "type": "REPEAT1",
+          "content": {
+            "type": "SEQ",
+            "members": [
+              {
+                "type": "STRING",
+                "value": "."
+              },
+              {
+                "type": "SYMBOL",
+                "name": "identifier"
+              }
+            ]
+          }
+        }
+      ]
     },
     "structure_definition": {
       "type": "SEQ",
@@ -241,8 +455,17 @@
     "named_type": {
       "type": "ALIAS",
       "content": {
-        "type": "SYMBOL",
-        "name": "identifier"
+        "type": "CHOICE",
+        "members": [
+          {
+            "type": "SYMBOL",
+            "name": "identifier"
+          },
+          {
+            "type": "SYMBOL",
+            "name": "qualified_name"
+          }
+        ]
       },
       "named": true,
       "value": "type_identifier"
@@ -839,8 +1062,17 @@
           "type": "FIELD",
           "name": "type",
           "content": {
-            "type": "SYMBOL",
-            "name": "identifier"
+            "type": "CHOICE",
+            "members": [
+              {
+                "type": "SYMBOL",
+                "name": "identifier"
+              },
+              {
+                "type": "SYMBOL",
+                "name": "qualified_name"
+              }
+            ]
           }
         },
         {
@@ -984,8 +1216,17 @@
           "type": "FIELD",
           "name": "function",
           "content": {
-            "type": "SYMBOL",
-            "name": "identifier"
+            "type": "CHOICE",
+            "members": [
+              {
+                "type": "SYMBOL",
+                "name": "identifier"
+              },
+              {
+                "type": "SYMBOL",
+                "name": "qualified_name"
+              }
+            ]
           }
         },
         {

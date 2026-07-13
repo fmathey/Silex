@@ -1,0 +1,17 @@
+pub struct Vec2 {
+    x:float
+    y:float
+}
+
+pub struct Vec3 {
+    x:float
+    y:float
+    z:float
+}
+
+pub struct Vec4 {
+    x:float
+    y:float
+    z:float
+    w:float
+}

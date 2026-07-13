@@ -1,0 +1,8 @@
+import NK.Window
+
+pub use NK.Window.Session as WindowSession
+pub use NK.Window.createSession as rawCreate
+
+pub func createWindow() WindowSession {
+    return NK.Window.createSession()
+}

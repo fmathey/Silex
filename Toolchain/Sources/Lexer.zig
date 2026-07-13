@@ -30,6 +30,10 @@ pub const TokenTag = enum {
     keyword_bool,
     keyword_str,
     keyword_print,
+    keyword_import,
+    keyword_use,
+    keyword_pub,
+    keyword_as,
     identifier,
     integer,
     floating,
@@ -76,10 +80,15 @@ pub const Lexer = struct {
     index: usize = 0,
     line: usize = 1,
     column: usize = 1,
+    file: usize = 0,
     diagnostic: ?Source.Diagnostic = null,
 
     pub fn init(source: []const u8) Lexer {
         return .{ .source = source };
+    }
+
+    pub fn initFile(source: []const u8, file: usize) Lexer {
+        return .{ .source = source, .file = file };
     }
 
     pub fn next(self: *Lexer) Source.Error!Token {
@@ -252,7 +261,7 @@ pub const Lexer = struct {
     }
 
     fn currentPosition(self: *const Lexer) Source.Position {
-        return .{ .line = self.line, .column = self.column };
+        return .{ .line = self.line, .column = self.column, .file = self.file };
     }
 
     fn token(self: *const Lexer, tag: TokenTag, start: usize, position: Source.Position) Token {
@@ -295,6 +304,10 @@ fn keywordTag(lexeme: []const u8) ?TokenTag {
         .{ "bool", TokenTag.keyword_bool },
         .{ "str", TokenTag.keyword_str },
         .{ "print", TokenTag.keyword_print },
+        .{ "import", TokenTag.keyword_import },
+        .{ "use", TokenTag.keyword_use },
+        .{ "pub", TokenTag.keyword_pub },
+        .{ "as", TokenTag.keyword_as },
     };
     inline for (keywords) |keyword| {
         if (std.mem.eql(u8, lexeme, keyword[0])) return keyword[1];

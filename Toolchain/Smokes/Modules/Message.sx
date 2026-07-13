@@ -1,0 +1,3 @@
+func message() str {
+    return "modules"
+}

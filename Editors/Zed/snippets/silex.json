@@ -8,6 +8,30 @@
     ],
     "description": "Silex program entry point"
   },
+  "Import module": {
+    "prefix": "import",
+    "body": [
+      "import ${1:Module.Name}",
+      "$0"
+    ],
+    "description": "Import a module"
+  },
+  "Use declaration": {
+    "prefix": "use",
+    "body": [
+      "use ${1:Module.Name.Declaration}",
+      "$0"
+    ],
+    "description": "Depend on and introduce one declaration locally"
+  },
+  "Public declaration": {
+    "prefix": "pub",
+    "body": [
+      "pub ${1:struct Name {}}",
+      "$0"
+    ],
+    "description": "Expose a module declaration"
+  },
   "Print": {
     "prefix": "print",
     "body": [

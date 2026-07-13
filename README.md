@@ -89,6 +89,61 @@ silex compile path/to/Main.sx
 silex run path/to/Main.sx
 ```
 
+Depuis un fichier d'entrée, les dossiers définissent conventionnellement les
+modules locaux. Tous les fichiers `.sx` directs d'un dossier contribuent au
+même namespace ; leur nom n'ajoute aucun segment :
+
+```text
+Sandbox/
+├── Main.sx
+└── Math/
+    ├── Constants.sx
+    ├── Vectors.sx
+    └── Geometry/
+        └── Shapes.sx
+```
+
+```sx
+import Math
+use Math.Vec3
+
+func main() void {
+    let screen:Math.Vec2
+    let direction:Vec3
+}
+```
+
+Si `Vectors.sx` expose `Vec2`, `Vec3` et `Vec4`, leurs noms sont respectivement
+`Math.Vec2`, `Math.Vec3` et `Math.Vec4`. Le sous-dossier `Geometry/` fournit le
+sous-module distinct `Math.Geometry`. `import` vise toujours un module, tandis
+que `use` vise une déclaration et peut établir directement sa dépendance sans
+`import` préalable.
+
+```sh
+silex run Sandbox/Main.sx
+```
+
+Un manifeste JSON reste disponible pour répartir explicitement une cible entre
+plusieurs fichiers et modules locaux :
+
+```json
+{
+  "target": "Example.App",
+  "modules": [
+    { "name": "Example.App", "sources": ["Main.sx", "Commands.sx"] },
+    { "name": "NK.Window", "sources": ["Window.sx"] }
+  ]
+}
+```
+
+```sh
+silex run path/to/project.json
+```
+
+Les fichiers d'un même module partagent leurs déclarations. `import` donne un
+accès qualifié à un module, `use` introduit une déclaration précise, et `pub` ou
+`pub use` définissent la surface visible depuis les autres modules.
+
 La compilation est native et optimisée par défaut. La configuration native
 participe à l'identité du cache. Une cible Zig explicite permet de produire un
 autre système, une autre architecture ou une autre ABI :

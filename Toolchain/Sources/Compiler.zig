@@ -2,10 +2,12 @@ const std = @import("std");
 const builtin = @import("builtin");
 const build_options = @import("build_options");
 const CppGenerator = @import("CppGenerator.zig");
-const ParserModule = @import("Parser.zig");
 const Semantic = @import("Semantic.zig");
 const TargetModule = @import("Target.zig");
 const NativeDependency = @import("NativeDependency.zig");
+const ProjectModule = @import("Project.zig");
+const Modules = @import("Modules.zig");
+const SourceGraph = @import("SourceGraph.zig");
 
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
@@ -36,36 +38,38 @@ pub const Compilation = struct {
 pub fn compile(
     allocator: Allocator,
     io: Io,
-    source_path: []const u8,
+    input_path: []const u8,
     target: TargetModule.Target,
     native_dependencies: []const NativeDependency.Dependency,
 ) !Compilation {
-    if (!std.mem.endsWith(u8, source_path, ".sx")) {
-        std.debug.print("silex: source file must use the .sx extension\n", .{});
-        return error.Reported;
-    }
-
-    const source = Io.Dir.cwd().readFileAlloc(io, source_path, allocator, .limited(16 * 1024 * 1024)) catch |err| {
-        std.debug.print("silex: unable to read '{s}': {t}\n", .{ source_path, err });
-        return error.Reported;
-    };
-
-    var parser = ParserModule.Parser.init(allocator, source);
-    const ast = parser.parse() catch |err| switch (err) {
-        error.InvalidSource => return report(source_path, parser.diagnostic.?),
+    var loader = SourceGraph.Loader.init(allocator, io);
+    const loaded = loader.load(input_path) catch |err| switch (err) {
+        error.InvalidSource => return report(loader.source_paths.items, loader.diagnostic.?),
         else => |other| return other,
+    };
+    const project = loaded.project;
+    const source_paths = loaded.source_paths;
+    const source_contents = loaded.source_contents;
+    const files = loaded.files;
+    const ast = if (project.single_file)
+        files[0].program
+    else resolved: {
+        var resolver = Modules.Resolver.init(allocator, project, files);
+        break :resolved resolver.resolve() catch |err| switch (err) {
+            error.InvalidSource => return report(source_paths, resolver.diagnostic.?),
+            else => |other| return other,
+        };
     };
 
     var analyzer = Semantic.Analyzer.init(allocator);
     const program = analyzer.analyze(ast) catch |err| switch (err) {
-        error.InvalidSource => return report(source_path, analyzer.diagnostic.?),
+        error.InvalidSource => return report(source_paths, analyzer.diagnostic.?),
         else => |other| return other,
     };
 
     const cpp = try CppGenerator.generate(allocator, program);
-    const project_path = "";
-    const source_name = std.fs.path.basename(source_path);
-    const program_name = source_name[0 .. source_name.len - 3];
+    const project_path = project.root_path;
+    const program_name = project.program_name;
     const target_name = try target.cacheName(allocator);
     if (target.cppBackendUnavailableReason()) |reason| {
         std.debug.print("silex: target '{s}' is unavailable: {s}\n", .{ target_name, reason });
@@ -84,6 +88,9 @@ pub fn compile(
         allocator,
         io,
         cpp,
+        project,
+        source_paths,
+        source_contents,
         target,
         native_dependencies,
         default_native_configuration,
@@ -178,7 +185,8 @@ pub fn copyArtifact(io: Io, source_path: []const u8, destination_path: []const u
     try Io.Dir.copyFile(.cwd(), source_path, .cwd(), destination_path, io, .{ .make_path = true });
 }
 
-fn report(source_path: []const u8, diagnostic: @import("Source.zig").Diagnostic) error{Reported} {
+fn report(source_paths: []const []const u8, diagnostic: @import("Source.zig").Diagnostic) error{Reported} {
+    const source_path = if (diagnostic.position.file < source_paths.len) source_paths[diagnostic.position.file] else source_paths[0];
     std.debug.print("{s}:{d}:{d}: error: {s}\n", .{
         source_path,
         diagnostic.position.line,
@@ -192,12 +200,15 @@ fn cacheKey(
     allocator: Allocator,
     io: Io,
     cpp: []const u8,
+    project: ProjectModule.Project,
+    source_paths: []const []const u8,
+    source_contents: []const []const u8,
     target: TargetModule.Target,
     native_dependencies: []const NativeDependency.Dependency,
     native_configuration: NativeConfiguration,
 ) ![64]u8 {
     var hasher = std.crypto.hash.sha2.Sha256.init(.{});
-    hasher.update("silex-cache-v11\x00");
+    hasher.update("silex-cache-v12\x00");
     hasher.update(@tagName(native_configuration));
     hasher.update("\x00");
     hasher.update(@tagName(target.cpu_arch));
@@ -211,6 +222,16 @@ fn cacheKey(
     }
     hasher.update("\x00");
     hasher.update(cpp);
+    for (project.modules) |module| {
+        hasher.update("\x00module\x00");
+        hasher.update(module.name);
+    }
+    for (source_paths, source_contents) |source_path, source| {
+        hasher.update("\x00source\x00");
+        hasher.update(source_path);
+        hasher.update("\x00");
+        hasher.update(source);
+    }
     for (native_dependencies) |dependency| {
         hasher.update("\x00");
         hasher.update(dependency.name);
@@ -256,18 +277,32 @@ fn fileExists(io: Io, path: []const u8) !bool {
 
 test "cache key follows generated content" {
     const target = TargetModule.Target.native();
-    const first = try cacheKey(std.testing.allocator, std.testing.io, "first", target, &.{}, .optimized);
-    const repeated = try cacheKey(std.testing.allocator, std.testing.io, "first", target, &.{}, .optimized);
-    const changed = try cacheKey(std.testing.allocator, std.testing.io, "second", target, &.{}, .optimized);
+    const project = testProject();
+    const first = try cacheKey(std.testing.allocator, std.testing.io, "first", project, &.{"Test.sx"}, &.{"source"}, target, &.{}, .optimized);
+    const repeated = try cacheKey(std.testing.allocator, std.testing.io, "first", project, &.{"Test.sx"}, &.{"source"}, target, &.{}, .optimized);
+    const changed = try cacheKey(std.testing.allocator, std.testing.io, "second", project, &.{"Test.sx"}, &.{"source"}, target, &.{}, .optimized);
+    const changed_source = try cacheKey(std.testing.allocator, std.testing.io, "first", project, &.{"Test.sx"}, &.{"changed source"}, target, &.{}, .optimized);
     try std.testing.expectEqualSlices(u8, &first, &repeated);
     try std.testing.expect(!std.mem.eql(u8, &first, &changed));
+    try std.testing.expect(!std.mem.eql(u8, &first, &changed_source));
 }
 
 test "cache key separates native configurations" {
     const target = TargetModule.Target.native();
-    const optimized = try cacheKey(std.testing.allocator, std.testing.io, "program", target, &.{}, .optimized);
-    const unoptimized = try cacheKey(std.testing.allocator, std.testing.io, "program", target, &.{}, .unoptimized);
+    const project = testProject();
+    const optimized = try cacheKey(std.testing.allocator, std.testing.io, "program", project, &.{"Test.sx"}, &.{"source"}, target, &.{}, .optimized);
+    const unoptimized = try cacheKey(std.testing.allocator, std.testing.io, "program", project, &.{"Test.sx"}, &.{"source"}, target, &.{}, .unoptimized);
     try std.testing.expect(!std.mem.eql(u8, &optimized, &unoptimized));
+}
+
+fn testProject() ProjectModule.Project {
+    return .{
+        .root_path = "",
+        .program_name = "Test",
+        .target_module = 0,
+        .modules = &.{.{ .name = "Test", .sources = &.{"Test.sx"} }},
+        .single_file = true,
+    };
 }
 
 test "default native configuration enables optimization" {

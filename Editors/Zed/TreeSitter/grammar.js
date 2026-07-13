@@ -17,7 +17,42 @@ module.exports = grammar({
   externals: ($) => [$._automatic_semicolon],
 
   rules: {
-    source_file: ($) => repeat(choice($.structure_definition, $.function_definition)),
+    source_file: ($) =>
+      repeat(
+        choice(
+          $.import_declaration,
+          $.use_declaration,
+          $.structure_definition,
+          $.function_definition,
+          $.public_declaration,
+        ),
+      ),
+
+    import_declaration: ($) =>
+      seq(
+        "import",
+        field("module", $.module_path),
+        optional(seq("as", field("alias", $.identifier))),
+        choice(";", $._automatic_semicolon),
+      ),
+
+    use_declaration: ($) =>
+      seq(
+        optional(field("visibility", "pub")),
+        "use",
+        field("declaration", $.qualified_name),
+        optional(seq("as", field("alias", $.identifier))),
+        choice(";", $._automatic_semicolon),
+      ),
+
+    public_declaration: ($) =>
+      seq(field("visibility", "pub"), choice($.structure_definition, $.function_definition)),
+
+    module_path: ($) =>
+      seq($.identifier, repeat(seq(".", $.identifier))),
+
+    qualified_name: ($) =>
+      seq($.identifier, repeat1(seq(".", $.identifier))),
 
     structure_definition: ($) =>
       seq(
@@ -65,7 +100,7 @@ module.exports = grammar({
         "bool",
         "str",
       ),
-    named_type: ($) => alias($.identifier, $.type_identifier),
+    named_type: ($) => alias(choice($.identifier, $.qualified_name), $.type_identifier),
     type: ($) => choice($.builtin_type, $.named_type),
     parameter_list: ($) =>
       seq("(", optional(seq($.parameter, repeat(seq(",", $.parameter)))), ")"),
@@ -167,7 +202,7 @@ module.exports = grammar({
 
     structure_initializer: ($) =>
       seq(
-        field("type", $.identifier),
+        field("type", choice($.identifier, $.qualified_name)),
         "{",
         optional(seq($.field_initializer, repeat(seq(",", $.field_initializer)), optional(","))),
         "}",
@@ -198,7 +233,7 @@ module.exports = grammar({
 
     call_expression: ($) =>
       seq(
-        field("function", $.identifier),
+        field("function", choice($.identifier, $.qualified_name)),
         "(",
         optional(seq($.expression, repeat(seq(",", $.expression)))),
         ")",

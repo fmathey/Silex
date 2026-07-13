@@ -186,11 +186,27 @@ pub const Statement = union(enum) {
 };
 
 pub const Program = struct {
+    imports: []const Import = &.{},
+    uses: []const Use = &.{},
     structures: []const Structure,
     functions: []const Function,
 };
 
+pub const Import = struct {
+    path: []const u8,
+    alias: ?[]const u8,
+    position: Source.Position,
+};
+
+pub const Use = struct {
+    path: []const u8,
+    alias: ?[]const u8,
+    is_public: bool,
+    position: Source.Position,
+};
+
 pub const Structure = struct {
+    is_public: bool = false,
     position: Source.Position,
     name: []const u8,
     name_position: Source.Position,
@@ -212,6 +228,7 @@ pub const Parameter = struct {
 };
 
 pub const Function = struct {
+    is_public: bool = false,
     position: Source.Position,
     name: []const u8,
     name_position: Source.Position,

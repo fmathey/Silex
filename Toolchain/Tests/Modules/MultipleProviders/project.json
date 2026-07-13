@@ -1,0 +1,7 @@
+{
+  "target": "Lib",
+  "modules": [
+    { "name": "Lib", "sources": ["First.sx"] },
+    { "name": "Lib", "sources": ["Second.sx"] }
+  ]
+}

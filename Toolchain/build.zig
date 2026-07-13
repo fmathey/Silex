@@ -230,6 +230,55 @@ pub fn build(b: *std.Build) void {
         "silex: native dependency 'native-smoke' does not support target 'riscv64-linux-musl'\n",
     );
 
+    const private_module_command = b.addRunArtifact(executable);
+    private_module_command.addArgs(&.{ "compile", "Tests/Modules/Private/project.json" });
+    private_module_command.expectExitCode(1);
+    private_module_command.expectStdErrEqual(
+        "Tests/Modules/Private/Main.sx:4:15: error: declaration 'hidden' is private in module 'Lib'\n",
+    );
+
+    const module_cycle_command = b.addRunArtifact(executable);
+    module_cycle_command.addArgs(&.{ "compile", "Tests/Modules/Cycle/project.json" });
+    module_cycle_command.expectExitCode(1);
+    module_cycle_command.expectStdErrEqual(
+        "Tests/Modules/Cycle/B.sx:1:1: error: module dependency cycle: A -> B -> A\n",
+    );
+
+    const missing_module_command = b.addRunArtifact(executable);
+    missing_module_command.addArgs(&.{ "compile", "Tests/Modules/Missing/project.json" });
+    missing_module_command.expectExitCode(1);
+    missing_module_command.expectStdErrEqual(
+        "Tests/Modules/Missing/Main.sx:1:1: error: module 'Missing' was not found\n",
+    );
+
+    const module_alias_collision_command = b.addRunArtifact(executable);
+    module_alias_collision_command.addArgs(&.{ "compile", "Tests/Modules/AliasCollision/project.json" });
+    module_alias_collision_command.expectExitCode(1);
+    module_alias_collision_command.expectStdErrEqual(
+        "Tests/Modules/AliasCollision/Main.sx:3:1: error: name 'Shared' collides with an import alias\n",
+    );
+
+    const multiple_module_providers_command = b.addRunArtifact(executable);
+    multiple_module_providers_command.addArgs(&.{ "compile", "Tests/Modules/MultipleProviders/project.json" });
+    multiple_module_providers_command.expectExitCode(1);
+    multiple_module_providers_command.expectStdErrEqual(
+        "silex: module 'Lib' has multiple providers\n",
+    );
+
+    const unknown_module_path_command = b.addRunArtifact(executable);
+    unknown_module_path_command.addArgs(&.{ "compile", "Tests/Modules/UnknownPath/project.json" });
+    unknown_module_path_command.expectExitCode(1);
+    unknown_module_path_command.expectStdErrEqual(
+        "Tests/Modules/UnknownPath/Main.sx:4:9: error: module 'Lib' has no public declaration 'Missing'\n",
+    );
+
+    const missing_local_import_command = b.addRunArtifact(executable);
+    missing_local_import_command.addArgs(&.{ "compile", "Tests/LocalImports/Missing/Main.sx" });
+    missing_local_import_command.expectExitCode(1);
+    missing_local_import_command.expectStdErrEqual(
+        "Tests/LocalImports/Missing/Main.sx:1:1: error: local module 'Math.Vec3' was not found at 'Tests/LocalImports/Missing/Math/Vec3'\n",
+    );
+
     const test_step = b.step("test", "Run the toolchain tests");
     test_step.dependOn(&test_command.step);
     test_step.dependOn(&invalid_command.step);
@@ -257,6 +306,13 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&unavailable_cpp_target_command.step);
     test_step.dependOn(&backend_discovered_target_failure_command.step);
     test_step.dependOn(&unsupported_native_target_command.step);
+    test_step.dependOn(&private_module_command.step);
+    test_step.dependOn(&module_cycle_command.step);
+    test_step.dependOn(&missing_module_command.step);
+    test_step.dependOn(&module_alias_collision_command.step);
+    test_step.dependOn(&multiple_module_providers_command.step);
+    test_step.dependOn(&unknown_module_path_command.step);
+    test_step.dependOn(&missing_local_import_command.step);
 
     const smoke_command = b.addRunArtifact(executable);
     smoke_command.addArgs(&.{ "run", "Smokes/Main.sx" });
@@ -382,8 +438,18 @@ pub fn build(b: *std.Build) void {
         previous_integer_error_step = &unoptimized_command.step;
     }
 
+    const modules_command = b.addRunArtifact(executable);
+    modules_command.step.dependOn(previous_integer_error_step);
+    modules_command.addArgs(&.{ "run", "Smokes/Modules/silex.json" });
+    modules_command.expectStdOutEqual(hostText(b, "true\ntrue\ntrue\n1\n2\nmodules\n"));
+
+    const local_imports_command = b.addRunArtifact(executable);
+    local_imports_command.step.dependOn(&modules_command.step);
+    local_imports_command.addArgs(&.{ "run", "Smokes/LocalImports/Main.sx" });
+    local_imports_command.expectStdOutEqual(hostText(b, "2\n3\n9\n3\n"));
+
     const native_source_command = b.addRunArtifact(executable);
-    native_source_command.step.dependOn(previous_integer_error_step);
+    native_source_command.step.dependOn(&local_imports_command.step);
     native_source_command.addArgs(&.{
         "run",
         "Smokes/Native/Main.sx",

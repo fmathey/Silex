@@ -1,0 +1,25 @@
+{
+  "target": "Example.App",
+  "modules": [
+    {
+      "name": "NK.Window",
+      "sources": ["Window.sx"]
+    },
+    {
+      "name": "NK.Plugins",
+      "sources": ["Plugins.sx"]
+    },
+    {
+      "name": "Prefix.Shared",
+      "sources": ["Shared.sx"]
+    },
+    {
+      "name": "Prefix.Shared.Deep",
+      "sources": ["Deep.sx"]
+    },
+    {
+      "name": "Example.App",
+      "sources": ["Main.sx", "Message.sx"]
+    }
+  ]
+}

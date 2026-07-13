@@ -1,0 +1,18 @@
+import Math
+
+use Math.Geometry.Ray
+use Math.Vec2
+use Math.Vec3
+use Math.Vec4
+use Math.dimensions
+
+func main() void {
+    let two:Vec2 = Vec2 { x:1.0, y:2.0 }
+    let three:Vec3 = Vec3 { x:3.0, y:4.0, z:5.0 }
+    let four:Vec4 = Vec4 { x:6.0, y:7.0, z:8.0, w:9.0 }
+    let ray:Ray = Ray { origin:three }
+    print(two.y)
+    print(ray.origin.x)
+    print(four.w)
+    print(dimensions())
+}

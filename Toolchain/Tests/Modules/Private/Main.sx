@@ -1,0 +1,5 @@
+import Lib
+
+func main() void {
+    print(Lib.hidden())
+}
