@@ -9,7 +9,6 @@ pub const Module = struct {
 };
 
 pub const Project = struct {
-    root_path: []const u8,
     program_name: []const u8,
     target_module: usize,
     modules: []const Module,
@@ -30,7 +29,6 @@ pub fn load(allocator: Allocator, io: Io, input_path: []const u8) !Project {
     if (std.mem.endsWith(u8, input_path, ".sx")) {
         const filename = std.fs.path.basename(input_path);
         return .{
-            .root_path = "",
             .program_name = filename[0 .. filename.len - 3],
             .target_module = 0,
             .modules = try allocator.dupe(Module, &.{.{
@@ -60,7 +58,7 @@ pub fn load(allocator: Allocator, io: Io, input_path: []const u8) !Project {
         return error.Reported;
     }
 
-    const manifest_dir = std.fs.path.dirname(input_path) orelse ".";
+    const manifest_dir = inputDirectory(input_path);
     var modules: std.ArrayList(Module) = .empty;
     var target_module: ?usize = null;
     for (manifest.modules, 0..) |module, module_index| {
@@ -104,12 +102,16 @@ pub fn load(allocator: Allocator, io: Io, input_path: []const u8) !Project {
     }
     const program_name = std.fs.path.extension(manifest.target);
     return .{
-        .root_path = if (std.mem.eql(u8, manifest_dir, ".")) "" else manifest_dir,
         .program_name = if (program_name.len > 0) program_name[1..] else manifest.target,
         .target_module = target_module.?,
         .modules = try modules.toOwnedSlice(allocator),
         .single_file = false,
     };
+}
+
+fn inputDirectory(input_path: []const u8) []const u8 {
+    const directory = std.fs.path.dirname(input_path) orelse return "";
+    return if (std.mem.eql(u8, directory, ".")) "" else directory;
 }
 
 fn validModuleName(name: []const u8) bool {
@@ -131,4 +133,11 @@ test "validate logical module names" {
     try std.testing.expect(validModuleName("NK.Window"));
     try std.testing.expect(!validModuleName("NK..Window"));
     try std.testing.expect(!validModuleName("2D.Window"));
+}
+
+test "manifest source paths follow the input directory" {
+    try std.testing.expectEqualStrings("Sandbox", inputDirectory("Sandbox/Main.sx"));
+    try std.testing.expectEqualStrings("Sandbox", inputDirectory("Sandbox/silex.json"));
+    try std.testing.expectEqualStrings("", inputDirectory("Main.sx"));
+    try std.testing.expectEqualStrings("", inputDirectory("./Main.sx"));
 }

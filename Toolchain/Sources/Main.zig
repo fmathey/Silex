@@ -1,5 +1,6 @@
 const std = @import("std");
 const Compiler = @import("Compiler.zig");
+const Lsp = @import("Lsp.zig");
 const TargetModule = @import("Target.zig");
 const NativeDependency = @import("NativeDependency.zig");
 
@@ -23,12 +24,14 @@ fn runCli(init: std.process.Init) !u8 {
     }
 
     if (args.len == 2 and std.mem.eql(u8, args[1], "--version")) {
-        try Io.File.stdout().writeStreamingAll(init.io, "Silex 0.7.0\n");
+        try Io.File.stdout().writeStreamingAll(init.io, "Silex 0.8.0\n");
         return 0;
     }
 
     if (std.mem.eql(u8, args[1], "compile")) return compileCommand(allocator, init.io, args[2..]);
     if (std.mem.eql(u8, args[1], "run")) return runCommand(allocator, init.io, args[2..]);
+    if (std.mem.eql(u8, args[1], "clean")) return cleanCommand(allocator, init.io, args[2..]);
+    if (std.mem.eql(u8, args[1], "lsp")) return Lsp.run(allocator, init.io);
 
     std.debug.print("silex: unknown command '{s}'\n\n{s}", .{ args[1], usage });
     return 1;
@@ -86,13 +89,13 @@ fn compileCommand(allocator: Allocator, io: Io, args: []const []const u8) !u8 {
     const compilation = try Compiler.compile(allocator, io, input_path, target, native_dependencies.items);
     const output = output_path orelse try Compiler.defaultOutputPath(
         allocator,
-        compilation.project_path,
+        compilation.artifact_root,
         compilation.program_name,
     );
     try Compiler.copyArtifact(io, compilation.executable_path, output);
 
     if (emit_cpp) {
-        const generated_dir = try std.fs.path.join(allocator, &.{ compilation.project_path, ".silex", "generated" });
+        const generated_dir = try std.fs.path.join(allocator, &.{ compilation.artifact_root, ".silex", "generated" });
         try Io.Dir.cwd().createDirPath(io, generated_dir);
         const generated_name = try std.fmt.allocPrint(allocator, "{s}.cpp", .{compilation.program_name});
         const generated_path = try std.fs.path.join(allocator, &.{ generated_dir, generated_name });
@@ -141,6 +144,22 @@ fn runCommand(allocator: Allocator, io: Io, args: []const []const u8) !u8 {
     return Compiler.exitCode(term);
 }
 
+fn cleanCommand(allocator: Allocator, io: Io, args: []const []const u8) !u8 {
+    if (args.len != 0) {
+        std.debug.print("silex: clean does not accept an input; it cleans the current directory\n\n{s}", .{usage});
+        return 1;
+    }
+
+    const artifact_root = "";
+    const cache_path = try std.fs.path.join(allocator, &.{ artifact_root, ".silex" });
+    if (try Compiler.cleanArtifacts(allocator, io, artifact_root)) {
+        std.debug.print("Cleaned {s}\n", .{cache_path});
+    } else {
+        std.debug.print("No cache to clean: {s}\n", .{cache_path});
+    }
+    return 0;
+}
+
 fn isHelp(argument: []const u8) bool {
     return std.mem.eql(u8, argument, "--help") or std.mem.eql(u8, argument, "-h");
 }
@@ -150,6 +169,8 @@ const usage =
     \\  silex compile <source.sx|project.json> [-o <executable>] [--emit-cpp]
     \\      [--target <arch-os-abi>] [--native <dependency.json>]
     \\  silex run <source.sx|project.json> [--native <dependency.json>]
+    \\  silex clean
+    \\  silex lsp
     \\  silex --help
     \\  silex --version
     \\

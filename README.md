@@ -169,9 +169,11 @@ qu'elle prend explicitement en charge :
 silex compile path/to/Main.sx --native path/to/dependency.json
 ```
 
-Les artefacts sont regroupés dans `.silex/` sous le dossier depuis lequel la
-commande est lancée. Un programme inchangé réutilise l'exécutable présent dans
-le cache de compilation.
+Les artefacts sont regroupés dans `.silex/` dans le dossier depuis lequel la
+commande est lancée. Le chemin d'une source ou d'un manifeste ne place donc pas
+d'artefacts dans son dossier. Le cache sépare son format et sa cible, réutilise
+un programme inchangé et conserve au plus huit résultats par cible. `silex
+clean` nettoie le dossier courant.
 
 ## Organisation
 
@@ -245,10 +247,30 @@ valide les plateformes hôtes de distribution ; elle ne publie aucune release.
 
 L'extension située dans `Editors/Zed/` associe les fichiers `.sx` au langage
 Silex. Elle fournit la coloration syntaxique, les paires de délimiteurs,
-l'indentation, le plan des fonctions et quelques snippets.
+l'indentation, le plan des fonctions, quelques snippets et un serveur de
+langage. La première version de ce serveur signale les erreurs de syntaxe et
+propose les mots du langage ainsi que les identifiants du document courant.
+Après un accès membre, elle résout le type du receveur dans le document et ne
+propose que les champs et méthodes de sa structure. Après `import`, elle
+découvre les modules locaux selon la même convention de dossiers que le
+compilateur et ne propose que les noms de modules correspondants. Une fois le
+module importé, une qualification comme `Math.V` propose ses déclarations
+publiques, par exemple `Math.Vec3`.
 
 Elle s'appuie sur la grammaire native `tree-sitter-silex` développée dans
 `Editors/Zed/TreeSitter/`.
 
-Pour l'utiliser pendant le développement, exécuter `zed: install dev extension`
-dans Zed, puis sélectionner le dossier `Editors/Zed/`.
+Le serveur est lancé avec `silex lsp`. Une extension distribuée attend donc le
+binaire `silex` dans l'environnement de Zed. Pendant le développement, le
+script local construit la Toolchain et injecte automatiquement le chemin du
+binaire dans l'extension générée. Depuis la racine de travail, préparer cette
+extension puis installer une seule fois
+`Repository/Editors/Zed/.dev/extension/` avec `zed: install dev extension` :
+
+```sh
+./silex-dev zed
+```
+
+Après une modification, relancer cette commande puis utiliser successivement
+`zed: rebuild dev extension` et `editor: restart language server`. Le rebuild
+arrête le processus LSP déjà actif sans nécessairement le relancer.

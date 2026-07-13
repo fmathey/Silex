@@ -1,0 +1,5 @@
+[build]
+rustc = "@RUSTC_PATH@"
+
+[env]
+SILEX_LSP_COMMAND = "@SILEX_COMMAND@"

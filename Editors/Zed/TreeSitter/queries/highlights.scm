@@ -4,6 +4,7 @@
 (void_type) @type.builtin
 (builtin_type) @type.builtin
 (type_identifier) @type
+(type_identifier (identifier) @type)
 
 (structure_definition
   name: (identifier) @type.definition)

@@ -32,6 +32,16 @@ pub fn build(b: *std.Build) void {
     });
     const test_command = b.addRunArtifact(tests);
 
+    const lsp_test_module = b.createModule(.{
+        .root_source_file = b.path("Sources/Lsp.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const lsp_tests = b.addTest(.{
+        .root_module = lsp_test_module,
+    });
+    const lsp_test_command = b.addRunArtifact(lsp_tests);
+
     const invalid_command = b.addRunArtifact(executable);
     invalid_command.addArgs(&.{ "compile", "Tests/InvalidArithmetic.sx" });
     invalid_command.expectExitCode(1);
@@ -212,8 +222,13 @@ pub fn build(b: *std.Build) void {
         "silex: native compilation failed for target 'x86_64-linux-musl'; target support, SDKs, or native sources may be unavailable or incomplete\n",
     );
     backend_discovered_target_failure_command.expectStdErrMatch(b.fmt(
-        "silex: backend details: .silex{c}cache{c}x86_64-linux-musl{c}",
-        .{ std.fs.path.sep, std.fs.path.sep, std.fs.path.sep },
+        "silex: backend details: .silex{c}cache{c}v12{c}x86_64-linux-musl{c}",
+        .{
+            std.fs.path.sep,
+            std.fs.path.sep,
+            std.fs.path.sep,
+            std.fs.path.sep,
+        },
     ));
 
     const unsupported_native_target_command = b.addRunArtifact(executable);
@@ -281,6 +296,7 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run the toolchain tests");
     test_step.dependOn(&test_command.step);
+    test_step.dependOn(&lsp_test_command.step);
     test_step.dependOn(&invalid_command.step);
     test_step.dependOn(&immutable_assignment_command.step);
     test_step.dependOn(&invalid_condition_command.step);
@@ -383,24 +399,26 @@ pub fn build(b: *std.Build) void {
     integer_overflow_command.expectExitCode(1);
     integer_overflow_command.expectStdErrEqual(hostText(
         b,
-        "Smokes/IntegerOverflow.sx:3:5: runtime error: uint8 addition overflow: 255 + 1\n",
+        b.fmt("{s}:3:5: runtime error: uint8 addition overflow: 255 + 1\n", .{
+            b.pathFromRoot("Smokes/IntegerOverflow.sx"),
+        }),
     ));
 
     const integer_error_cases = [_]struct {
         source: []const u8,
         message: []const u8,
     }{
-        .{ .source = "Smokes/IntegerErrors/AddSigned.sx", .message = "Smokes/IntegerErrors/AddSigned.sx:3:17: runtime error: int8 addition overflow: 127 + 1" },
-        .{ .source = "Smokes/IntegerErrors/AddUnsigned.sx", .message = "Smokes/IntegerErrors/AddUnsigned.sx:3:5: runtime error: uint8 addition overflow: 255 + 1" },
-        .{ .source = "Smokes/IntegerErrors/SubtractSigned.sx", .message = "Smokes/IntegerErrors/SubtractSigned.sx:3:5: runtime error: int16 subtraction underflow: -32768 - 1" },
-        .{ .source = "Smokes/IntegerErrors/SubtractUnsigned.sx", .message = "Smokes/IntegerErrors/SubtractUnsigned.sx:3:5: runtime error: uint16 subtraction underflow: 0 - 1" },
-        .{ .source = "Smokes/IntegerErrors/MultiplySigned.sx", .message = "Smokes/IntegerErrors/MultiplySigned.sx:3:17: runtime error: int32 multiplication overflow: 2147483647 * 2" },
-        .{ .source = "Smokes/IntegerErrors/MultiplyUnsigned.sx", .message = "Smokes/IntegerErrors/MultiplyUnsigned.sx:3:5: runtime error: uint32 multiplication overflow: 4294967295 * 2" },
-        .{ .source = "Smokes/IntegerErrors/DivideSigned.sx", .message = "Smokes/IntegerErrors/DivideSigned.sx:3:5: runtime error: int division overflow: -9223372036854775808 / -1" },
-        .{ .source = "Smokes/IntegerErrors/DivideUnsigned.sx", .message = "Smokes/IntegerErrors/DivideUnsigned.sx:3:17: runtime error: uint64 division by zero: 1 / 0" },
-        .{ .source = "Smokes/IntegerErrors/NegateSigned.sx", .message = "Smokes/IntegerErrors/NegateSigned.sx:3:11: runtime error: int8 negation overflow: -(-128)" },
-        .{ .source = "Smokes/IntegerErrors/NegateUnsigned.sx", .message = "Smokes/IntegerErrors/NegateUnsigned.sx:3:11: runtime error: uint8 negation underflow: -(1)" },
-        .{ .source = "Smokes/IntegerErrors/MethodUnsigned.sx", .message = "Smokes/IntegerErrors/MethodUnsigned.sx:5:9: runtime error: uint8 subtraction underflow: 10 - 255" },
+        .{ .source = "Smokes/IntegerErrors/AddSigned.sx", .message = "3:17: runtime error: int8 addition overflow: 127 + 1" },
+        .{ .source = "Smokes/IntegerErrors/AddUnsigned.sx", .message = "3:5: runtime error: uint8 addition overflow: 255 + 1" },
+        .{ .source = "Smokes/IntegerErrors/SubtractSigned.sx", .message = "3:5: runtime error: int16 subtraction underflow: -32768 - 1" },
+        .{ .source = "Smokes/IntegerErrors/SubtractUnsigned.sx", .message = "3:5: runtime error: uint16 subtraction underflow: 0 - 1" },
+        .{ .source = "Smokes/IntegerErrors/MultiplySigned.sx", .message = "3:17: runtime error: int32 multiplication overflow: 2147483647 * 2" },
+        .{ .source = "Smokes/IntegerErrors/MultiplyUnsigned.sx", .message = "3:5: runtime error: uint32 multiplication overflow: 4294967295 * 2" },
+        .{ .source = "Smokes/IntegerErrors/DivideSigned.sx", .message = "3:5: runtime error: int division overflow: -9223372036854775808 / -1" },
+        .{ .source = "Smokes/IntegerErrors/DivideUnsigned.sx", .message = "3:17: runtime error: uint64 division by zero: 1 / 0" },
+        .{ .source = "Smokes/IntegerErrors/NegateSigned.sx", .message = "3:11: runtime error: int8 negation overflow: -(-128)" },
+        .{ .source = "Smokes/IntegerErrors/NegateUnsigned.sx", .message = "3:11: runtime error: uint8 negation underflow: -(1)" },
+        .{ .source = "Smokes/IntegerErrors/MethodUnsigned.sx", .message = "5:9: runtime error: uint8 subtraction underflow: 10 - 255" },
     };
     const integer_error_suffix = if (b.graph.host.result.os.tag == .windows) ".exe" else "";
     var previous_integer_error_step: *std.Build.Step = &integer_overflow_command.step;
@@ -411,7 +429,7 @@ pub fn build(b: *std.Build) void {
         optimized_command.expectExitCode(1);
         optimized_command.expectStdErrEqual(hostText(
             b,
-            b.fmt("{s}\n", .{case.message}),
+            b.fmt("{s}:{s}\n", .{ b.pathFromRoot(case.source), case.message }),
         ));
 
         const emit_command = b.addRunArtifact(executable);
@@ -437,7 +455,7 @@ pub fn build(b: *std.Build) void {
         unoptimized_command.expectExitCode(1);
         unoptimized_command.expectStdErrEqual(hostText(
             b,
-            b.fmt("{s}\n", .{case.message}),
+            b.fmt("{s}:{s}\n", .{ b.pathFromRoot(case.source), case.message }),
         ));
         previous_integer_error_step = &unoptimized_command.step;
     }
@@ -595,7 +613,7 @@ pub fn build(b: *std.Build) void {
         .root_module = distribution_module,
     });
     const host = b.graph.host.result;
-    const distribution_name = b.fmt("silex-0.7.0-{s}-{s}", .{
+    const distribution_name = b.fmt("silex-0.8.0-{s}-{s}", .{
         @tagName(host.cpu.arch),
         @tagName(host.os.tag),
     });

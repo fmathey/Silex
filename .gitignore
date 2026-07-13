@@ -4,3 +4,4 @@ zig-out/
 .silex/
 Editors/Zed/grammars/
 Editors/Zed/.dev/
+Editors/Zed/target/

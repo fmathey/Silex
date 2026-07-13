@@ -12,6 +12,9 @@ const SourceGraph = @import("SourceGraph.zig");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
+pub const cache_format = "v12";
+pub const cache_entry_limit = 8;
+
 const NativeConfiguration = enum {
     unoptimized,
     optimized,
@@ -29,7 +32,7 @@ const default_native_configuration: NativeConfiguration = .optimized;
 pub const Compilation = struct {
     executable_path: []const u8,
     cpp_path: []const u8,
-    project_path: []const u8,
+    artifact_root: []const u8,
     program_name: []const u8,
     cache_hit: bool,
     target: TargetModule.Target,
@@ -51,6 +54,7 @@ pub fn compile(
     const source_paths = loaded.source_paths;
     const source_contents = loaded.source_contents;
     const files = loaded.files;
+    const canonical_source_paths = try canonicalizeSourcePaths(allocator, io, source_paths);
     const ast = if (project.single_file)
         files[0].program
     else resolved: {
@@ -67,8 +71,8 @@ pub fn compile(
         else => |other| return other,
     };
 
-    const cpp = try CppGenerator.generateWithSources(allocator, program, source_paths);
-    const project_path = project.root_path;
+    const cpp = try CppGenerator.generateWithSources(allocator, program, canonical_source_paths);
+    const artifact_root = "";
     const program_name = project.program_name;
     const target_name = try target.cacheName(allocator);
     if (target.cppBackendUnavailableReason()) |reason| {
@@ -89,20 +93,34 @@ pub fn compile(
         io,
         cpp,
         project,
-        source_paths,
+        canonical_source_paths,
         source_contents,
         target,
         native_dependencies,
         default_native_configuration,
     );
-    const cache_dir = try std.fs.path.join(allocator, &.{ project_path, ".silex", "cache", target_name, &cache_key });
+    const cache_root = try std.fs.path.join(allocator, &.{ artifact_root, ".silex", "cache" });
+    const version_cache_dir = try std.fs.path.join(allocator, &.{ cache_root, cache_format });
+    const target_cache_dir = try std.fs.path.join(allocator, &.{ version_cache_dir, target_name });
+    try Io.Dir.cwd().createDirPath(io, target_cache_dir);
+    cleanObsoleteCacheLayouts(allocator, io, cache_root) catch |err| {
+        std.debug.print("silex: warning: unable to remove obsolete cache layouts: {t}\n", .{err});
+    };
+
+    const cache_dir = try std.fs.path.join(allocator, &.{ target_cache_dir, &cache_key });
     try Io.Dir.cwd().createDirPath(io, cache_dir);
 
     const cpp_path = try std.fs.path.join(allocator, &.{ cache_dir, "Generated.cpp" });
     const executable_path = try std.fs.path.join(allocator, &.{ cache_dir, program_name });
     const temporary_name = try std.fmt.allocPrint(allocator, "{s}.tmp", .{program_name});
     const temporary_executable_path = try std.fs.path.join(allocator, &.{ cache_dir, temporary_name });
+    const backend_log_path = try std.fs.path.join(allocator, &.{ cache_dir, "Backend.log" });
     const cache_hit = try fileExists(io, executable_path);
+    const access_path = try std.fs.path.join(allocator, &.{ cache_dir, ".access" });
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = access_path, .data = "" });
+    pruneTargetCache(allocator, io, target_cache_dir, &cache_key, cache_entry_limit) catch |err| {
+        std.debug.print("silex: warning: unable to prune compilation cache: {t}\n", .{err});
+    };
 
     if (!cache_hit) {
         try Io.Dir.cwd().writeFile(io, .{ .sub_path = cpp_path, .data = cpp });
@@ -128,7 +146,6 @@ pub fn compile(
         });
         if (exitCode(result.term) != 0) {
             Io.Dir.cwd().deleteFile(io, temporary_executable_path) catch {};
-            const backend_log_path = try std.fs.path.join(allocator, &.{ cache_dir, "Backend.log" });
             try Io.Dir.cwd().writeFile(io, .{ .sub_path = backend_log_path, .data = result.stderr });
             std.debug.print(
                 "silex: native compilation failed for target '{s}'; target support, SDKs, or native sources may be unavailable or incomplete\n",
@@ -141,11 +158,12 @@ pub fn compile(
         if (result.stderr.len > 0) try Io.File.stderr().writeStreamingAll(io, result.stderr);
         try Io.Dir.cwd().rename(temporary_executable_path, .cwd(), executable_path, io);
     }
+    Io.Dir.cwd().deleteFile(io, backend_log_path) catch {};
 
     return .{
         .executable_path = executable_path,
         .cpp_path = cpp_path,
-        .project_path = project_path,
+        .artifact_root = artifact_root,
         .program_name = program_name,
         .cache_hit = cache_hit,
         .target = target,
@@ -172,10 +190,20 @@ pub fn exitCode(term: std.process.Child.Term) u8 {
 
 pub fn defaultOutputPath(
     allocator: Allocator,
-    project_path: []const u8,
+    artifact_root: []const u8,
     program_name: []const u8,
 ) ![]const u8 {
-    return std.fs.path.join(allocator, &.{ project_path, ".silex", "bin", program_name });
+    return std.fs.path.join(allocator, &.{ artifact_root, ".silex", "bin", program_name });
+}
+
+pub fn cleanArtifacts(allocator: Allocator, io: Io, artifact_root: []const u8) !bool {
+    const cache_path = try std.fs.path.join(allocator, &.{ artifact_root, ".silex" });
+    _ = Io.Dir.cwd().statFile(io, cache_path, .{}) catch |err| switch (err) {
+        error.FileNotFound => return false,
+        else => |other| return other,
+    };
+    try Io.Dir.cwd().deleteTree(io, cache_path);
+    return true;
 }
 
 pub fn copyArtifact(io: Io, source_path: []const u8, destination_path: []const u8) !void {
@@ -208,7 +236,9 @@ fn cacheKey(
     native_configuration: NativeConfiguration,
 ) ![64]u8 {
     var hasher = std.crypto.hash.sha2.Sha256.init(.{});
-    hasher.update("silex-cache-v12\x00");
+    hasher.update("silex-cache-");
+    hasher.update(cache_format);
+    hasher.update("\x00");
     hasher.update(@tagName(native_configuration));
     hasher.update("\x00");
     hasher.update(@tagName(target.cpu_arch));
@@ -247,6 +277,98 @@ fn cacheKey(
     var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
     hasher.final(&digest);
     return std.fmt.bytesToHex(digest, .lower);
+}
+
+fn canonicalizeSourcePaths(allocator: Allocator, io: Io, source_paths: []const []const u8) ![]const []const u8 {
+    const canonical = try allocator.alloc([]const u8, source_paths.len);
+    for (source_paths, 0..) |source_path, index| {
+        canonical[index] = try Io.Dir.cwd().realPathFileAlloc(io, source_path, allocator);
+    }
+    return canonical;
+}
+
+fn cleanObsoleteCacheLayouts(allocator: Allocator, io: Io, cache_root: []const u8) !void {
+    var directory = try Io.Dir.cwd().openDir(io, cache_root, .{ .iterate = true });
+    defer directory.close(io);
+
+    try cleanObsoleteCacheLayoutsInDir(allocator, io, directory);
+}
+
+fn cleanObsoleteCacheLayoutsInDir(allocator: Allocator, io: Io, directory: Io.Dir) !void {
+    var obsolete_names: std.ArrayList([]const u8) = .empty;
+    var iterator = directory.iterateAssumeFirstIteration();
+    while (try iterator.next(io)) |entry| {
+        if (std.mem.eql(u8, entry.name, cache_format)) continue;
+        try obsolete_names.append(allocator, try allocator.dupe(u8, entry.name));
+    }
+    for (obsolete_names.items) |name| try directory.deleteTree(io, name);
+}
+
+const CacheEntry = struct {
+    name: []const u8,
+    modified: i96,
+};
+
+fn pruneTargetCache(
+    allocator: Allocator,
+    io: Io,
+    target_cache_dir: []const u8,
+    active_key: []const u8,
+    maximum_entries: usize,
+) !void {
+    var directory = try Io.Dir.cwd().openDir(io, target_cache_dir, .{ .iterate = true });
+    defer directory.close(io);
+
+    try pruneTargetCacheInDir(allocator, io, directory, active_key, maximum_entries);
+}
+
+fn pruneTargetCacheInDir(
+    allocator: Allocator,
+    io: Io,
+    directory: Io.Dir,
+    active_key: []const u8,
+    maximum_entries: usize,
+) !void {
+    var entries: std.ArrayList(CacheEntry) = .empty;
+    var iterator = directory.iterateAssumeFirstIteration();
+    while (try iterator.next(io)) |entry| {
+        if (!isCacheKeyName(entry.name)) continue;
+        const stat = try directory.statFile(io, entry.name, .{});
+        if (stat.kind != .directory) continue;
+        const access_path = try std.fs.path.join(allocator, &.{ entry.name, ".access" });
+        const modified = directory.statFile(io, access_path, .{}) catch |err| switch (err) {
+            error.FileNotFound => stat,
+            else => |other| return other,
+        };
+        try entries.append(allocator, .{
+            .name = try allocator.dupe(u8, entry.name),
+            .modified = modified.mtime.nanoseconds,
+        });
+    }
+    if (entries.items.len <= maximum_entries) return;
+
+    std.mem.sort(CacheEntry, entries.items, {}, struct {
+        fn lessThan(_: void, left: CacheEntry, right: CacheEntry) bool {
+            if (left.modified != right.modified) return left.modified < right.modified;
+            return std.mem.lessThan(u8, left.name, right.name);
+        }
+    }.lessThan);
+
+    var remaining = entries.items.len;
+    for (entries.items) |entry| {
+        if (remaining <= maximum_entries) break;
+        if (std.mem.eql(u8, entry.name, active_key)) continue;
+        try directory.deleteTree(io, entry.name);
+        remaining -= 1;
+    }
+}
+
+fn isCacheKeyName(name: []const u8) bool {
+    if (name.len != std.crypto.hash.sha2.Sha256.digest_length * 2) return false;
+    for (name) |character| {
+        if (!std.ascii.isDigit(character) and !(character >= 'a' and character <= 'f')) return false;
+    }
+    return true;
 }
 
 fn resolveZig(allocator: Allocator, io: Io) ![]const u8 {
@@ -295,9 +417,72 @@ test "cache key separates native configurations" {
     try std.testing.expect(!std.mem.eql(u8, &optimized, &unoptimized));
 }
 
+test "cache pruning keeps the active entry and a bounded history" {
+    var temporary = std.testing.tmpDir(.{ .iterate = true });
+    defer temporary.cleanup();
+
+    for ("012345678") |character| {
+        var name: [std.crypto.hash.sha2.Sha256.digest_length * 2]u8 = undefined;
+        @memset(&name, character);
+        try temporary.dir.createDir(std.testing.io, &name, .default_dir);
+    }
+    const active_key = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+    try temporary.dir.createDir(std.testing.io, active_key, .default_dir);
+    try temporary.dir.createDir(std.testing.io, "notes", .default_dir);
+
+    try pruneTargetCacheInDir(std.testing.allocator, std.testing.io, temporary.dir, active_key, 3);
+
+    var cache_entry_count: usize = 0;
+    var active_found = false;
+    var notes_found = false;
+    var iterator = temporary.dir.iterateAssumeFirstIteration();
+    while (try iterator.next(std.testing.io)) |entry| {
+        if (isCacheKeyName(entry.name)) cache_entry_count += 1;
+        if (std.mem.eql(u8, entry.name, active_key)) active_found = true;
+        if (std.mem.eql(u8, entry.name, "notes")) notes_found = true;
+    }
+    try std.testing.expectEqual(@as(usize, 3), cache_entry_count);
+    try std.testing.expect(active_found);
+    try std.testing.expect(notes_found);
+}
+
+test "cache migration removes obsolete layouts only" {
+    var temporary = std.testing.tmpDir(.{ .iterate = true });
+    defer temporary.cleanup();
+
+    try temporary.dir.createDir(std.testing.io, cache_format, .default_dir);
+    try temporary.dir.createDir(std.testing.io, "v11", .default_dir);
+    try temporary.dir.createDir(std.testing.io, "aarch64-macos-none", .default_dir);
+
+    try cleanObsoleteCacheLayoutsInDir(std.testing.allocator, std.testing.io, temporary.dir);
+
+    _ = try temporary.dir.statFile(std.testing.io, cache_format, .{});
+    try std.testing.expectError(error.FileNotFound, temporary.dir.statFile(std.testing.io, "v11", .{}));
+    try std.testing.expectError(error.FileNotFound, temporary.dir.statFile(std.testing.io, "aarch64-macos-none", .{}));
+}
+
+test "clean removes all Silex artifacts" {
+    var temporary = std.testing.tmpDir(.{ .iterate = true });
+    defer temporary.cleanup();
+
+    try temporary.dir.createDirPath(std.testing.io, ".silex/cache/v12");
+    try temporary.dir.writeFile(std.testing.io, .{
+        .sub_path = ".silex/cache/v12/probe",
+        .data = "cached",
+    });
+    const artifact_root = try std.fs.path.join(std.testing.allocator, &.{
+        ".zig-cache",
+        "tmp",
+        &temporary.sub_path,
+    });
+    defer std.testing.allocator.free(artifact_root);
+
+    try std.testing.expect(try cleanArtifacts(std.testing.allocator, std.testing.io, artifact_root));
+    try std.testing.expect(!(try cleanArtifacts(std.testing.allocator, std.testing.io, artifact_root)));
+}
+
 fn testProject() ProjectModule.Project {
     return .{
-        .root_path = "",
         .program_name = "Test",
         .target_module = 0,
         .modules = &.{.{ .name = "Test", .sources = &.{"Test.sx"} }},
