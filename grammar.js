@@ -102,9 +102,14 @@ module.exports = grammar({
         "str",
       ),
     named_type: ($) => alias(choice($.identifier, $.qualified_name), $.type_identifier),
+    array_type: ($) =>
+      seq(
+        field("element", choice($.builtin_type, $.named_type)),
+        repeat1(choice(seq("[", "]"), seq("[", field("length", $.integer_literal), "]"))),
+      ),
     reference_type: ($) =>
-      seq(field("target", choice($.builtin_type, $.named_type)), field("kind", choice("&", "@"))),
-    type: ($) => choice($.reference_type, $.builtin_type, $.named_type),
+      seq(field("target", choice($.array_type, $.builtin_type, $.named_type)), field("kind", choice("&", "@"))),
+    type: ($) => choice($.reference_type, $.array_type, $.builtin_type, $.named_type),
     parameter_list: ($) =>
       seq("(", optional(seq($.parameter, repeat(seq(",", $.parameter)))), ")"),
 
@@ -144,14 +149,14 @@ module.exports = grammar({
 
     assignment_statement: ($) =>
       seq(
-        field("left", choice($.identifier, $.member_expression, $.dereference_expression)),
+        field("left", choice($.identifier, $.member_expression, $.index_expression, $.dereference_expression)),
         field("operator", choice("=", "+=", "-=", "*=", "/=")),
         field("right", $.expression),
       ),
 
     update_statement: ($) =>
       seq(
-        field("argument", choice($.identifier, $.member_expression, $.dereference_expression)),
+        field("argument", choice($.identifier, $.member_expression, $.index_expression, $.dereference_expression)),
         field("operator", choice("++", "--")),
       ),
 
@@ -197,7 +202,9 @@ module.exports = grammar({
         $.call_expression,
         $.method_call_expression,
         $.structure_initializer,
+        $.sequence_literal,
         $.member_expression,
+        $.index_expression,
         $.parenthesized_expression,
         $.string_literal,
         $.float_literal,
@@ -215,6 +222,9 @@ module.exports = grammar({
         "}",
       ),
 
+    sequence_literal: ($) =>
+      seq("[", optional(seq($.expression, repeat(seq(",", $.expression)), optional(","))), "]"),
+
     field_initializer: ($) =>
       seq(field("name", $.identifier), ":", field("value", $.expression)),
 
@@ -230,7 +240,14 @@ module.exports = grammar({
               $.call_expression,
               $.structure_initializer,
               $.member_expression,
+              $.index_expression,
               $.method_call_expression,
+              $.sequence_literal,
+              $.string_literal,
+              $.float_literal,
+              $.integer_literal,
+              $.boolean_literal,
+              $.parenthesized_expression,
             ),
           ),
           ".",
@@ -258,7 +275,14 @@ module.exports = grammar({
               $.call_expression,
               $.structure_initializer,
               $.member_expression,
+              $.index_expression,
               $.method_call_expression,
+              $.sequence_literal,
+              $.string_literal,
+              $.float_literal,
+              $.integer_literal,
+              $.boolean_literal,
+              $.parenthesized_expression,
             ),
           ),
           ".",
@@ -266,6 +290,35 @@ module.exports = grammar({
           "(",
           optional(seq($.expression, repeat(seq(",", $.expression)))),
           ")",
+        ),
+      ),
+
+    index_expression: ($) =>
+      prec.left(
+        PREC.member,
+        seq(
+          field(
+            "object",
+            choice(
+              $.identifier,
+              $.self_expression,
+              $.call_expression,
+              $.structure_initializer,
+              $.member_expression,
+              $.index_expression,
+              $.method_call_expression,
+              $.sequence_literal,
+              $.string_literal,
+              $.float_literal,
+              $.integer_literal,
+              $.boolean_literal,
+              $.parenthesized_expression,
+            ),
+          ),
+          "[",
+          optional(field("from_end", "^")),
+          field("index", $.expression),
+          "]",
         ),
       ),
 
