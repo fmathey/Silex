@@ -177,6 +177,9 @@ pub const Statement = union(enum) {
     assignment: Assignment,
     if_statement: If,
     while_statement: While,
+    for_statement: For,
+    break_statement: Source.Position,
+    continue_statement: Source.Position,
     return_statement: Return,
     expression_statement: *Expression,
 
@@ -211,6 +214,15 @@ pub const Statement = union(enum) {
     pub const While = struct {
         position: Source.Position,
         condition: *Expression,
+        body: []const Statement,
+    };
+
+    pub const For = struct {
+        position: Source.Position,
+        name: []const u8,
+        name_position: Source.Position,
+        mutable: bool,
+        iterable: *Expression,
         body: []const Statement,
     };
 

@@ -1,0 +1,15 @@
+struct Bucket {
+    values:int[]
+
+    func clear_values() void {
+        self.values.clear()
+    }
+
+    func inspect() void {
+        for (value in self.values) {
+            self.clear_values()
+        }
+    }
+}
+
+func main() void {}

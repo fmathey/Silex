@@ -39,6 +39,11 @@
 (variable_declaration
   name: (identifier) @variable)
 
+(for_statement
+  name: (identifier) @variable)
+
+[(break_statement) (continue_statement)] @keyword
+
 (assignment_statement
   left: (identifier) @variable)
 
@@ -65,6 +70,8 @@
   "if"
   "else"
   "while"
+  "for"
+  "in"
   "return"
   "struct"
   "func"

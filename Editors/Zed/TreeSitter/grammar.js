@@ -127,12 +127,15 @@ module.exports = grammar({
             $.update_statement,
             $.print_statement,
             $.return_statement,
+            $.break_statement,
+            $.continue_statement,
             $.expression_statement,
           ),
           choice(";", $._automatic_semicolon),
         ),
         $.if_statement,
         $.while_statement,
+        $.for_statement,
       ),
 
     variable_declaration: ($) =>
@@ -190,6 +193,22 @@ module.exports = grammar({
         ")",
         field("body", $.block),
       ),
+
+    for_statement: ($) =>
+      seq(
+        "for",
+        "(",
+        optional(field("mutability", "var")),
+        field("name", $.identifier),
+        "in",
+        field("iterable", $.expression),
+        ")",
+        field("body", $.block),
+      ),
+
+    break_statement: (_) => "break",
+
+    continue_statement: (_) => "continue",
 
     expression: ($) =>
       choice(

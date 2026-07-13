@@ -555,9 +555,9 @@ fn generateStatement(
         },
         .if_statement => |if_statement| {
             try indent(allocator, output, indentation);
-            try output.appendSlice(allocator, "if (");
-            try generateExpression(allocator, output, if_statement.condition);
-            try output.appendSlice(allocator, ") {\n");
+            try output.appendSlice(allocator, "if ");
+            try generateCondition(allocator, output, if_statement.condition);
+            try output.appendSlice(allocator, " {\n");
             try generateStatements(allocator, output, if_statement.body, indentation + 1, is_main);
             try indent(allocator, output, indentation);
             if (if_statement.else_body) |else_body| {
@@ -569,12 +569,33 @@ fn generateStatement(
         },
         .while_statement => |while_statement| {
             try indent(allocator, output, indentation);
-            try output.appendSlice(allocator, "while (");
-            try generateExpression(allocator, output, while_statement.condition);
-            try output.appendSlice(allocator, ") {\n");
+            try output.appendSlice(allocator, "while ");
+            try generateCondition(allocator, output, while_statement.condition);
+            try output.appendSlice(allocator, " {\n");
             try generateStatements(allocator, output, while_statement.body, indentation + 1, is_main);
             try indent(allocator, output, indentation);
             try output.appendSlice(allocator, "}\n");
+        },
+        .for_statement => |for_statement| {
+            try indent(allocator, output, indentation);
+            try output.appendSlice(allocator, "for (");
+            if (!for_statement.mutable) try output.appendSlice(allocator, "const ");
+            try output.appendSlice(allocator, "auto& ");
+            try output.appendSlice(allocator, for_statement.generated_name);
+            try output.appendSlice(allocator, " : ");
+            try generateExpression(allocator, output, for_statement.iterable);
+            try output.appendSlice(allocator, ") {\n");
+            try generateStatements(allocator, output, for_statement.body, indentation + 1, is_main);
+            try indent(allocator, output, indentation);
+            try output.appendSlice(allocator, "}\n");
+        },
+        .break_statement => {
+            try indent(allocator, output, indentation);
+            try output.appendSlice(allocator, "break;\n");
+        },
+        .continue_statement => {
+            try indent(allocator, output, indentation);
+            try output.appendSlice(allocator, "continue;\n");
         },
         .return_statement => |value| {
             try indent(allocator, output, indentation);
@@ -592,6 +613,13 @@ fn generateStatement(
             try output.appendSlice(allocator, ";\n");
         },
     }
+}
+
+fn generateCondition(allocator: Allocator, output: *std.ArrayList(u8), expression: *const Semantic.Expression) !void {
+    const already_parenthesized = expression.value == .binary or expression.value == .unary;
+    if (!already_parenthesized) try output.append(allocator, '(');
+    try generateExpression(allocator, output, expression);
+    if (!already_parenthesized) try output.append(allocator, ')');
 }
 
 fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expression: *const Semantic.Expression) !void {
@@ -1077,7 +1105,7 @@ test "generate typed variables and control flow" {
     const cpp = try generate(allocator, try analyzer.analyze(try parser.parse()));
 
     try std.testing.expect(std.mem.indexOf(u8, cpp, "const std::int64_t silexValue0") != null);
-    try std.testing.expect(std.mem.indexOf(u8, cpp, "if ((!(silexValue0 < std::int64_t{3})))") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "if (!(silexValue0 < std::int64_t{3}))") != null);
     try std.testing.expect(std.mem.indexOf(u8, cpp, "} else {") != null);
     try std.testing.expect(std.mem.indexOf(u8, cpp, "std::string{\"yes\"}") != null);
 }
@@ -1144,7 +1172,7 @@ test "generate while loop" {
     var analyzer = Semantic.Analyzer.init(allocator);
     const cpp = try generate(allocator, try analyzer.analyze(try parser.parse()));
 
-    try std.testing.expect(std.mem.indexOf(u8, cpp, "while ((silexValue0 > std::int64_t{0})) {") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "while (silexValue0 > std::int64_t{0}) {") != null);
     try std.testing.expect(std.mem.indexOf(u8, cpp, "silexValue0 = checkedSubtract(silexValue0, std::int64_t{1}, SilexSourceLocation{") != null);
 }
 

@@ -409,6 +409,16 @@ pub const Resolver = struct {
                 .condition = try self.transformExpression(value.condition),
                 .body = try self.transformStatements(value.body),
             } },
+            .for_statement => |value| .{ .for_statement = .{
+                .position = value.position,
+                .name = value.name,
+                .name_position = value.name_position,
+                .mutable = value.mutable,
+                .iterable = try self.transformExpression(value.iterable),
+                .body = try self.transformStatements(value.body),
+            } },
+            .break_statement => |position| .{ .break_statement = position },
+            .continue_statement => |position| .{ .continue_statement = position },
             .return_statement => |value| .{ .return_statement = .{
                 .position = value.position,
                 .value = if (value.value) |expression| try self.transformExpression(expression) else null,

@@ -117,6 +117,24 @@
     ],
     "description": "Loop while a condition is true"
   },
+  "For loop": {
+    "prefix": "for",
+    "body": [
+      "for (${1:value} in ${2:values}) {",
+      "    $0",
+      "}"
+    ],
+    "description": "Iterate through a collection with an immutable alias"
+  },
+  "Mutable for loop": {
+    "prefix": "forv",
+    "body": [
+      "for (var ${1:value} in ${2:values}) {",
+      "    $0",
+      "}"
+    ],
+    "description": "Iterate through a collection with a mutable alias"
+  },
   "Function": {
     "prefix": "func",
     "body": [

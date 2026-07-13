@@ -153,6 +153,9 @@ pub const Statement = union(enum) {
     assignment: Assignment,
     if_statement: If,
     while_statement: While,
+    for_statement: For,
+    break_statement,
+    continue_statement,
     return_statement: ?*Expression,
     expression_statement: *Expression,
 
@@ -178,6 +181,14 @@ pub const Statement = union(enum) {
 
     pub const While = struct {
         condition: *Expression,
+        body: []const Statement,
+    };
+
+    pub const For = struct {
+        generated_name: []const u8,
+        element_type: Type,
+        mutable: bool,
+        iterable: *Expression,
         body: []const Statement,
     };
 };
@@ -226,8 +237,10 @@ pub const MethodId = struct {
 
 pub const Receiver = union(enum) {
     self,
+    borrowed_self,
     mutable,
     immutable: []const u8,
+    borrowed: []const u8,
     temporary,
 };
 
@@ -237,6 +250,7 @@ const Symbol = struct {
     type: Type,
     mutability: Ast.Mutability,
     state: *BindingState,
+    movable: bool = true,
 };
 
 const Scope = struct {
@@ -301,6 +315,8 @@ pub const Analyzer = struct {
     current_method_index: ?usize = null,
     current_method_direct_mutation: bool = false,
     current_method_dependencies: std.ArrayList(MethodId) = .empty,
+    current_self_state: BindingState = .{},
+    loop_depth: usize = 0,
     diagnostic: ?Source.Diagnostic = null,
 
     pub fn init(allocator: Allocator) Analyzer {
@@ -508,6 +524,8 @@ pub const Analyzer = struct {
     fn function(self: *Analyzer, ast: Ast.Function, symbol: FunctionSymbol) AnalyzeError!Function {
         self.current_structure_index = null;
         self.current_method_index = null;
+        self.current_self_state = .{};
+        self.loop_depth = 0;
         var scope = Scope{ .parent = null };
         var parameters: std.ArrayList(Parameter) = .empty;
         for (ast.parameters, symbol.parameter_types) |parameter, parameter_type| {
@@ -541,6 +559,8 @@ pub const Analyzer = struct {
         self.current_method_index = method_index;
         self.current_method_direct_mutation = false;
         self.current_method_dependencies = .empty;
+        self.current_self_state = .{};
+        self.loop_depth = 0;
 
         var scope = Scope{ .parent = null };
         var parameters: std.ArrayList(Parameter) = .empty;
@@ -605,6 +625,15 @@ pub const Analyzer = struct {
             .assignment => |ast_assignment| self.assignment(ast_assignment, scope),
             .if_statement => |if_statement| self.ifStatement(if_statement, scope),
             .while_statement => |while_statement| self.whileStatement(while_statement, scope),
+            .for_statement => |for_statement| self.forStatement(for_statement, scope),
+            .break_statement => |position| loop_control: {
+                if (self.loop_depth == 0) return self.fail(position, "'break' is only available inside a loop");
+                break :loop_control .break_statement;
+            },
+            .continue_statement => |position| loop_control: {
+                if (self.loop_depth == 0) return self.fail(position, "'continue' is only available inside a loop");
+                break :loop_control .continue_statement;
+            },
             .return_statement => |return_statement| self.returnStatement(return_statement, scope),
             .expression_statement => |expression_statement| .{ .expression_statement = try self.expression(expression_statement, scope) },
         };
@@ -699,6 +728,9 @@ pub const Analyzer = struct {
             .self => {
                 if (self.current_method_index == null) return self.fail(ast.position, "'self' is only available inside a method");
                 if (ast.target.value == .self) return self.fail(ast.position, "cannot assign to 'self'");
+                if (self.current_self_state.mutable_borrow or self.current_self_state.immutable_borrows != 0) {
+                    return self.fail(ast.position, "cannot mutate 'self' while one of its collections is iterated");
+                }
                 self.current_method_direct_mutation = true;
             },
             .variable => |root_name| {
@@ -830,10 +862,81 @@ pub const Analyzer = struct {
         }
 
         var body_scope = Scope{ .parent = parent_scope };
+        self.loop_depth += 1;
+        defer self.loop_depth -= 1;
         const body = try self.statements(ast.body, &body_scope);
         self.releaseScopeBorrows(&body_scope);
         return .{ .while_statement = .{
             .condition = condition,
+            .body = body,
+        } };
+    }
+
+    fn forStatement(
+        self: *Analyzer,
+        ast: Ast.Statement.For,
+        parent_scope: *const Scope,
+    ) AnalyzeError!Statement {
+        const iterable = try self.expression(ast.iterable, parent_scope);
+        const element_type: Type = switch (iterable.type) {
+            .list => |element| element.*,
+            .fixed_array => |array| array.element.*,
+            else => return self.fail(ast.iterable.position, "for source must be an array or list"),
+        };
+
+        const root = assignmentRoot(ast.iterable);
+        var iteration_borrow: ?Borrow = null;
+        if (root) |resolved_root| {
+            const state: *BindingState = switch (resolved_root) {
+                .self => &self.current_self_state,
+                .variable => |name| (findSymbol(parent_scope, name) orelse return self.fail(ast.iterable.position, "unknown iteration source")).state,
+            };
+            if (ast.mutable) {
+                switch (resolved_root) {
+                    .self => self.current_method_direct_mutation = true,
+                    .variable => |name| {
+                        const symbol = findSymbol(parent_scope, name).?;
+                        if (symbol.mutability == .immutable) {
+                            const message = try std.fmt.allocPrint(self.allocator, "cannot iterate mutably over immutable variable '{s}'", .{name});
+                            return self.fail(ast.iterable.position, message);
+                        }
+                    },
+                }
+                if (state.mutable_borrow or state.immutable_borrows != 0) {
+                    return self.fail(ast.iterable.position, "cannot iterate mutably over an already borrowed collection");
+                }
+                state.mutable_borrow = true;
+            } else {
+                if (state.mutable_borrow) return self.fail(ast.iterable.position, "cannot iterate over a mutably borrowed collection");
+                state.immutable_borrows += 1;
+            }
+            iteration_borrow = .{ .root = state, .mutable = ast.mutable };
+        } else if (ast.mutable) {
+            return self.fail(ast.iterable.position, "mutable iteration requires a mutable collection place");
+        }
+        defer if (iteration_borrow) |borrow| releaseBorrow(borrow);
+
+        var body_scope = Scope{ .parent = parent_scope };
+        const generated_name = try std.fmt.allocPrint(self.allocator, "silexValue{d}", .{self.next_symbol_id});
+        self.next_symbol_id += 1;
+        try body_scope.symbols.append(self.allocator, .{
+            .source_name = ast.name,
+            .generated_name = generated_name,
+            .type = element_type,
+            .mutability = if (ast.mutable) .mutable else .immutable,
+            .state = try self.newBindingState(element_type),
+            .movable = false,
+        });
+
+        self.loop_depth += 1;
+        defer self.loop_depth -= 1;
+        const body = try self.statements(ast.body, &body_scope);
+        self.releaseScopeBorrows(&body_scope);
+        return .{ .for_statement = .{
+            .generated_name = generated_name,
+            .element_type = element_type,
+            .mutable = ast.mutable,
+            .iterable = iterable,
             .body = body,
         } };
     }
@@ -1091,6 +1194,7 @@ pub const Analyzer = struct {
 
     fn selfExpression(self: *Analyzer, position: Source.Position) AnalyzeError!*Expression {
         const structure_index = self.current_structure_index orelse return self.fail(position, "'self' is only available inside a method");
+        if (self.current_self_state.mutable_borrow) return self.fail(position, "cannot access 'self' while one of its collections is mutably iterated");
         const structure = self.structures.items[structure_index];
         return self.newExpression(.{
             .type = .{ .structure = .{
@@ -1256,7 +1360,11 @@ pub const Analyzer = struct {
             }
             try arguments.append(self.allocator, value);
         }
-        const receiver = receiverFor(call.object, scope);
+        const receiver = receiverFor(
+            call.object,
+            scope,
+            self.current_self_state.mutable_borrow or self.current_self_state.immutable_borrows != 0,
+        );
         const method_id = MethodId{ .structure_index = structure_index, .method_index = resolved_method_index };
         if (receiver == .self and self.current_method_index != null) {
             try self.current_method_dependencies.append(self.allocator, method_id);
@@ -1386,7 +1494,13 @@ pub const Analyzer = struct {
     ) AnalyzeError!void {
         const root = assignmentRoot(ast_object) orelse return self.fail(position, "cannot call mutating collection method on a temporary value");
         switch (root) {
-            .self => return,
+            .self => {
+                if (self.current_self_state.mutable_borrow or self.current_self_state.immutable_borrows != 0) {
+                    return self.fail(position, "cannot mutate 'self' while one of its collections is iterated");
+                }
+                self.current_method_direct_mutation = true;
+                return;
+            },
             .variable => |name| {
                 const symbol = findSymbol(scope, name) orelse return self.fail(position, "unknown collection receiver");
                 if (symbol.mutability == .immutable) {
@@ -1604,6 +1718,11 @@ pub const Analyzer = struct {
                     try self.validateExpression(while_value.condition);
                     try self.validateStatements(while_value.body);
                 },
+                .for_statement => |for_value| {
+                    try self.validateExpression(for_value.iterable);
+                    try self.validateStatements(for_value.body);
+                },
+                .break_statement, .continue_statement => {},
                 .return_statement => |value| if (value) |expression_value| try self.validateExpression(expression_value),
                 .expression_statement => |expression_value| try self.validateExpression(expression_value),
             }
@@ -1634,8 +1753,13 @@ pub const Analyzer = struct {
                 if (!self.methodSymbol(call.method_id).is_mutating) return;
                 switch (call.receiver) {
                     .self, .mutable => {},
+                    .borrowed_self => return self.fail(call.position, "cannot mutate 'self' while one of its collections is iterated"),
                     .immutable => |name| {
                         const message = try std.fmt.allocPrint(self.allocator, "cannot call mutating method '{s}' on immutable value '{s}'", .{ call.source_name, name });
+                        return self.fail(call.position, message);
+                    },
+                    .borrowed => |name| {
+                        const message = try std.fmt.allocPrint(self.allocator, "cannot mutate borrowed variable '{s}'", .{name});
                         return self.fail(call.position, message);
                     },
                     .temporary => {
@@ -1760,6 +1884,7 @@ pub const Analyzer = struct {
             const message = try std.fmt.allocPrint(self.allocator, "unknown variable '{s}'", .{name});
             return self.fail(unary.operator_position, message);
         };
+        if (!symbol.movable) return self.fail(unary.operator_position, "cannot move an iteration alias");
         if (symbol.type == .reference) return self.fail(unary.operator_position, "cannot move a reference");
         if (symbol.state.moved) {
             const message = try std.fmt.allocPrint(self.allocator, "variable '{s}' was already moved", .{name});
@@ -2266,18 +2391,19 @@ fn assignmentRoot(expression: *const Ast.Expression) ?AssignmentRoot {
     };
 }
 
-fn receiverFor(expression: *const Ast.Expression, scope: *const Scope) Receiver {
+fn receiverFor(expression: *const Ast.Expression, scope: *const Scope, self_borrowed: bool) Receiver {
     return switch (expression.value) {
-        .self => .self,
+        .self => if (self_borrowed) .borrowed_self else .self,
         .identifier => |name| receiver: {
             const symbol = findSymbol(scope, name) orelse break :receiver .temporary;
+            if (symbol.state.mutable_borrow or symbol.state.immutable_borrows != 0) break :receiver .{ .borrowed = name };
             break :receiver if (symbol.mutability == .mutable)
                 .mutable
             else
                 .{ .immutable = name };
         },
-        .member_access => |member| receiverFor(member.object, scope),
-        .index_access => |access| receiverFor(access.object, scope),
+        .member_access => |member| receiverFor(member.object, scope, self_borrowed),
+        .index_access => |access| receiverFor(access.object, scope, self_borrowed),
         else => .temporary,
     };
 }

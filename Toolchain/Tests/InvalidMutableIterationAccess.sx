@@ -1,0 +1,6 @@
+func main() void {
+    var values:int[] = [1]
+    for (var value in values) {
+        print(values.count())
+    }
+}

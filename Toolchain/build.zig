@@ -339,6 +339,76 @@ pub fn build(b: *std.Build) void {
         "Tests/InvalidBorrowedElementMutation.sx:4:12: error: cannot mutate borrowed variable 'values'\n",
     );
 
+    const break_outside_loop_command = b.addRunArtifact(executable);
+    break_outside_loop_command.addArgs(&.{ "compile", "Tests/BreakOutsideLoop.sx" });
+    break_outside_loop_command.expectExitCode(1);
+    break_outside_loop_command.expectStdErrEqual(
+        "Tests/BreakOutsideLoop.sx:2:5: error: 'break' is only available inside a loop\n",
+    );
+
+    const continue_outside_loop_command = b.addRunArtifact(executable);
+    continue_outside_loop_command.addArgs(&.{ "compile", "Tests/ContinueOutsideLoop.sx" });
+    continue_outside_loop_command.expectExitCode(1);
+    continue_outside_loop_command.expectStdErrEqual(
+        "Tests/ContinueOutsideLoop.sx:2:5: error: 'continue' is only available inside a loop\n",
+    );
+
+    const invalid_for_source_command = b.addRunArtifact(executable);
+    invalid_for_source_command.addArgs(&.{ "compile", "Tests/InvalidForSource.sx" });
+    invalid_for_source_command.expectExitCode(1);
+    invalid_for_source_command.expectStdErrEqual(
+        "Tests/InvalidForSource.sx:2:19: error: for source must be an array or list\n",
+    );
+
+    const invalid_immutable_iteration_alias_command = b.addRunArtifact(executable);
+    invalid_immutable_iteration_alias_command.addArgs(&.{ "compile", "Tests/InvalidImmutableIterationAlias.sx" });
+    invalid_immutable_iteration_alias_command.expectExitCode(1);
+    invalid_immutable_iteration_alias_command.expectStdErrEqual(
+        "Tests/InvalidImmutableIterationAlias.sx:4:9: error: cannot assign to immutable variable 'value'\n",
+    );
+
+    const invalid_mutable_iteration_source_command = b.addRunArtifact(executable);
+    invalid_mutable_iteration_source_command.addArgs(&.{ "compile", "Tests/InvalidMutableIterationSource.sx" });
+    invalid_mutable_iteration_source_command.expectExitCode(1);
+    invalid_mutable_iteration_source_command.expectStdErrEqual(
+        "Tests/InvalidMutableIterationSource.sx:3:23: error: cannot iterate mutably over immutable variable 'values'\n",
+    );
+
+    const invalid_iteration_mutation_command = b.addRunArtifact(executable);
+    invalid_iteration_mutation_command.addArgs(&.{ "compile", "Tests/InvalidIterationMutation.sx" });
+    invalid_iteration_mutation_command.expectExitCode(1);
+    invalid_iteration_mutation_command.expectStdErrEqual(
+        "Tests/InvalidIterationMutation.sx:4:16: error: cannot mutate borrowed variable 'values'\n",
+    );
+
+    const invalid_mutable_iteration_access_command = b.addRunArtifact(executable);
+    invalid_mutable_iteration_access_command.addArgs(&.{ "compile", "Tests/InvalidMutableIterationAccess.sx" });
+    invalid_mutable_iteration_access_command.expectExitCode(1);
+    invalid_mutable_iteration_access_command.expectStdErrEqual(
+        "Tests/InvalidMutableIterationAccess.sx:4:15: error: cannot access variable 'values' while it is mutably borrowed\n",
+    );
+
+    const invalid_iteration_alias_move_command = b.addRunArtifact(executable);
+    invalid_iteration_alias_move_command.addArgs(&.{ "compile", "Tests/InvalidIterationAliasMove.sx" });
+    invalid_iteration_alias_move_command.expectExitCode(1);
+    invalid_iteration_alias_move_command.expectStdErrEqual(
+        "Tests/InvalidIterationAliasMove.sx:6:17: error: cannot move an iteration alias\n",
+    );
+
+    const invalid_iteration_method_mutation_command = b.addRunArtifact(executable);
+    invalid_iteration_method_mutation_command.addArgs(&.{ "compile", "Tests/InvalidIterationMethodMutation.sx" });
+    invalid_iteration_method_mutation_command.expectExitCode(1);
+    invalid_iteration_method_mutation_command.expectStdErrEqual(
+        "Tests/InvalidIterationMethodMutation.sx:10:18: error: cannot mutate 'self' while one of its collections is iterated\n",
+    );
+
+    const invalid_iteration_alias_scope_command = b.addRunArtifact(executable);
+    invalid_iteration_alias_scope_command.addArgs(&.{ "compile", "Tests/InvalidIterationAliasScope.sx" });
+    invalid_iteration_alias_scope_command.expectExitCode(1);
+    invalid_iteration_alias_scope_command.expectStdErrEqual(
+        "Tests/InvalidIterationAliasScope.sx:6:11: error: unknown variable 'value'\n",
+    );
+
     const invalid_structure_equality_command = b.addRunArtifact(executable);
     invalid_structure_equality_command.addArgs(&.{ "compile", "Tests/InvalidStructureEquality.sx" });
     invalid_structure_equality_command.expectExitCode(1);
@@ -379,7 +449,7 @@ pub fn build(b: *std.Build) void {
         "silex: native compilation failed for target 'x86_64-linux-musl'; target support, SDKs, or native sources may be unavailable or incomplete\n",
     );
     backend_discovered_target_failure_command.expectStdErrMatch(b.fmt(
-        "silex: backend details: .silex{c}cache{c}v14{c}x86_64-linux-musl{c}",
+        "silex: backend details: .silex{c}cache{c}v15{c}x86_64-linux-musl{c}",
         .{
             std.fs.path.sep,
             std.fs.path.sep,
@@ -497,6 +567,16 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&invalid_immutable_element_assignment_command.step);
     test_step.dependOn(&invalid_owned_element_copy_command.step);
     test_step.dependOn(&invalid_borrowed_element_mutation_command.step);
+    test_step.dependOn(&break_outside_loop_command.step);
+    test_step.dependOn(&continue_outside_loop_command.step);
+    test_step.dependOn(&invalid_for_source_command.step);
+    test_step.dependOn(&invalid_immutable_iteration_alias_command.step);
+    test_step.dependOn(&invalid_mutable_iteration_source_command.step);
+    test_step.dependOn(&invalid_iteration_mutation_command.step);
+    test_step.dependOn(&invalid_mutable_iteration_access_command.step);
+    test_step.dependOn(&invalid_iteration_alias_move_command.step);
+    test_step.dependOn(&invalid_iteration_method_mutation_command.step);
+    test_step.dependOn(&invalid_iteration_alias_scope_command.step);
     test_step.dependOn(&invalid_structure_equality_command.step);
     test_step.dependOn(&invalid_target_command.step);
     test_step.dependOn(&unavailable_cpp_target_command.step);
@@ -602,8 +682,13 @@ pub fn build(b: *std.Build) void {
         }),
     ));
 
+    const iteration_command = b.addRunArtifact(executable);
+    iteration_command.step.dependOn(&collection_reverse_index_zero_command.step);
+    iteration_command.addArgs(&.{ "run", "Smokes/Iteration.sx" });
+    iteration_command.expectStdOutEqual(hostText(b, "6\n2\n6\n2\n6\n3\n2\n1\n3\n8\n10\n"));
+
     const structure_equality_command = b.addRunArtifact(executable);
-    structure_equality_command.step.dependOn(&collection_reverse_index_zero_command.step);
+    structure_equality_command.step.dependOn(&iteration_command.step);
     structure_equality_command.addArgs(&.{ "run", "Smokes/StructureEquality.sx" });
     structure_equality_command.expectStdOutEqual(hostText(b, "true\ntrue\ntrue\ntrue\n"));
 

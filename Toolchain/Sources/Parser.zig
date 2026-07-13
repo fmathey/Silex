@@ -228,6 +228,9 @@ pub const Parser = struct {
             .keyword_var => self.parseVariableDeclaration(.mutable),
             .keyword_if => self.parseIf(),
             .keyword_while => self.parseWhile(),
+            .keyword_for => self.parseFor(),
+            .keyword_break => self.parseLoopControl(.break_statement),
+            .keyword_continue => self.parseLoopControl(.continue_statement),
             .keyword_return => self.parseReturn(),
             .identifier, .keyword_self => self.parseIdentifierStatement(),
             .star => self.parseDereferenceAssignment(),
@@ -392,6 +395,36 @@ pub const Parser = struct {
         try self.expect(.right_parenthesis, "expected ')'");
         const body = try self.parseBlock();
         return .{ .while_statement = .{ .position = position, .condition = condition, .body = body } };
+    }
+
+    fn parseFor(self: *Parser) ParseError!Ast.Statement {
+        const position = self.current.position;
+        try self.advance();
+        try self.expect(.left_parenthesis, "expected '('");
+        const mutable = self.current.tag == .keyword_var;
+        if (mutable) try self.advance();
+        if (self.current.tag != .identifier) return self.fail("expected iteration variable name");
+        const name = self.current.lexeme;
+        const name_position = self.current.position;
+        try self.advance();
+        try self.expect(.keyword_in, "expected 'in' after iteration variable");
+        const iterable = try self.parseExpression(true);
+        try self.expect(.right_parenthesis, "expected ')' after for source");
+        return .{ .for_statement = .{
+            .position = position,
+            .name = name,
+            .name_position = name_position,
+            .mutable = mutable,
+            .iterable = iterable,
+            .body = try self.parseBlock(),
+        } };
+    }
+
+    fn parseLoopControl(self: *Parser, comptime tag: std.meta.Tag(Ast.Statement)) ParseError!Ast.Statement {
+        const position = self.current.position;
+        try self.advance();
+        try self.expectStatementTerminator();
+        return @unionInit(Ast.Statement, @tagName(tag), position);
     }
 
     fn parseReturn(self: *Parser) ParseError!Ast.Statement {

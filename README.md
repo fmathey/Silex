@@ -40,6 +40,11 @@ func main() void {
         print(count)
         count = count - 1
     }
+
+    let values:int[] = [1, 2, 3]
+    for (value in values) {
+        print(value)
+    }
 }
 
 ```
@@ -53,7 +58,10 @@ appel sur une valeur `let`. Les opérateurs disponibles
 sont `+`, `-`, `*`, `/`, les comparaisons `==`, `!=`, `<`, `<=`, `>` et `>=`,
 ainsi que les opérateurs logiques `!`, `&&` et `||`. Une condition `if` exige
 une expression booléenne et peut être suivie d'un bloc `else`. Une boucle
-`while` réévalue une condition booléenne avant chaque itération.
+`while` réévalue une condition booléenne avant chaque itération. Une boucle
+`for (value in values)` parcourt une collection avec un alias immuable ; la
+forme `for (var value in values)` permet de modifier directement ses éléments.
+`break` et `continue` ciblent la boucle englobante la plus proche.
 Les fonctions et méthodes utilisent la signature `func name(param:type)
 return_type`. Les fonctions utilisateur peuvent être appelées avant leur
 définition.

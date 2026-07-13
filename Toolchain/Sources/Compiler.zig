@@ -12,7 +12,7 @@ const SourceGraph = @import("SourceGraph.zig");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
-pub const cache_format = "v14";
+pub const cache_format = "v15";
 pub const cache_entry_limit = 8;
 
 const NativeConfiguration = enum {
@@ -465,9 +465,9 @@ test "clean removes all Silex artifacts" {
     var temporary = std.testing.tmpDir(.{ .iterate = true });
     defer temporary.cleanup();
 
-    try temporary.dir.createDirPath(std.testing.io, ".silex/cache/v14");
+    try temporary.dir.createDirPath(std.testing.io, ".silex/cache/v15");
     try temporary.dir.writeFile(std.testing.io, .{
-        .sub_path = ".silex/cache/v14/probe",
+        .sub_path = ".silex/cache/v15/probe",
         .data = "cached",
     });
     const artifact_root = try std.fs.path.join(std.testing.allocator, &.{
