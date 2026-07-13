@@ -1,6 +1,6 @@
 id = "silex"
 name = "Silex"
-version = "0.8.0"
+version = "0.9.0"
 schema_version = 1
 authors = ["François Mathey"]
 description = "Silex language support"
@@ -14,4 +14,4 @@ languages = ["Silex"]
 
 [grammars.silex]
 repository = "https://github.com/fmathey/Silex"
-rev = "87a4fa29ad4653f4c7240b4c1cc8c3c66277ee7c"
+rev = "0b0e861cf08d5b9c6cf47aefc59434246ac4db9c"

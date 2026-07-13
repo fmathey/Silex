@@ -24,7 +24,7 @@ fn runCli(init: std.process.Init) !u8 {
     }
 
     if (args.len == 2 and std.mem.eql(u8, args[1], "--version")) {
-        try Io.File.stdout().writeStreamingAll(init.io, "Silex 0.8.0\n");
+        try Io.File.stdout().writeStreamingAll(init.io, "Silex 0.9.0\n");
         return 0;
     }
 
