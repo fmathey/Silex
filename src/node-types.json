@@ -191,6 +191,32 @@
     }
   },
   {
+    "type": "conversion_expression",
+    "named": true,
+    "fields": {
+      "type": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type",
+            "named": true
+          }
+        ]
+      },
+      "value": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "expression",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "expression",
     "named": true,
     "fields": {},
@@ -208,6 +234,10 @@
         },
         {
           "type": "call_expression",
+          "named": true
+        },
+        {
+          "type": "conversion_expression",
           "named": true
         },
         {
@@ -297,6 +327,11 @@
         ]
       }
     }
+  },
+  {
+    "type": "float_literal",
+    "named": true,
+    "fields": {}
   },
   {
     "type": "function_definition",
@@ -409,6 +444,11 @@
         ]
       }
     }
+  },
+  {
+    "type": "integer_literal",
+    "named": true,
+    "fields": {}
   },
   {
     "type": "member_expression",
@@ -1239,10 +1279,6 @@
     "named": false
   },
   {
-    "type": "float_literal",
-    "named": true
-  },
-  {
     "type": "func",
     "named": false
   },
@@ -1277,10 +1313,6 @@
   {
     "type": "int8",
     "named": false
-  },
-  {
-    "type": "integer_literal",
-    "named": true
   },
   {
     "type": "let",

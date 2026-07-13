@@ -1011,6 +1011,10 @@
         },
         {
           "type": "SYMBOL",
+          "name": "conversion_expression"
+        },
+        {
+          "type": "SYMBOL",
           "name": "call_expression"
         },
         {
@@ -1157,7 +1161,7 @@
     },
     "member_expression": {
       "type": "PREC_LEFT",
-      "value": 8,
+      "value": 9,
       "content": {
         "type": "SEQ",
         "members": [
@@ -1274,7 +1278,7 @@
     },
     "method_call_expression": {
       "type": "PREC_LEFT",
-      "value": 8,
+      "value": 9,
       "content": {
         "type": "SEQ",
         "members": [
@@ -1648,6 +1652,35 @@
         ]
       }
     },
+    "conversion_expression": {
+      "type": "PREC_LEFT",
+      "value": 8,
+      "content": {
+        "type": "SEQ",
+        "members": [
+          {
+            "type": "FIELD",
+            "name": "value",
+            "content": {
+              "type": "SYMBOL",
+              "name": "expression"
+            }
+          },
+          {
+            "type": "STRING",
+            "value": "as"
+          },
+          {
+            "type": "FIELD",
+            "name": "type",
+            "content": {
+              "type": "SYMBOL",
+              "name": "type"
+            }
+          }
+        ]
+      }
+    },
     "parenthesized_expression": {
       "type": "SEQ",
       "members": [
@@ -1697,26 +1730,52 @@
     "escape_sequence": {
       "type": "TOKEN",
       "content": {
-        "type": "SEQ",
+        "type": "CHOICE",
         "members": [
           {
-            "type": "STRING",
-            "value": "\\"
+            "type": "PATTERN",
+            "value": "\\\\[\"\\\\nrt0]"
           },
           {
             "type": "PATTERN",
-            "value": "."
+            "value": "\\\\u\\{[0-9a-fA-F]{1,6}\\}"
           }
         ]
       }
     },
     "integer_literal": {
-      "type": "PATTERN",
-      "value": "\\d+"
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "PATTERN",
+          "value": "0[bB][01](?:_?[01])*"
+        },
+        {
+          "type": "PATTERN",
+          "value": "0[oO][0-7](?:_?[0-7])*"
+        },
+        {
+          "type": "PATTERN",
+          "value": "0[xX][0-9a-fA-F](?:_?[0-9a-fA-F])*"
+        },
+        {
+          "type": "PATTERN",
+          "value": "\\d(?:_?\\d)*"
+        }
+      ]
     },
     "float_literal": {
-      "type": "PATTERN",
-      "value": "\\d+\\.\\d+"
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "PATTERN",
+          "value": "\\d(?:_?\\d)*\\.\\d(?:_?\\d)*(?:[eE][+-]?\\d(?:_?\\d)*)?"
+        },
+        {
+          "type": "PATTERN",
+          "value": "\\d(?:_?\\d)*[eE][+-]?\\d(?:_?\\d)*"
+        }
+      ]
     },
     "boolean_literal": {
       "type": "CHOICE",

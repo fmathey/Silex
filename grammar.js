@@ -6,7 +6,8 @@ const PREC = {
   additive: 5,
   multiplicative: 6,
   unary: 7,
-  member: 8,
+  conversion: 8,
+  member: 9,
 };
 
 module.exports = grammar({
@@ -187,6 +188,7 @@ module.exports = grammar({
       choice(
         $.binary_expression,
         $.unary_expression,
+        $.conversion_expression,
         $.call_expression,
         $.method_call_expression,
         $.structure_initializer,
@@ -317,14 +319,31 @@ module.exports = grammar({
     unary_expression: ($) =>
       prec(PREC.unary, seq(field("operator", choice("!", "-")), field("operand", $.expression))),
 
+    conversion_expression: ($) =>
+      prec.left(
+        PREC.conversion,
+        seq(field("value", $.expression), "as", field("type", $.type)),
+      ),
+
     parenthesized_expression: ($) => seq("(", $.expression, ")"),
 
     string_literal: ($) =>
       seq('"', repeat(choice($.escape_sequence, /[^"\\\n\r]+/)), '"'),
 
-    escape_sequence: (_) => token(seq("\\", /./)),
-    integer_literal: (_) => /\d+/,
-    float_literal: (_) => /\d+\.\d+/,
+    escape_sequence: (_) =>
+      token(choice(/\\["\\nrt0]/, /\\u\{[0-9a-fA-F]{1,6}\}/)),
+    integer_literal: (_) =>
+      choice(
+        /0[bB][01](?:_?[01])*/,
+        /0[oO][0-7](?:_?[0-7])*/,
+        /0[xX][0-9a-fA-F](?:_?[0-9a-fA-F])*/,
+        /\d(?:_?\d)*/,
+      ),
+    float_literal: (_) =>
+      choice(
+        /\d(?:_?\d)*\.\d(?:_?\d)*(?:[eE][+-]?\d(?:_?\d)*)?/,
+        /\d(?:_?\d)*[eE][+-]?\d(?:_?\d)*/,
+      ),
     boolean_literal: (_) => choice("true", "false"),
     self_expression: (_) => "self",
     identifier: (_) => /[A-Za-z_][A-Za-z0-9_]*/,

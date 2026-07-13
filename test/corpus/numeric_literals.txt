@@ -1,0 +1,57 @@
+===========================
+Numeric literal forms
+===========================
+
+func main() void {
+    let binary = 0b1010_0101
+    let octal = 0o7_55
+    let hexadecimal = 0xCA_FE
+    let decimal = 1_000_000
+    let exponent:float = 1.25e+2
+    let fraction:float64 = 2.5e-3
+}
+
+---
+
+(source_file
+  (function_definition
+    name: (identifier)
+    (parameter_list)
+    return_type: (void_type)
+    body: (block
+      (statement
+        (variable_declaration
+          name: (identifier)
+          initializer: (expression
+            (integer_literal))))
+      (statement
+        (variable_declaration
+          name: (identifier)
+          initializer: (expression
+            (integer_literal))))
+      (statement
+        (variable_declaration
+          name: (identifier)
+          initializer: (expression
+            (integer_literal))))
+      (statement
+        (variable_declaration
+          name: (identifier)
+          initializer: (expression
+            (integer_literal))))
+      (statement
+        (variable_declaration
+          name: (identifier)
+          (type_annotation
+            type: (type
+              (builtin_type)))
+          initializer: (expression
+            (float_literal))))
+      (statement
+        (variable_declaration
+          name: (identifier)
+          (type_annotation
+            type: (type
+              (builtin_type)))
+          initializer: (expression
+            (float_literal)))))))

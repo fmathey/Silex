@@ -29,6 +29,45 @@ func main() void {
                     (integer_literal)))))))))))
 
 ===============================
+Explicit numeric conversions
+===============================
+
+func main() void {
+    let value:int = 12.0 as int
+    print(value as float)
+}
+
+---
+
+(source_file
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (void_type)
+    (block
+      (statement
+        (variable_declaration
+          (identifier)
+          (type_annotation
+            (type
+              (builtin_type)))
+          (expression
+            (conversion_expression
+              (expression
+                (float_literal))
+              (type
+                (builtin_type))))))
+      (statement
+        (print_statement
+          (identifier)
+          (expression
+            (conversion_expression
+              (expression
+                (identifier))
+              (type
+                (builtin_type)))))))))
+
+===============================
 Variables and conditional block
 ===============================
 
