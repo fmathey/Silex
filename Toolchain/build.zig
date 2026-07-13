@@ -220,11 +220,11 @@ pub fn build(b: *std.Build) void {
         "--native",
         "Smokes/Native/dependency.json",
         "--target",
-        "x86_64-windows-gnu",
+        "riscv64-linux-musl",
     });
     unsupported_native_target_command.expectExitCode(1);
     unsupported_native_target_command.expectStdErrEqual(
-        "silex: native dependency 'native-smoke' does not support target 'x86_64-windows-gnu'\n",
+        "silex: native dependency 'native-smoke' does not support target 'riscv64-linux-musl'\n",
     );
 
     const test_step = b.step("test", "Run the toolchain tests");
@@ -353,7 +353,7 @@ pub fn build(b: *std.Build) void {
         .root_module = distribution_module,
     });
     const host = b.graph.host.result;
-    const distribution_name = b.fmt("silex-0.6.0-{s}-{s}", .{
+    const distribution_name = b.fmt("silex-0.6.1-{s}-{s}", .{
         @tagName(host.cpu.arch),
         @tagName(host.os.tag),
     });
