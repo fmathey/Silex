@@ -102,7 +102,9 @@ module.exports = grammar({
         "str",
       ),
     named_type: ($) => alias(choice($.identifier, $.qualified_name), $.type_identifier),
-    type: ($) => choice($.builtin_type, $.named_type),
+    reference_type: ($) =>
+      seq(field("target", choice($.builtin_type, $.named_type)), field("kind", choice("&", "@"))),
+    type: ($) => choice($.reference_type, $.builtin_type, $.named_type),
     parameter_list: ($) =>
       seq("(", optional(seq($.parameter, repeat(seq(",", $.parameter)))), ")"),
 
@@ -142,14 +144,14 @@ module.exports = grammar({
 
     assignment_statement: ($) =>
       seq(
-        field("left", choice($.identifier, $.member_expression)),
+        field("left", choice($.identifier, $.member_expression, $.dereference_expression)),
         field("operator", choice("=", "+=", "-=", "*=", "/=")),
         field("right", $.expression),
       ),
 
     update_statement: ($) =>
       seq(
-        field("argument", choice($.identifier, $.member_expression)),
+        field("argument", choice($.identifier, $.member_expression, $.dereference_expression)),
         field("operator", choice("++", "--")),
       ),
 
@@ -188,6 +190,9 @@ module.exports = grammar({
       choice(
         $.binary_expression,
         $.unary_expression,
+        $.dereference_expression,
+        $.borrow_expression,
+        $.move_expression,
         $.conversion_expression,
         $.call_expression,
         $.method_call_expression,
@@ -318,6 +323,13 @@ module.exports = grammar({
 
     unary_expression: ($) =>
       prec(PREC.unary, seq(field("operator", choice("!", "-")), field("operand", $.expression))),
+
+    dereference_expression: ($) =>
+      prec(PREC.unary, seq(field("operator", "*"), field("operand", $.expression))),
+
+    borrow_expression: ($) => prec(PREC.unary, seq(field("operator", "&"), field("operand", $.expression))),
+
+    move_expression: ($) => prec(PREC.unary, seq("move", field("operand", $.identifier))),
 
     conversion_expression: ($) =>
       prec.left(

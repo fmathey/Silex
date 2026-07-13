@@ -8,6 +8,10 @@
         "required": true,
         "types": [
           {
+            "type": "dereference_expression",
+            "named": true
+          },
+          {
             "type": "identifier",
             "named": true
           },
@@ -156,6 +160,32 @@
     "fields": {}
   },
   {
+    "type": "borrow_expression",
+    "named": true,
+    "fields": {
+      "operand": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "expression",
+            "named": true
+          }
+        ]
+      },
+      "operator": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "&",
+            "named": false
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "builtin_type",
     "named": true,
     "fields": {}
@@ -217,6 +247,32 @@
     }
   },
   {
+    "type": "dereference_expression",
+    "named": true,
+    "fields": {
+      "operand": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "expression",
+            "named": true
+          }
+        ]
+      },
+      "operator": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "*",
+            "named": false
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "expression",
     "named": true,
     "fields": {},
@@ -233,11 +289,19 @@
           "named": true
         },
         {
+          "type": "borrow_expression",
+          "named": true
+        },
+        {
           "type": "call_expression",
           "named": true
         },
         {
           "type": "conversion_expression",
+          "named": true
+        },
+        {
+          "type": "dereference_expression",
           "named": true
         },
         {
@@ -258,6 +322,10 @@
         },
         {
           "type": "method_call_expression",
+          "named": true
+        },
+        {
+          "type": "move_expression",
           "named": true
         },
         {
@@ -568,6 +636,22 @@
     }
   },
   {
+    "type": "move_expression",
+    "named": true,
+    "fields": {
+      "operand": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "named_type",
     "named": true,
     "fields": {},
@@ -707,6 +791,40 @@
           "named": true
         }
       ]
+    }
+  },
+  {
+    "type": "reference_type",
+    "named": true,
+    "fields": {
+      "kind": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "&",
+            "named": false
+          },
+          {
+            "type": "@",
+            "named": false
+          }
+        ]
+      },
+      "target": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "builtin_type",
+            "named": true
+          },
+          {
+            "type": "named_type",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {
@@ -926,6 +1044,10 @@
         {
           "type": "named_type",
           "named": true
+        },
+        {
+          "type": "reference_type",
+          "named": true
         }
       ]
     }
@@ -999,6 +1121,10 @@
         "multiple": false,
         "required": true,
         "types": [
+          {
+            "type": "dereference_expression",
+            "named": true
+          },
           {
             "type": "identifier",
             "named": true
@@ -1150,6 +1276,10 @@
     "named": false
   },
   {
+    "type": "&",
+    "named": false
+  },
+  {
     "type": "&&",
     "named": false
   },
@@ -1242,6 +1372,10 @@
     "named": false
   },
   {
+    "type": "@",
+    "named": false
+  },
+  {
     "type": "as",
     "named": false
   },
@@ -1316,6 +1450,10 @@
   },
   {
     "type": "let",
+    "named": false
+  },
+  {
+    "type": "move",
     "named": false
   },
   {

@@ -722,3 +722,82 @@ func main() void {
                 (identifier))
               (expression
                 (identifier)))))))))
+
+============================
+References and transfer
+============================
+
+func increment(value:int&) void {
+    *value += 1
+}
+
+func main() void {
+    var count = 1
+    let view:int@ = &count
+    increment(&count)
+    let transferred = move count
+    print(*view)
+}
+
+---
+
+(source_file
+  (function_definition
+    (identifier)
+    (parameter_list
+      (parameter
+        (identifier)
+        (type
+          (reference_type
+            (builtin_type)))))
+    (void_type)
+    (block
+      (statement
+        (assignment_statement
+          (dereference_expression
+            (expression
+              (identifier)))
+          (expression
+            (integer_literal))))))
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (void_type)
+    (block
+      (statement
+        (variable_declaration
+          (identifier)
+          (expression
+            (integer_literal))))
+      (statement
+        (variable_declaration
+          (identifier)
+          (type_annotation
+            (type
+              (reference_type
+                (builtin_type))))
+          (expression
+            (borrow_expression
+              (expression
+                (identifier))))))
+      (statement
+        (expression_statement
+          (call_expression
+            (identifier)
+            (expression
+              (borrow_expression
+                (expression
+                  (identifier)))))))
+      (statement
+        (variable_declaration
+          (identifier)
+          (expression
+            (move_expression
+              (identifier)))))
+      (statement
+        (print_statement
+          (identifier)
+          (expression
+            (dereference_expression
+              (expression
+                (identifier)))))))))
