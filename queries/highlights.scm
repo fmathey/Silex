@@ -1,4 +1,6 @@
 (identifier) @variable
+(module_path) @namespace
+(qualified_name) @type
 (void_type) @type.builtin
 (builtin_type) @type.builtin
 (type_identifier) @type
@@ -10,7 +12,7 @@
   name: (identifier) @property)
 
 (structure_initializer
-  type: (identifier) @type)
+  type: [(identifier) (qualified_name)] @type)
 
 (field_initializer
   name: (identifier) @property)
@@ -48,6 +50,10 @@
 (comment) @comment
 
 [
+  "import"
+  "use"
+  "pub"
+  "as"
   "let"
   "var"
   "if"
