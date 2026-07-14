@@ -107,14 +107,17 @@ module.exports = grammar({
         field("element", choice($.builtin_type, $.named_type)),
         repeat1(choice(seq("[", "]"), seq("[", field("length", $.integer_literal), "]"))),
       ),
-    reference_type: ($) =>
-      seq(field("target", choice($.array_type, $.builtin_type, $.named_type)), field("kind", choice("&", "@"))),
-    type: ($) => choice($.reference_type, $.array_type, $.builtin_type, $.named_type),
+    type: ($) => choice($.array_type, $.builtin_type, $.named_type),
     parameter_list: ($) =>
       seq("(", optional(seq($.parameter, repeat(seq(",", $.parameter)))), ")"),
 
     parameter: ($) =>
-      seq(field("name", $.identifier), ":", field("type", $.type)),
+      seq(
+        field("name", $.identifier),
+        ":",
+        optional(field("mutable_reference", "&")),
+        field("type", $.type),
+      ),
 
     block: ($) => seq("{", repeat($.statement), "}"),
 
@@ -152,14 +155,14 @@ module.exports = grammar({
 
     assignment_statement: ($) =>
       seq(
-        field("left", choice($.identifier, $.member_expression, $.index_expression, $.dereference_expression)),
+        field("left", choice($.identifier, $.member_expression, $.index_expression)),
         field("operator", choice("=", "+=", "-=", "*=", "/=")),
         field("right", $.expression),
       ),
 
     update_statement: ($) =>
       seq(
-        field("argument", choice($.identifier, $.member_expression, $.index_expression, $.dereference_expression)),
+        field("argument", choice($.identifier, $.member_expression, $.index_expression)),
         field("operator", choice("++", "--")),
       ),
 
@@ -215,10 +218,7 @@ module.exports = grammar({
       choice(
         $.binary_expression,
         $.unary_expression,
-        $.dereference_expression,
         $.borrow_expression,
-        $.copy_expression,
-        $.move_expression,
         $.conversion_expression,
         $.call_expression,
         $.method_call_expression,
@@ -287,11 +287,8 @@ module.exports = grammar({
       choice(
         alias($.cascade_binary_expression, $.binary_expression),
         alias($.cascade_unary_expression, $.unary_expression),
-        alias($.cascade_dereference_expression, $.dereference_expression),
         alias($.cascade_borrow_expression, $.borrow_expression),
         alias($.cascade_conversion_expression, $.conversion_expression),
-        $.copy_expression,
-        $.move_expression,
         $.call_expression,
         $.method_call_expression,
         $.structure_initializer,
@@ -366,12 +363,6 @@ module.exports = grammar({
           field("operator", choice("!", "-")),
           field("operand", $._cascade_assignment_value),
         ),
-      ),
-
-    cascade_dereference_expression: ($) =>
-      prec(
-        PREC.unary,
-        seq(field("operator", "*"), field("operand", $._cascade_assignment_value)),
       ),
 
     cascade_borrow_expression: ($) =>
@@ -549,30 +540,7 @@ module.exports = grammar({
     unary_expression: ($) =>
       prec(PREC.unary, seq(field("operator", choice("!", "-")), field("operand", $.expression))),
 
-    dereference_expression: ($) =>
-      prec(PREC.unary, seq(field("operator", "*"), field("operand", $.expression))),
-
     borrow_expression: ($) => prec(PREC.unary, seq(field("operator", "&"), field("operand", $.expression))),
-
-    copy_expression: ($) =>
-      prec.right(
-        PREC.unary,
-        seq(
-          "copy",
-          field(
-            "operand",
-            choice(
-              $.method_call_expression,
-              $.call_expression,
-              $.member_expression,
-              $.index_expression,
-              $.identifier,
-            ),
-          ),
-        ),
-      ),
-
-    move_expression: ($) => prec(PREC.unary, seq("move", field("operand", $.identifier))),
 
     conversion_expression: ($) =>
       prec.left(

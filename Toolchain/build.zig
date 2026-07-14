@@ -56,32 +56,32 @@ pub fn build(b: *std.Build) void {
         "Tests/InvalidImmutableAssignment.sx:3:5: error: cannot assign to immutable variable 'count'\n",
     );
 
-    const borrowed_mutation_command = b.addRunArtifact(executable);
-    borrowed_mutation_command.addArgs(&.{ "compile", "Tests/InvalidBorrowedMutation.sx" });
-    borrowed_mutation_command.expectExitCode(1);
-    borrowed_mutation_command.expectStdErrEqual(
-        "Tests/InvalidBorrowedMutation.sx:4:5: error: cannot mutate borrowed variable 'count'\n",
+    const invalid_mutable_reference_argument_command = b.addRunArtifact(executable);
+    invalid_mutable_reference_argument_command.addArgs(&.{ "compile", "Tests/InvalidMutableReferenceArgument.sx" });
+    invalid_mutable_reference_argument_command.expectExitCode(1);
+    invalid_mutable_reference_argument_command.expectStdErrEqual(
+        "Tests/InvalidMutableReferenceArgument.sx:7:13: error: cannot pass immutable variable 'count' with '&'\n",
     );
 
-    const mutable_borrow_access_command = b.addRunArtifact(executable);
-    mutable_borrow_access_command.addArgs(&.{ "compile", "Tests/InvalidMutableBorrowAccess.sx" });
-    mutable_borrow_access_command.expectExitCode(1);
-    mutable_borrow_access_command.expectStdErrEqual(
-        "Tests/InvalidMutableBorrowAccess.sx:4:11: error: cannot access variable 'count' while it is mutably borrowed\n",
+    const missing_mutable_reference_argument_command = b.addRunArtifact(executable);
+    missing_mutable_reference_argument_command.addArgs(&.{ "compile", "Tests/MissingMutableReferenceArgument.sx" });
+    missing_mutable_reference_argument_command.expectExitCode(1);
+    missing_mutable_reference_argument_command.expectStdErrEqual(
+        "Tests/MissingMutableReferenceArgument.sx:7:13: error: a parameter declared with '&' requires an argument written as '&place'\n",
     );
 
-    const moved_use_command = b.addRunArtifact(executable);
-    moved_use_command.addArgs(&.{ "compile", "Tests/InvalidMovedUse.sx" });
-    moved_use_command.expectExitCode(1);
-    moved_use_command.expectStdErrEqual(
-        "Tests/InvalidMovedUse.sx:4:11: error: use of moved variable 'count'\n",
+    const invalid_local_reference_command = b.addRunArtifact(executable);
+    invalid_local_reference_command.addArgs(&.{ "compile", "Tests/InvalidLocalReference.sx" });
+    invalid_local_reference_command.expectExitCode(1);
+    invalid_local_reference_command.expectStdErrEqual(
+        "Tests/InvalidLocalReference.sx:3:21: error: '&' is only valid for an argument of a parameter declared with '&'\n",
     );
 
-    const reference_return_command = b.addRunArtifact(executable);
-    reference_return_command.addArgs(&.{ "compile", "Tests/InvalidReferenceReturn.sx" });
-    reference_return_command.expectExitCode(1);
-    reference_return_command.expectStdErrEqual(
-        "Tests/InvalidReferenceReturn.sx:1:1: error: a function cannot return a reference\n",
+    const invalid_reference_type_command = b.addRunArtifact(executable);
+    invalid_reference_type_command.addArgs(&.{ "compile", "Tests/InvalidReferenceType.sx" });
+    invalid_reference_type_command.expectExitCode(1);
+    invalid_reference_type_command.expectStdErrEqual(
+        "Tests/InvalidReferenceType.sx:1:20: error: expected ')'\n",
     );
 
     const invalid_condition_command = b.addRunArtifact(executable);
@@ -297,41 +297,6 @@ pub fn build(b: *std.Build) void {
         "Tests/InvalidCollectionClone.sx:3:34: error: type 'list' has no method 'clone'\n",
     );
 
-    const invalid_copy_reference_command = b.addRunArtifact(executable);
-    invalid_copy_reference_command.addArgs(&.{ "compile", "Tests/InvalidCopyReference.sx" });
-    invalid_copy_reference_command.expectExitCode(1);
-    invalid_copy_reference_command.expectStdErrEqual(
-        "Tests/InvalidCopyReference.sx:4:18: error: cannot apply 'copy' to a reference; dereference it explicitly with 'copy *value'\n",
-    );
-
-    const invalid_move_reference_command = b.addRunArtifact(executable);
-    invalid_move_reference_command.addArgs(&.{ "compile", "Tests/InvalidMoveReference.sx" });
-    invalid_move_reference_command.expectExitCode(1);
-    invalid_move_reference_command.expectStdErrEqual(
-        "Tests/InvalidMoveReference.sx:6:13: error: cannot move a reference; borrowed values have no ownership to transfer\n",
-    );
-
-    const invalid_move_member_command = b.addRunArtifact(executable);
-    invalid_move_member_command.addArgs(&.{ "compile", "Tests/InvalidMoveMember.sx" });
-    invalid_move_member_command.expectExitCode(1);
-    invalid_move_member_command.expectStdErrEqual(
-        "Tests/InvalidMoveMember.sx:8:19: error: cannot move a field; only a complete local variable can be invalidated\n",
-    );
-
-    const invalid_move_element_command = b.addRunArtifact(executable);
-    invalid_move_element_command.addArgs(&.{ "compile", "Tests/InvalidMoveElement.sx" });
-    invalid_move_element_command.expectExitCode(1);
-    invalid_move_element_command.expectStdErrEqual(
-        "Tests/InvalidMoveElement.sx:3:17: error: cannot move an indexed element; use 'copy', 'replace', or 'take'\n",
-    );
-
-    const invalid_append_move_self_command = b.addRunArtifact(executable);
-    invalid_append_move_self_command.addArgs(&.{ "compile", "Tests/InvalidAppendMoveSelf.sx" });
-    invalid_append_move_self_command.expectExitCode(1);
-    invalid_append_move_self_command.expectStdErrEqual(
-        "Tests/InvalidAppendMoveSelf.sx:3:19: error: cannot move a collection into itself\n",
-    );
-
     const invalid_fixed_array_length_command = b.addRunArtifact(executable);
     invalid_fixed_array_length_command.addArgs(&.{ "compile", "Tests/InvalidFixedArrayLength.sx" });
     invalid_fixed_array_length_command.expectExitCode(1);
@@ -372,13 +337,6 @@ pub fn build(b: *std.Build) void {
     invalid_immutable_element_assignment_command.expectExitCode(1);
     invalid_immutable_element_assignment_command.expectStdErrEqual(
         "Tests/InvalidImmutableElementAssignment.sx:3:5: error: cannot assign to immutable variable 'values'\n",
-    );
-
-    const invalid_borrowed_element_mutation_command = b.addRunArtifact(executable);
-    invalid_borrowed_element_mutation_command.addArgs(&.{ "compile", "Tests/InvalidBorrowedElementMutation.sx" });
-    invalid_borrowed_element_mutation_command.expectExitCode(1);
-    invalid_borrowed_element_mutation_command.expectStdErrEqual(
-        "Tests/InvalidBorrowedElementMutation.sx:4:12: error: cannot mutate borrowed variable 'values'\n",
     );
 
     const break_outside_loop_command = b.addRunArtifact(executable);
@@ -428,13 +386,6 @@ pub fn build(b: *std.Build) void {
     invalid_mutable_iteration_access_command.expectExitCode(1);
     invalid_mutable_iteration_access_command.expectStdErrEqual(
         "Tests/InvalidMutableIterationAccess.sx:4:15: error: cannot access variable 'values' while it is mutably borrowed\n",
-    );
-
-    const invalid_iteration_alias_move_command = b.addRunArtifact(executable);
-    invalid_iteration_alias_move_command.addArgs(&.{ "compile", "Tests/InvalidIterationAliasMove.sx" });
-    invalid_iteration_alias_move_command.expectExitCode(1);
-    invalid_iteration_alias_move_command.expectStdErrEqual(
-        "Tests/InvalidIterationAliasMove.sx:6:17: error: cannot move an iteration alias\n",
     );
 
     const invalid_iteration_method_mutation_command = b.addRunArtifact(executable);
@@ -569,10 +520,10 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&lsp_test_command.step);
     test_step.dependOn(&invalid_command.step);
     test_step.dependOn(&immutable_assignment_command.step);
-    test_step.dependOn(&borrowed_mutation_command.step);
-    test_step.dependOn(&mutable_borrow_access_command.step);
-    test_step.dependOn(&moved_use_command.step);
-    test_step.dependOn(&reference_return_command.step);
+    test_step.dependOn(&invalid_mutable_reference_argument_command.step);
+    test_step.dependOn(&missing_mutable_reference_argument_command.step);
+    test_step.dependOn(&invalid_local_reference_command.step);
+    test_step.dependOn(&invalid_reference_type_command.step);
     test_step.dependOn(&invalid_condition_command.step);
     test_step.dependOn(&invalid_logical_command.step);
     test_step.dependOn(&invalid_while_command.step);
@@ -604,18 +555,12 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&invalid_string_length_command.step);
     test_step.dependOn(&reserved_length_function_command.step);
     test_step.dependOn(&invalid_collection_clone_command.step);
-    test_step.dependOn(&invalid_copy_reference_command.step);
-    test_step.dependOn(&invalid_move_reference_command.step);
-    test_step.dependOn(&invalid_move_member_command.step);
-    test_step.dependOn(&invalid_move_element_command.step);
-    test_step.dependOn(&invalid_append_move_self_command.step);
     test_step.dependOn(&invalid_fixed_array_length_command.step);
     test_step.dependOn(&invalid_empty_collection_literal_command.step);
     test_step.dependOn(&invalid_immutable_list_mutation_command.step);
     test_step.dependOn(&invalid_collection_index_type_command.step);
     test_step.dependOn(&invalid_fixed_array_append_command.step);
     test_step.dependOn(&invalid_immutable_element_assignment_command.step);
-    test_step.dependOn(&invalid_borrowed_element_mutation_command.step);
     test_step.dependOn(&break_outside_loop_command.step);
     test_step.dependOn(&continue_outside_loop_command.step);
     test_step.dependOn(&invalid_for_source_command.step);
@@ -623,7 +568,6 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&invalid_mutable_iteration_source_command.step);
     test_step.dependOn(&invalid_iteration_mutation_command.step);
     test_step.dependOn(&invalid_mutable_iteration_access_command.step);
-    test_step.dependOn(&invalid_iteration_alias_move_command.step);
     test_step.dependOn(&invalid_iteration_method_mutation_command.step);
     test_step.dependOn(&invalid_iteration_alias_scope_command.step);
     test_step.dependOn(&invalid_structure_equality_command.step);
@@ -646,7 +590,7 @@ pub fn build(b: *std.Build) void {
     const references_command = b.addRunArtifact(executable);
     references_command.step.dependOn(&smoke_command.step);
     references_command.addArgs(&.{ "run", "Smokes/References.sx" });
-    references_command.expectStdOutEqual(hostText(b, "1\n2\n4\n"));
+    references_command.expectStdOutEqual(hostText(b, "1\n2\n4\n11\n21\n13\n11\n10\n"));
 
     const boolean_condition_command = b.addRunArtifact(executable);
     boolean_condition_command.step.dependOn(&references_command.step);

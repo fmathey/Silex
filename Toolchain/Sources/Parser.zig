@@ -206,7 +206,14 @@ pub const Parser = struct {
             const position = self.current.position;
             try self.advance();
             try self.expect(.colon, "expected ':' after parameter name");
-            try parameters.append(self.allocator, .{ .name = name, .position = position, .type = try self.parseTypeName() });
+            const is_mutable_reference = self.current.tag == .amp;
+            if (is_mutable_reference) try self.advance();
+            try parameters.append(self.allocator, .{
+                .name = name,
+                .position = position,
+                .type = try self.parseTypeName(),
+                .is_mutable_reference = is_mutable_reference,
+            });
             if (self.current.tag != .comma) break;
             try self.advance();
         }
@@ -236,7 +243,6 @@ pub const Parser = struct {
             .keyword_continue => self.parseLoopControl(.continue_statement),
             .keyword_return => self.parseReturn(),
             .identifier, .keyword_self => self.parseIdentifierStatement(),
-            .star => self.parseDereferenceAssignment(),
             else => self.fail("expected statement"),
         };
     }
@@ -326,12 +332,6 @@ pub const Parser = struct {
             const element = try self.newTypeName(result);
             result = .{ .fixed_array = .{ .element = element, .length = length } };
         }
-        if (self.current.tag == .amp or self.current.tag == .at) {
-            const mutable = self.current.tag == .amp;
-            try self.advance();
-            const target = try self.newTypeName(result);
-            return .{ .reference = .{ .target = target, .mutable = mutable } };
-        }
         return result;
     }
 
@@ -357,17 +357,6 @@ pub const Parser = struct {
             return .{ .expression_statement = target };
         }
         return self.fail("expected assignment or function call");
-    }
-
-    fn parseDereferenceAssignment(self: *Parser) ParseError!Ast.Statement {
-        const position = self.current.position;
-        const target = try self.parseUnary(false);
-        const operator = assignmentOperator(self.current.tag) orelse return self.fail("expected assignment after dereference");
-        try self.advance();
-        var value: ?*Ast.Expression = null;
-        if (operator != .increment and operator != .decrement) value = try self.parseExpression(false);
-        try self.expectStatementTerminator();
-        return .{ .assignment = .{ .position = position, .target = target, .operator = operator, .value = value } };
     }
 
     fn parseIf(self: *Parser) ParseError!Ast.Statement {
@@ -566,22 +555,7 @@ pub const Parser = struct {
     }
 
     fn parseUnary(self: *Parser, allow_line_breaks: bool) ParseError!*Ast.Expression {
-        if (self.isCopyOperator() or self.isMoveOperator()) {
-            const token = self.current;
-            const operator: Ast.UnaryOperator = if (self.isCopyOperator()) .copy else .move;
-            try self.advance();
-            if (self.current.tag != .identifier) return self.parseIdentifierExpressionAfterToken(token);
-            const operand = try self.parseUnary(allow_line_breaks);
-            return self.newExpression(.{
-                .position = token.position,
-                .value = .{ .unary = .{
-                    .operator = operator,
-                    .operator_position = token.position,
-                    .operand = operand,
-                } },
-            });
-        }
-        if (self.current.tag != .bang and self.current.tag != .minus and self.current.tag != .star and
+        if (self.current.tag != .bang and self.current.tag != .minus and
             self.current.tag != .amp) return self.parseConversion();
 
         const operator_token = self.current;
@@ -589,7 +563,6 @@ pub const Parser = struct {
         const operator: Ast.UnaryOperator = switch (operator_token.tag) {
             .bang => .logical_not,
             .minus => .numeric_negate,
-            .star => .dereference,
             .amp => .borrow,
             else => unreachable,
         };
@@ -897,14 +870,6 @@ pub const Parser = struct {
 
     fn canContinueExpression(self: *const Parser, allow_line_breaks: bool) bool {
         return allow_line_breaks or self.current.position.line == self.previous.position.line;
-    }
-
-    fn isMoveOperator(self: *const Parser) bool {
-        return self.current.tag == .identifier and std.mem.eql(u8, self.current.lexeme, "move");
-    }
-
-    fn isCopyOperator(self: *const Parser) bool {
-        return self.current.tag == .identifier and std.mem.eql(u8, self.current.lexeme, "copy");
     }
 
     fn advance(self: *Parser) !void {

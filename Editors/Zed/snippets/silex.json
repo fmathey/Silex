@@ -56,38 +56,6 @@
     ],
     "description": "Declare a mutable inferred variable"
   },
-  "Immutable reference": {
-    "prefix": "ref",
-    "body": [
-      "let ${1:name}:${2:type}@ = &${3:value}",
-      "$0"
-    ],
-    "description": "Borrow an immutable value"
-  },
-  "Mutable reference": {
-    "prefix": "refm",
-    "body": [
-      "let ${1:name}:${2:type}& = &${3:value}",
-      "$0"
-    ],
-    "description": "Borrow a mutable value"
-  },
-  "Move value": {
-    "prefix": "move",
-    "body": [
-      "let ${1:destination} = move ${2:source}",
-      "$0"
-    ],
-    "description": "Transfer a value"
-  },
-  "Copy value": {
-    "prefix": "copy",
-    "body": [
-      "let ${1:destination} = copy ${2:source}",
-      "$0"
-    ],
-    "description": "Duplicate an owning value"
-  },
   "Cascade": {
     "prefix": "cascade",
     "body": [

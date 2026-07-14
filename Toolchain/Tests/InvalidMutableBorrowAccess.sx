@@ -1,5 +1,0 @@
-func main() void {
-    var count = 1
-    let view:int& = &count
-    print(count)
-}

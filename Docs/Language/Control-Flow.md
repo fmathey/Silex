@@ -16,8 +16,8 @@ while (count > 0) {
 ```
 
 `for` iterates through a fixed array or dynamic list. The source is evaluated
-once. By default, the iteration name is an immutable alias to the current
-element; `var` requests a mutable alias and requires a mutable collection.
+once. By default, the iteration name is immutable; `var` requests a mutable
+element binding and requires a mutable collection.
 
 ```sx
 for (value in values) {
@@ -29,7 +29,7 @@ for (var value in values) {
 }
 ```
 
-The entire collection remains borrowed during a loop body. An immutable loop
+The collection is held for the duration of each loop body. An immutable loop
 allows other reads but no mutation of the collection; a mutable loop allows no
 other direct access to it. `break` exits the nearest loop and `continue` starts
 its next iteration.

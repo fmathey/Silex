@@ -1,5 +1,0 @@
-func main() void {
-    var count = 1
-    let transferred = move count
-    print(count)
-}

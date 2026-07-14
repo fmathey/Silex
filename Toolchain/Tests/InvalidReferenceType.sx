@@ -1,0 +1,5 @@
+func read(value:int@) {
+    print(value)
+}
+
+func main() {}

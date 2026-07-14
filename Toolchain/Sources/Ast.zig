@@ -20,8 +20,6 @@ pub const UnaryOperator = enum {
     numeric_negate,
     dereference,
     borrow,
-    copy,
-    move,
 };
 
 pub const TypeName = union(enum) {
@@ -296,6 +294,7 @@ pub const Parameter = struct {
     name: []const u8,
     position: Source.Position,
     type: TypeName,
+    is_mutable_reference: bool = false,
 };
 
 pub const Function = struct {

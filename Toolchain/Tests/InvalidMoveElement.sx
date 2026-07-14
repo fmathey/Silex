@@ -1,4 +1,0 @@
-func main() void {
-    var values:uint[][] = [[1, 2]]
-    let first = move values[0]
-}

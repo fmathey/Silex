@@ -16,13 +16,9 @@ struct Rover {
     }
 }
 
-func read_energy(energy:int@) int {
-    return *energy
-}
-
-func recharge(energy:int&, amount:int) int {
-    *energy += amount
-    return *energy
+func recharge(energy:&int, amount:int) int {
+    energy += amount
+    return energy
 }
 
 func main() {
@@ -34,16 +30,16 @@ func main() {
         ..travel(2)
         ..travel(3)
 
-    let before:int = read_energy(&rover.energy)
+    let before:int = rover.energy
     let after:int = recharge(&rover.energy, 3)
 
-    var replay:int[] = copy rover.trail
-    let handoff:int[] = move replay
+    var replay = rover.trail
+    replay.reverse()
 
     print(rover.name)
     print(before)
     print(after)
-    print(handoff[^1])
+    print(replay[^1])
 }
 ```
 

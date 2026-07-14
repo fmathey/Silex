@@ -1,18 +1,45 @@
-func increment(value:int&) {
-    *value += 1
+func increment(value:&int) {
+    value += 1
+}
+
+func increment_both(first:&int, second:&int) {
+    first += 1
+    second += 1
+}
+
+func reset_first(values:int[]) {
+    values[0] = 0
+}
+
+struct Rover {
+    energy:int
 }
 
 func main() {
     var count = 1
-
-    if (true) {
-        let view:int@ = &count
-        print(*view)
-    }
-
+    print(count)
     increment(&count)
-    let transferred = move count
-    print(transferred)
+    print(count)
     count = 4
     print(count)
+
+    var values:int[] = [10, 20]
+    var left = 0
+    var right = 1
+    increment(&values[left])
+    increment(&values[right])
+    print(values[0])
+    print(values[1])
+
+    right = left
+    increment_both(&values[left], &values[right])
+    print(values[0])
+
+    var rover = Rover { energy:10 }
+    increment(&rover.energy)
+    print(rover.energy)
+
+    var original:int[] = [10]
+    reset_first(original)
+    print(original[0])
 }

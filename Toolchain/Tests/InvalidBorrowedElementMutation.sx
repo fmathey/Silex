@@ -1,6 +1,0 @@
-func main() void {
-    var values:int[] = [10]
-    let first:int@ = &values[0]
-    values.append(20)
-    print(*first)
-}

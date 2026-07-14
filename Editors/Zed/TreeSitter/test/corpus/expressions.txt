@@ -710,19 +710,16 @@ func main() {
                 (identifier)))))))))
 
 ============================
-References and transfer
+Mutable parameter
 ============================
 
-func increment(value:int&) {
-    *value += 1
+func increment(value:&int) {
+    value += 1
 }
 
 func main() {
-    var count = 1
-    let view:int@ = &count
-    increment(&count)
-    let transferred = move count
-    print(*view)
+    var values = [1]
+    increment(&values[0])
 }
 
 ---
@@ -734,14 +731,11 @@ func main() {
       (parameter
         (identifier)
         (type
-          (reference_type
-            (builtin_type)))))
+          (builtin_type))))
     (block
       (statement
         (assignment_statement
-          (dereference_expression
-            (expression
-              (identifier)))
+          (identifier)
           (expression
             (integer_literal))))))
   (function_definition
@@ -752,18 +746,9 @@ func main() {
         (variable_declaration
           (identifier)
           (expression
-            (integer_literal))))
-      (statement
-        (variable_declaration
-          (identifier)
-          (type_annotation
-            (type
-              (reference_type
-                (builtin_type))))
-          (expression
-            (borrow_expression
+            (sequence_literal
               (expression
-                (identifier))))))
+                (integer_literal))))))
       (statement
         (expression_statement
           (call_expression
@@ -771,17 +756,7 @@ func main() {
             (expression
               (borrow_expression
                 (expression
-                  (identifier)))))))
-      (statement
-        (variable_declaration
-          (identifier)
-          (expression
-            (move_expression
-              (identifier)))))
-      (statement
-        (print_statement
-          (identifier)
-          (expression
-            (dereference_expression
-              (expression
-                (identifier)))))))))
+                  (index_expression
+                    (identifier)
+                    (expression
+                      (integer_literal))))))))))))

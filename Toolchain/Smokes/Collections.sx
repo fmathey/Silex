@@ -1,19 +1,15 @@
-func print_ref(value:int@) {
-    print(*value)
+func print_ref(value:&int) {
+    print(value)
 }
 
 func pass_through(values:int[]) int[] {
     return values
 }
 
-func copy_borrowed(values:int[]@) int[] {
-    return *values
-}
-
 struct Player {
     items:uint[]
 
-    func add_items(items:uint[]@) {
+    func add_items(items:&uint[]) {
         self.items.append(items)
     }
 }
@@ -74,7 +70,7 @@ func main() {
     returned_copy[0] = 600
     print(values[0])
     print(returned_copy[0])
-    var borrowed_copy:int[] = copy_borrowed(&values)
+    var borrowed_copy:int[] = pass_through(values)
     borrowed_copy[0] = 700
     print(values[0])
     print(borrowed_copy[0])
@@ -108,14 +104,14 @@ func main() {
     let last_row:int[] = nested.take_last()
     print(last_row[0])
 
-    nested.append(copy row)
+    nested.append(row)
     var moved_row:int[] = [5, 6]
-    nested.append(move moved_row)
+    nested.append(moved_row)
     let rows:int[][] = [[9], [10]]
     nested.append(rows)
     nested.append([[11], [12]])
     var moved_rows:int[][] = [[13], [14]]
-    nested.append(move moved_rows)
+    nested.append(moved_rows)
     print(nested.count())
     print(row[0])
     print(rows.count())

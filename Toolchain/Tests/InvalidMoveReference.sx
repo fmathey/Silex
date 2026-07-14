@@ -1,7 +1,0 @@
-func consume(values:uint[]) void {}
-
-func main() void {
-    let source:uint[] = [1, 2]
-    let values:uint[]@ = &source
-    consume(move values)
-}

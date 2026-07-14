@@ -64,14 +64,10 @@
 (conversion_expression
   "as" @keyword
   type: (type) @type)
-(reference_type
-  kind: ["&" "@"] @type)
+(parameter
+  mutable_reference: "&" @type)
 (borrow_expression
   operator: "&" @operator)
-(copy_expression
-  "copy" @keyword)
-(move_expression
-  "move" @keyword)
 (self_expression) @keyword
 (comment) @comment
 

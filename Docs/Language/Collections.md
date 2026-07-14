@@ -1,7 +1,7 @@
 # Collections
 
-Silex has fixed arrays, written `T[N]`, and owning dynamic lists, written
-`T[]`. The fixed length `N` is part of an array type.
+Silex has fixed arrays, written `T[N]`, and dynamic lists, written `T[]`.
+Both have value semantics; the fixed length `N` is part of an array type.
 
 ```sx
 let axes:int[3] = [1, 2, 3]
@@ -25,10 +25,6 @@ let previous:int = values.replace(1, 40)
 
 Dynamic lists also provide `append`, `prepend`, `insert`, `take`,
 `take_first`, `take_last`, and `clear`. `append` accepts one compatible element
-or a compatible sequence. An ordinary source is copied; `move source`
-transfers its elements and invalidates the local source.
-
-Reading an element copies it when the element type is copyable. A move-only
-element must be borrowed, replaced, or removed with `take`; `move values[i]`
-is not allowed. A reference to an element conservatively borrows the whole
-collection until the reference ends.
+or a compatible sequence. Assigning a list, passing it to an ordinary
+parameter, or returning it preserves independent value behaviour; a list is
+separated only if one of those values is later mutated.

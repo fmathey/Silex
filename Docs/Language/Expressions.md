@@ -42,6 +42,6 @@ var values:int[] = []
     ..reverse()
 ```
 
-A cascade accepts a method call or direct field assignment. It follows the
-ordinary mutability, borrow, and move rules. The two dots are one token and
+A cascade accepts a method call or direct field assignment. Its receiver must
+be mutable whenever an operation writes to it. The two dots are one token and
 cannot be separated by whitespace; indentation is conventional only.

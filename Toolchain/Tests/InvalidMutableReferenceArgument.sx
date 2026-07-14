@@ -1,0 +1,8 @@
+func replace(value:&int) {
+    value = 2
+}
+
+func main() {
+    let count = 1
+    replace(&count)
+}

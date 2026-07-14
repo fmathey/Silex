@@ -29,6 +29,7 @@ pub fn generateWithSources(
         \\#include <iostream>
         \\#include <iterator>
         \\#include <limits>
+        \\#include <memory>
         \\#include <string>
         \\#include <type_traits>
         \\#include <utility>
@@ -151,9 +152,44 @@ pub fn generateWithSources(
         \\}
         \\
         \\template <typename T>
-        \\T silexCopy(const T& value) {
-        \\    return value;
-        \\}
+        \\class SilexList {
+        \\public:
+        \\    using value_type = T;
+        \\    using iterator = typename std::vector<T>::iterator;
+        \\    using const_iterator = typename std::vector<T>::const_iterator;
+        \\
+        \\    SilexList() : values_(std::make_shared<std::vector<T>>()) {}
+        \\    SilexList(std::initializer_list<T> values) : values_(std::make_shared<std::vector<T>>(values)) {}
+        \\
+        \\    std::size_t size() const { return values_->size(); }
+        \\    bool empty() const { return values_->empty(); }
+        \\    bool operator==(const SilexList& other) const { return *values_ == *other.values_; }
+        \\    bool operator!=(const SilexList& other) const { return !(*this == other); }
+        \\    const_iterator begin() const { return values_->begin(); }
+        \\    const_iterator end() const { return values_->end(); }
+        \\    iterator begin() { ensureUnique(); return values_->begin(); }
+        \\    iterator end() { ensureUnique(); return values_->end(); }
+        \\    const T& operator[](std::size_t index) const { return (*values_)[index]; }
+        \\    T& operator[](std::size_t index) { ensureUnique(); return (*values_)[index]; }
+        \\    void reserve(std::size_t count) { ensureUnique(); values_->reserve(count); }
+        \\    void push_back(T value) { ensureUnique(); values_->push_back(std::move(value)); }
+        \\    iterator insert(iterator position, T value) { ensureUnique(); return values_->insert(position, std::move(value)); }
+        \\    template <typename Iterator>
+        \\    iterator insert(iterator position, Iterator first, Iterator last) {
+        \\        ensureUnique();
+        \\        return values_->insert(position, first, last);
+        \\    }
+        \\    iterator erase(iterator position) { ensureUnique(); return values_->erase(position); }
+        \\    void pop_back() { ensureUnique(); values_->pop_back(); }
+        \\    void clear() { ensureUnique(); values_->clear(); }
+        \\
+        \\private:
+        \\    void ensureUnique() {
+        \\        if (values_.use_count() != 1) values_ = std::make_shared<std::vector<T>>(*values_);
+        \\    }
+        \\
+        \\    std::shared_ptr<std::vector<T>> values_;
+        \\};
         \\
         \\template <typename T, typename Operation>
         \\decltype(auto) silexCascade(T&& value, Operation&& operation) {
@@ -165,24 +201,16 @@ pub fn generateWithSources(
         \\    }
         \\}
         \\
-        \\template <typename T, typename Range>
-        \\void silexListAppendRange(std::vector<T>& values, Range&& source) {
-        \\    if constexpr (std::is_lvalue_reference_v<Range&&>) {
-        \\        std::vector<T> copied(source.begin(), source.end());
-        \\        values.reserve(values.size() + copied.size());
-        \\        values.insert(
-        \\            values.end(),
-        \\            std::make_move_iterator(copied.begin()),
-        \\            std::make_move_iterator(copied.end())
-        \\        );
-        \\    } else {
-        \\        values.reserve(values.size() + source.size());
-        \\        values.insert(
-        \\            values.end(),
-        \\            std::make_move_iterator(source.begin()),
-        \\            std::make_move_iterator(source.end())
-        \\        );
-        \\    }
+        \\template <typename Collection, typename Range>
+        \\void silexListAppendRange(Collection& values, const Range& source) {
+        \\    using T = typename Collection::value_type;
+        \\    std::vector<T> copied(source.begin(), source.end());
+        \\    values.reserve(values.size() + copied.size());
+        \\    values.insert(
+        \\        values.end(),
+        \\        std::make_move_iterator(copied.begin()),
+        \\        std::make_move_iterator(copied.end())
+        \\    );
         \\}
         \\
         \\std::size_t silexCollectionOffset(
@@ -220,27 +248,29 @@ pub fn generateWithSources(
         \\    return std::forward<Collection>(values)[offset];
         \\}
         \\
-        \\template <typename T>
-        \\void silexListPrepend(std::vector<T>& values, T value) {
+        \\template <typename Collection, typename T>
+        \\void silexListPrepend(Collection& values, T value) {
         \\    values.insert(values.begin(), std::move(value));
         \\}
         \\
-        \\template <typename T>
-        \\void silexListInsert(std::vector<T>& values, std::int64_t index, T value, SilexSourceLocation location) {
+        \\template <typename Collection, typename T>
+        \\void silexListInsert(Collection& values, std::int64_t index, T value, SilexSourceLocation location) {
         \\    const auto offset = silexCollectionOffset(values.size(), index, false, true, location);
         \\    values.insert(values.begin() + static_cast<std::ptrdiff_t>(offset), std::move(value));
         \\}
         \\
-        \\template <typename T>
-        \\T silexListTake(std::vector<T>& values, std::int64_t index, SilexSourceLocation location) {
+        \\template <typename Collection>
+        \\typename Collection::value_type silexListTake(Collection& values, std::int64_t index, SilexSourceLocation location) {
+        \\    using T = typename Collection::value_type;
         \\    const auto offset = silexCollectionOffset(values.size(), index, false, false, location);
         \\    T value = std::move(values[offset]);
         \\    values.erase(values.begin() + static_cast<std::ptrdiff_t>(offset));
         \\    return value;
         \\}
         \\
-        \\template <typename T>
-        \\T silexListTakeLast(std::vector<T>& values, SilexSourceLocation location) {
+        \\template <typename Collection>
+        \\typename Collection::value_type silexListTakeLast(Collection& values, SilexSourceLocation location) {
+        \\    using T = typename Collection::value_type;
         \\    const auto offset = silexCollectionOffset(values.size(), 1, true, false, location);
         \\    T value = std::move(values[offset]);
         \\    values.pop_back();
@@ -446,6 +476,7 @@ fn generateMethodSignature(
     for (method.parameters, 0..) |parameter, index| {
         if (index != 0) try output.appendSlice(allocator, ", ");
         try appendCppType(allocator, output, parameter.type);
+        if (parameter.is_mutable_reference) try output.append(allocator, '&');
         if (include_names) {
             try output.append(allocator, ' ');
             try output.appendSlice(allocator, parameter.generated_name);
@@ -467,6 +498,7 @@ fn generateFunctionSignature(allocator: Allocator, output: *std.ArrayList(u8), f
     for (function.parameters, 0..) |parameter, index| {
         if (index != 0) try output.appendSlice(allocator, ", ");
         try appendCppType(allocator, output, parameter.type);
+        if (parameter.is_mutable_reference) try output.append(allocator, '&');
         if (include_names) {
             try output.append(allocator, ' ');
             try output.appendSlice(allocator, parameter.generated_name);
@@ -877,11 +909,8 @@ fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expressi
             } else if (unary.operator == .dereference) {
                 try output.appendSlice(allocator, "(*");
             } else if (unary.operator == .borrow) {
-                try output.appendSlice(allocator, "(&");
-            } else if (unary.operator == .copy) {
-                try output.appendSlice(allocator, "silexCopy(");
-            } else if (unary.operator == .move) {
-                try output.appendSlice(allocator, "std::move(");
+                try generateExpression(allocator, output, unary.operand);
+                return;
             } else {
                 try output.appendSlice(allocator, if (unary.operator == .logical_not) "(!" else "(-");
             }
@@ -1037,7 +1066,7 @@ fn appendCppType(allocator: Allocator, output: *std.ArrayList(u8), type_name: Se
             try output.append(allocator, '*');
         },
         .list => |element| {
-            try output.appendSlice(allocator, "std::vector<");
+            try output.appendSlice(allocator, "SilexList<");
             try appendCppType(allocator, output, element.*);
             try output.append(allocator, '>');
         },
