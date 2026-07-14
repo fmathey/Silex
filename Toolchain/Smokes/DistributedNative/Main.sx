@@ -2,4 +2,5 @@ import NativeRuntime
 
 func main() {
     print(NativeRuntime.linked())
+    print(NativeRuntime.titleByteCount("Silex 🌟"))
 }

@@ -55,6 +55,7 @@ pub fn compile(
     const source_contents = loaded.source_contents;
     const files = loaded.files;
     const module_runtimes = try loadModuleRuntimes(allocator, io, project, target);
+    const native_module_names = try nativeModuleNames(allocator, project);
     const canonical_source_paths = try canonicalizeSourcePaths(allocator, io, source_paths);
     const ast = if (project.single_file)
         files[0].program
@@ -67,6 +68,7 @@ pub fn compile(
     };
 
     var analyzer = Semantic.Analyzer.init(allocator);
+    analyzer.native_module_names = native_module_names;
     const program = analyzer.analyze(ast) catch |err| switch (err) {
         error.InvalidSource => return report(source_paths, analyzer.diagnostic.?),
         else => |other| return other,
@@ -164,6 +166,7 @@ pub fn compile(
         if (exitCode(result.term) != 0) {
             Io.Dir.cwd().deleteFile(io, temporary_executable_path) catch {};
             try Io.Dir.cwd().writeFile(io, .{ .sub_path = backend_log_path, .data = result.stderr });
+            reportMissingNativeFunction(program.functions, result.stderr);
             reportNativeBackendFailure(target_name, backend_log_path);
             return error.Reported;
         }
@@ -181,6 +184,14 @@ pub fn compile(
         .cache_hit = cache_hit,
         .target = target,
     };
+}
+
+fn nativeModuleNames(allocator: Allocator, project: ProjectModule.Project) ![]const []const u8 {
+    var names: std.ArrayList([]const u8) = .empty;
+    for (project.modules) |module| {
+        if (module.native_manifest_path != null) try names.append(allocator, module.name);
+    }
+    return names.toOwnedSlice(allocator);
 }
 
 fn loadModuleRuntimes(
@@ -272,6 +283,16 @@ fn reportNativeBackendFailure(target_name: []const u8, backend_log_path: []const
         .{target_name},
     );
     std.debug.print("silex: backend details: {s}\n", .{backend_log_path});
+}
+
+fn reportMissingNativeFunction(functions: []const Semantic.Function, backend_output: []const u8) void {
+    for (functions) |function| {
+        if (!function.is_native or std.mem.indexOf(u8, backend_output, function.generated_name) == null) continue;
+        std.debug.print(
+            "silex: native function '{s}.{s}' requires C symbol '{s}'\n",
+            .{ function.native_module_name.?, function.native_function_name.?, function.generated_name },
+        );
+    }
 }
 
 fn requiresFinalRelink(runtimes: []const NativeDependency.ModuleRuntime) bool {

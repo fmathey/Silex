@@ -1,0 +1,5 @@
+import NativeChecks.Throw
+
+func main() {
+    NativeChecks.Throw.fail()
+}

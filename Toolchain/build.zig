@@ -19,6 +19,24 @@ pub fn build(b: *std.Build) void {
         .name = "silex",
         .root_module = module,
     });
+
+    const native_module_test_options = b.addOptions();
+    native_module_test_options.addOption([]const u8, "developer_zig", b.graph.zig_exe);
+    native_module_test_options.addOption(
+        []const u8,
+        "developer_standard_library_root",
+        b.pathFromRoot("Tests/DistributedModules/Library"),
+    );
+    const native_module_test_module = b.createModule(.{
+        .root_source_file = b.path("Sources/Main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    native_module_test_module.addOptions("build_options", native_module_test_options);
+    const native_module_test_executable = b.addExecutable(.{
+        .name = "silex-native-module-tests",
+        .root_module = native_module_test_module,
+    });
     b.installArtifact(executable);
     const install_library = b.addInstallDirectory(.{
         .source_dir = b.path("../Library"),
@@ -89,7 +107,33 @@ pub fn build(b: *std.Build) void {
     invalid_native_function_command.addArgs(&.{ "compile", "Tests/InvalidNativeFunction.sx" });
     invalid_native_function_command.expectExitCode(1);
     invalid_native_function_command.expectStdErrEqual(
-        "Tests/InvalidNativeFunction.sx:1:1: error: native functions are reserved for the standard library\n",
+        "Tests/InvalidNativeFunction.sx:1:1: error: native functions are only available in a distributed module with native.json\n",
+    );
+
+    const invalid_public_native_function_command = b.addRunArtifact(executable);
+    invalid_public_native_function_command.addArgs(&.{ "compile", "Tests/InvalidPublicNativeFunction.sx" });
+    invalid_public_native_function_command.expectExitCode(1);
+    invalid_public_native_function_command.expectStdErrEqual(
+        "Tests/InvalidPublicNativeFunction.sx:1:5: error: native functions cannot be public\n",
+    );
+
+    const invalid_native_type_command = b.addRunArtifact(native_module_test_executable);
+    invalid_native_type_command.addArgs(&.{ "compile", "Tests/DistributedModules/NativeInvalidType/Main.sx" });
+    invalid_native_type_command.expectExitCode(1);
+    invalid_native_type_command.expectStdErrMatch("native parameter 'values' cannot use 'list'\n");
+
+    const missing_native_symbol_command = b.addRunArtifact(native_module_test_executable);
+    missing_native_symbol_command.addArgs(&.{ "compile", "Tests/DistributedModules/NativeMissingSymbol/Main.sx" });
+    missing_native_symbol_command.expectExitCode(1);
+    missing_native_symbol_command.expectStdErrMatch(
+        "silex: native function 'NativeChecks.MissingSymbol.native_missing' requires C symbol 'silexNative_NativeChecks_MissingSymbol_native_missing'\n",
+    );
+
+    const native_exception_command = b.addRunArtifact(native_module_test_executable);
+    native_exception_command.addArgs(&.{ "run", "Tests/DistributedModules/NativeThrow/Main.sx" });
+    native_exception_command.expectExitCode(1);
+    native_exception_command.expectStdErrEqual(
+        "runtime error: native function 'NativeChecks.Throw.native_fail' failed: planned native failure\n",
     );
 
     const invalid_reference_type_command = b.addRunArtifact(executable);
@@ -539,6 +583,10 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&missing_mutable_reference_argument_command.step);
     test_step.dependOn(&invalid_local_reference_command.step);
     test_step.dependOn(&invalid_native_function_command.step);
+    test_step.dependOn(&invalid_public_native_function_command.step);
+    test_step.dependOn(&invalid_native_type_command.step);
+    test_step.dependOn(&missing_native_symbol_command.step);
+    test_step.dependOn(&native_exception_command.step);
     test_step.dependOn(&invalid_reference_type_command.step);
     test_step.dependOn(&invalid_condition_command.step);
     test_step.dependOn(&invalid_logical_command.step);
@@ -841,7 +889,7 @@ pub fn build(b: *std.Build) void {
     const distributed_native_runtime_command = b.addRunArtifact(executable);
     distributed_native_runtime_command.step.dependOn(&standard_library_manifest_command.step);
     distributed_native_runtime_command.addArgs(&.{ "run", "Smokes/DistributedNative/Main.sx" });
-    distributed_native_runtime_command.expectStdOutEqual(hostText(b, "Distributed native runtime linked\ntrue\n"));
+    distributed_native_runtime_command.expectStdOutEqual(hostText(b, "Distributed native runtime linked\ntrue\n10\n"));
 
     const unsupported_distributed_native_target_command = b.addRunArtifact(executable);
     unsupported_distributed_native_target_command.step.dependOn(&distributed_native_runtime_command.step);

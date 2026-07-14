@@ -86,6 +86,9 @@ pub const Expression = struct {
     pub const Call = struct {
         generated_name: []const u8,
         arguments: []const *Expression,
+        is_native: bool,
+        native_module_name: ?[]const u8,
+        native_function_name: ?[]const u8,
     };
 
     pub const MethodCall = struct {
@@ -239,6 +242,8 @@ pub const Function = struct {
     statements: []const Statement,
     is_main: bool,
     is_native: bool,
+    native_module_name: ?[]const u8,
+    native_function_name: ?[]const u8,
 };
 
 pub const Method = struct {
@@ -296,6 +301,8 @@ const FunctionSymbol = struct {
     position: Source.Position,
     is_main: bool,
     is_native: bool,
+    native_module_name: ?[]const u8,
+    native_function_name: ?[]const u8,
 };
 
 const StructureSymbol = struct {
@@ -329,6 +336,7 @@ const StructureFieldSymbol = struct {
 
 pub const Analyzer = struct {
     allocator: Allocator,
+    native_module_names: []const []const u8 = &.{},
     next_symbol_id: usize = 0,
     functions: std.ArrayList(FunctionSymbol) = .empty,
     structures: std.ArrayList(StructureSymbol) = .empty,
@@ -469,8 +477,25 @@ pub const Analyzer = struct {
             }
             const is_main = std.mem.eql(u8, ast_function.name, "main");
             if (is_main) main_count += 1;
-            if (ast_function.is_native and !std.mem.startsWith(u8, ast_function.name, "std.")) {
-                return self.fail(ast_function.position, "native functions are reserved for the standard library");
+            const native_module_name = if (ast_function.is_native) moduleName(ast_function.name) else null;
+            const native_function_name = if (ast_function.is_native) lastNameSegment(ast_function.name) else null;
+            if (ast_function.is_native) {
+                const module_name = native_module_name orelse return self.fail(
+                    ast_function.position,
+                    "native functions are only available in a distributed module with native.json",
+                );
+                if (!self.isNativeModule(module_name)) {
+                    const message = try std.fmt.allocPrint(
+                        self.allocator,
+                        "native functions require module '{s}' to declare native.json",
+                        .{module_name},
+                    );
+                    return self.fail(ast_function.position, message);
+                }
+                if (!std.mem.startsWith(u8, native_function_name.?, "native_")) {
+                    return self.fail(ast_function.name_position, "native function names must begin with 'native_'");
+                }
+                if (ast_function.is_public) return self.fail(ast_function.position, "native functions cannot be public");
             }
             var parameter_types: std.ArrayList(Type) = .empty;
             var parameter_is_mutable_references: std.ArrayList(bool) = .empty;
@@ -481,10 +506,22 @@ pub const Analyzer = struct {
             const return_type = try typeFromReturn(self, ast_function.return_type, ast_function.position);
             if (return_type == .reference) return self.fail(ast_function.position, "a function cannot return a reference");
             if (ast_function.is_native) {
-                if (!isNativeType(return_type)) return self.fail(ast_function.position, "native functions use only primitive value types");
-                for (parameter_types.items, parameter_is_mutable_references.items) |parameter_type, is_mutable_reference| {
-                    if (!isNativeType(parameter_type) or is_mutable_reference) {
-                        return self.fail(ast_function.position, "native functions use only primitive value parameters");
+                if (!isNativeReturnType(return_type)) {
+                    const message = try std.fmt.allocPrint(
+                        self.allocator,
+                        "native functions cannot return '{s}'",
+                        .{typeName(return_type)},
+                    );
+                    return self.fail(ast_function.position, message);
+                }
+                for (ast_function.parameters, parameter_types.items, parameter_is_mutable_references.items) |parameter, parameter_type, is_mutable_reference| {
+                    if (!isNativeParameterType(parameter_type) or is_mutable_reference) {
+                        const message = try std.fmt.allocPrint(
+                            self.allocator,
+                            "native parameter '{s}' cannot use '{s}'",
+                            .{ parameter.name, typeName(parameter_type) },
+                        );
+                        return self.fail(parameter.position, message);
                     }
                 }
             }
@@ -502,6 +539,8 @@ pub const Analyzer = struct {
                 .position = ast_function.name_position,
                 .is_main = is_main,
                 .is_native = ast_function.is_native,
+                .native_module_name = native_module_name,
+                .native_function_name = native_function_name,
             });
         }
         if (main_count == 0) return self.fail(.{ .line = 1, .column = 1 }, "missing 'main' function");
@@ -596,7 +635,16 @@ pub const Analyzer = struct {
             const message = try std.fmt.allocPrint(self.allocator, "function '{s}' must return '{s}' on every path", .{ ast.name, typeName(symbol.return_type) });
             return self.fail(ast.name_position, message);
         }
-        return .{ .generated_name = symbol.generated_name, .return_type = symbol.return_type, .parameters = try parameters.toOwnedSlice(self.allocator), .statements = function_statements, .is_main = symbol.is_main, .is_native = symbol.is_native };
+        return .{
+            .generated_name = symbol.generated_name,
+            .return_type = symbol.return_type,
+            .parameters = try parameters.toOwnedSlice(self.allocator),
+            .statements = function_statements,
+            .is_main = symbol.is_main,
+            .is_native = symbol.is_native,
+            .native_module_name = symbol.native_module_name,
+            .native_function_name = symbol.native_function_name,
+        };
     }
 
     fn method(
@@ -1365,7 +1413,17 @@ pub const Analyzer = struct {
             try arguments.append(self.allocator, value);
             self.releaseTransientBorrow(value);
         }
-        return self.newExpression(.{ .type = function_symbol.return_type, .position = call.name_position, .value = .{ .call = .{ .generated_name = function_symbol.generated_name, .arguments = try arguments.toOwnedSlice(self.allocator) } } });
+        return self.newExpression(.{
+            .type = function_symbol.return_type,
+            .position = call.name_position,
+            .value = .{ .call = .{
+                .generated_name = function_symbol.generated_name,
+                .arguments = try arguments.toOwnedSlice(self.allocator),
+                .is_native = function_symbol.is_native,
+                .native_module_name = function_symbol.native_module_name,
+                .native_function_name = function_symbol.native_function_name,
+            } },
+        });
     }
 
     fn methodCallExpression(
@@ -1734,6 +1792,13 @@ pub const Analyzer = struct {
             if (std.mem.eql(u8, function_symbol.source_name, name)) return function_symbol;
         }
         return null;
+    }
+
+    fn isNativeModule(self: *const Analyzer, module_name: []const u8) bool {
+        for (self.native_module_names) |candidate| {
+            if (std.mem.eql(u8, candidate, module_name)) return true;
+        }
+        return false;
     }
 
     fn findStructure(self: *const Analyzer, name: []const u8) ?*const StructureSymbol {
@@ -2493,11 +2558,25 @@ fn typeEqual(left: Type, right: Type) bool {
     };
 }
 
-fn isNativeType(value: Type) bool {
+fn isNativeReturnType(value: Type) bool {
     return switch (value) {
         .void, .int, .int8, .int16, .int32, .uint8, .uint16, .uint32, .uint64, .float, .float64, .bool => true,
         .str, .structure, .list, .fixed_array, .reference => false,
     };
+}
+
+fn isNativeParameterType(value: Type) bool {
+    return value == .str or isNativeReturnType(value);
+}
+
+fn moduleName(function_name: []const u8) ?[]const u8 {
+    const separator = std.mem.lastIndexOfScalar(u8, function_name, '.') orelse return null;
+    return function_name[0..separator];
+}
+
+fn lastNameSegment(function_name: []const u8) []const u8 {
+    const separator = std.mem.lastIndexOfScalar(u8, function_name, '.') orelse return function_name;
+    return function_name[separator + 1 ..];
 }
 
 fn nativeSymbol(allocator: Allocator, function_name: []const u8) Allocator.Error![]const u8 {

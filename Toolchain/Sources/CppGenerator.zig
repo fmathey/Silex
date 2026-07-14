@@ -23,6 +23,7 @@ pub fn generateWithSources(
         \\#include <cstddef>
         \\#include <cstdint>
         \\#include <cstdlib>
+        \\#include <exception>
         \\#include <array>
         \\#include <bit>
         \\#include <cmath>
@@ -92,6 +93,27 @@ pub fn generateWithSources(
         \\    printNumericValue(value);
         \\    std::cerr << ' ' << failure << '\n';
         \\    std::exit(1);
+        \\}
+        \\
+        \\[[noreturn]] void nativeFunctionRuntimeError(
+        \\    const char* module,
+        \\    const char* function,
+        \\    const char* message
+        \\) {
+        \\    std::cerr << "runtime error: native function '" << module << '.' << function
+        \\              << "' failed: " << message << '\n';
+        \\    std::exit(1);
+        \\}
+        \\
+        \\template <typename Call>
+        \\decltype(auto) callNativeFunction(const char* module, const char* function, Call&& call) {
+        \\    try {
+        \\        return std::forward<Call>(call)();
+        \\    } catch (const std::exception& exception) {
+        \\        nativeFunctionRuntimeError(module, function, exception.what());
+        \\    } catch (...) {
+        \\        nativeFunctionRuntimeError(module, function, "unknown native exception");
+        \\    }
         \\}
         \\
         \\template <typename Target, typename Source> bool integerIsExactlyRepresentable(Source value) {
@@ -527,10 +549,23 @@ fn generateNativeFunctionSignature(
     try output.append(allocator, '(');
     for (function.parameters, 0..) |parameter, index| {
         if (index != 0) try output.appendSlice(allocator, ", ");
-        try appendCppType(allocator, output, parameter.type);
-        if (include_names) {
-            try output.append(allocator, ' ');
-            try output.appendSlice(allocator, parameter.generated_name);
+        if (parameter.type == .str) {
+            try output.appendSlice(allocator, "const char*");
+            if (include_names) {
+                try output.append(allocator, ' ');
+                try output.appendSlice(allocator, parameter.generated_name);
+                try output.appendSlice(allocator, "Bytes, std::int64_t ");
+                try output.appendSlice(allocator, parameter.generated_name);
+                try output.appendSlice(allocator, "Length");
+            } else {
+                try output.appendSlice(allocator, ", std::int64_t");
+            }
+        } else {
+            try appendCppType(allocator, output, parameter.type);
+            if (include_names) {
+                try output.append(allocator, ' ');
+                try output.appendSlice(allocator, parameter.generated_name);
+            }
         }
     }
     try output.append(allocator, ')');
@@ -539,6 +574,44 @@ fn generateNativeFunctionSignature(
 fn containsNativeFunction(functions: []const Semantic.Function) bool {
     for (functions) |function| if (function.is_native) return true;
     return false;
+}
+
+fn generateNativeFunctionCall(
+    allocator: Allocator,
+    output: *std.ArrayList(u8),
+    call: Semantic.Expression.Call,
+) GenerateError!void {
+    const module_name = call.native_module_name.?;
+    const function_name = call.native_function_name.?;
+    try output.appendSlice(allocator, "callNativeFunction(");
+    try appendCppByteStringLiteral(allocator, output, module_name);
+    try output.appendSlice(allocator, ", ");
+    try appendCppByteStringLiteral(allocator, output, function_name);
+    try output.appendSlice(allocator, ", [&]() {");
+    for (call.arguments, 0..) |argument, index| {
+        if (argument.type != .str) continue;
+        try output.appendSlice(allocator, "auto&& silexNativeString");
+        try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}", .{index}));
+        try output.appendSlice(allocator, " = ");
+        try generateExpression(allocator, output, argument);
+        try output.appendSlice(allocator, ";");
+    }
+    try output.appendSlice(allocator, "return ");
+    try output.appendSlice(allocator, call.generated_name);
+    try output.append(allocator, '(');
+    for (call.arguments, 0..) |argument, index| {
+        if (index != 0) try output.appendSlice(allocator, ", ");
+        if (argument.type == .str) {
+            try output.appendSlice(allocator, "silexNativeString");
+            try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}", .{index}));
+            try output.appendSlice(allocator, ".data(), static_cast<std::int64_t>(silexNativeString");
+            try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}", .{index}));
+            try output.appendSlice(allocator, ".size())");
+        } else {
+            try generateExpression(allocator, output, argument);
+        }
+    }
+    try output.appendSlice(allocator, "); })");
 }
 
 fn generateStructureEqualitySignature(
@@ -888,13 +961,17 @@ fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expressi
         .variable => |generated_name| try output.appendSlice(allocator, generated_name),
         .self => try output.appendSlice(allocator, "*this"),
         .call => |call| {
-            try output.appendSlice(allocator, call.generated_name);
-            try output.append(allocator, '(');
-            for (call.arguments, 0..) |argument, index| {
-                if (index != 0) try output.appendSlice(allocator, ", ");
-                try generateExpression(allocator, output, argument);
+            if (call.is_native) {
+                try generateNativeFunctionCall(allocator, output, call);
+            } else {
+                try output.appendSlice(allocator, call.generated_name);
+                try output.append(allocator, '(');
+                for (call.arguments, 0..) |argument, index| {
+                    if (index != 0) try output.appendSlice(allocator, ", ");
+                    try generateExpression(allocator, output, argument);
+                }
+                try output.append(allocator, ')');
             }
-            try output.append(allocator, ')');
         },
         .method_call => |call| {
             if (call.object.value != .self) {

@@ -1,0 +1,1 @@
+native func native_count(values:int[]) int

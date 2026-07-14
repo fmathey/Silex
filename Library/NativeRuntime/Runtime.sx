@@ -1,3 +1,9 @@
+native func native_title_byte_count(title:str) int
+
+pub func titleByteCount(title:str) int {
+    return native_title_byte_count(title)
+}
+
 pub func linked() bool {
     return true
 }

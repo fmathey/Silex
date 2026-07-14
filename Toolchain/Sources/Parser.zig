@@ -43,6 +43,8 @@ pub const Parser = struct {
                     try structures.append(self.allocator, try self.parseStructure(true));
                 } else if (self.current.tag == .keyword_func) {
                     try functions.append(self.allocator, try self.parseFunction(true));
+                } else if (self.current.tag == .identifier and std.mem.eql(u8, self.current.lexeme, "native")) {
+                    return self.fail("native functions cannot be public");
                 } else return self.fail("expected 'struct', 'func', or 'use' after 'pub'");
             } else if (self.current.tag == .keyword_struct) {
                 try structures.append(self.allocator, try self.parseStructure(false));
@@ -116,6 +118,9 @@ pub const Parser = struct {
             if (self.current.tag == .keyword_func) {
                 try methods.append(self.allocator, try self.parseFunction(false));
                 continue;
+            }
+            if (self.current.tag == .identifier and std.mem.eql(u8, self.current.lexeme, "native")) {
+                return self.fail("native functions must be declared at module level");
             }
             if (self.current.tag != .identifier) return self.fail("expected field name");
             const field_name = self.current.lexeme;
