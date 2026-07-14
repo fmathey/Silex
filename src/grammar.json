@@ -542,56 +542,9 @@
         }
       ]
     },
-    "reference_type": {
-      "type": "SEQ",
-      "members": [
-        {
-          "type": "FIELD",
-          "name": "target",
-          "content": {
-            "type": "CHOICE",
-            "members": [
-              {
-                "type": "SYMBOL",
-                "name": "array_type"
-              },
-              {
-                "type": "SYMBOL",
-                "name": "builtin_type"
-              },
-              {
-                "type": "SYMBOL",
-                "name": "named_type"
-              }
-            ]
-          }
-        },
-        {
-          "type": "FIELD",
-          "name": "kind",
-          "content": {
-            "type": "CHOICE",
-            "members": [
-              {
-                "type": "STRING",
-                "value": "&"
-              },
-              {
-                "type": "STRING",
-                "value": "@"
-              }
-            ]
-          }
-        }
-      ]
-    },
     "type": {
       "type": "CHOICE",
       "members": [
-        {
-          "type": "SYMBOL",
-          "name": "reference_type"
-        },
         {
           "type": "SYMBOL",
           "name": "array_type"
@@ -666,6 +619,22 @@
         {
           "type": "STRING",
           "value": ":"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "mutable_reference",
+              "content": {
+                "type": "STRING",
+                "value": "&"
+              }
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
         },
         {
           "type": "FIELD",
@@ -892,10 +861,6 @@
               {
                 "type": "SYMBOL",
                 "name": "index_expression"
-              },
-              {
-                "type": "SYMBOL",
-                "name": "dereference_expression"
               }
             ]
           }
@@ -959,10 +924,6 @@
               {
                 "type": "SYMBOL",
                 "name": "index_expression"
-              },
-              {
-                "type": "SYMBOL",
-                "name": "dereference_expression"
               }
             ]
           }
@@ -1235,19 +1196,7 @@
         },
         {
           "type": "SYMBOL",
-          "name": "dereference_expression"
-        },
-        {
-          "type": "SYMBOL",
           "name": "borrow_expression"
-        },
-        {
-          "type": "SYMBOL",
-          "name": "copy_expression"
-        },
-        {
-          "type": "SYMBOL",
-          "name": "move_expression"
         },
         {
           "type": "SYMBOL",
@@ -1518,15 +1467,6 @@
           "type": "ALIAS",
           "content": {
             "type": "SYMBOL",
-            "name": "cascade_dereference_expression"
-          },
-          "named": true,
-          "value": "dereference_expression"
-        },
-        {
-          "type": "ALIAS",
-          "content": {
-            "type": "SYMBOL",
             "name": "cascade_borrow_expression"
           },
           "named": true,
@@ -1540,14 +1480,6 @@
           },
           "named": true,
           "value": "conversion_expression"
-        },
-        {
-          "type": "SYMBOL",
-          "name": "copy_expression"
-        },
-        {
-          "type": "SYMBOL",
-          "name": "move_expression"
         },
         {
           "type": "SYMBOL",
@@ -1871,31 +1803,6 @@
                   "value": "-"
                 }
               ]
-            }
-          },
-          {
-            "type": "FIELD",
-            "name": "operand",
-            "content": {
-              "type": "SYMBOL",
-              "name": "_cascade_assignment_value"
-            }
-          }
-        ]
-      }
-    },
-    "cascade_dereference_expression": {
-      "type": "PREC",
-      "value": 7,
-      "content": {
-        "type": "SEQ",
-        "members": [
-          {
-            "type": "FIELD",
-            "name": "operator",
-            "content": {
-              "type": "STRING",
-              "value": "*"
             }
           },
           {
@@ -2772,31 +2679,6 @@
         ]
       }
     },
-    "dereference_expression": {
-      "type": "PREC",
-      "value": 7,
-      "content": {
-        "type": "SEQ",
-        "members": [
-          {
-            "type": "FIELD",
-            "name": "operator",
-            "content": {
-              "type": "STRING",
-              "value": "*"
-            }
-          },
-          {
-            "type": "FIELD",
-            "name": "operand",
-            "content": {
-              "type": "SYMBOL",
-              "name": "expression"
-            }
-          }
-        ]
-      }
-    },
     "borrow_expression": {
       "type": "PREC",
       "value": 7,
@@ -2817,69 +2699,6 @@
             "content": {
               "type": "SYMBOL",
               "name": "expression"
-            }
-          }
-        ]
-      }
-    },
-    "copy_expression": {
-      "type": "PREC_RIGHT",
-      "value": 7,
-      "content": {
-        "type": "SEQ",
-        "members": [
-          {
-            "type": "STRING",
-            "value": "copy"
-          },
-          {
-            "type": "FIELD",
-            "name": "operand",
-            "content": {
-              "type": "CHOICE",
-              "members": [
-                {
-                  "type": "SYMBOL",
-                  "name": "method_call_expression"
-                },
-                {
-                  "type": "SYMBOL",
-                  "name": "call_expression"
-                },
-                {
-                  "type": "SYMBOL",
-                  "name": "member_expression"
-                },
-                {
-                  "type": "SYMBOL",
-                  "name": "index_expression"
-                },
-                {
-                  "type": "SYMBOL",
-                  "name": "identifier"
-                }
-              ]
-            }
-          }
-        ]
-      }
-    },
-    "move_expression": {
-      "type": "PREC",
-      "value": 7,
-      "content": {
-        "type": "SEQ",
-        "members": [
-          {
-            "type": "STRING",
-            "value": "move"
-          },
-          {
-            "type": "FIELD",
-            "name": "operand",
-            "content": {
-              "type": "SYMBOL",
-              "name": "identifier"
             }
           }
         ]

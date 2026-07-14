@@ -61,10 +61,10 @@
 (integer_literal) @number
 (float_literal) @number
 (boolean_literal) @boolean
-(copy_expression
-  "copy" @keyword)
-(move_expression
-  "move" @keyword)
+(parameter
+  mutable_reference: "&" @type)
+(borrow_expression
+  operator: "&" @operator)
 (self_expression) @keyword
 (comment) @comment
 
