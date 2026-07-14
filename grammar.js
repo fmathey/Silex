@@ -25,6 +25,7 @@ module.exports = grammar({
           $.use_declaration,
           $.structure_definition,
           $.function_definition,
+          $.native_function_declaration,
           $.public_declaration,
         ),
       ),
@@ -80,6 +81,16 @@ module.exports = grammar({
         $.parameter_list,
         optional(field("return_type", choice($.void_type, $.type))),
         field("body", $.block),
+      ),
+
+    native_function_declaration: ($) =>
+      seq(
+        field("native", alias("native", $.identifier)),
+        "func",
+        field("name", $.identifier),
+        $.parameter_list,
+        field("return_type", choice($.void_type, $.type)),
+        choice(";", $._automatic_semicolon),
       ),
 
     void_type: (_) => "void",

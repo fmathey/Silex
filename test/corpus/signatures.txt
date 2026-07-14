@@ -30,3 +30,19 @@ func answer() int {
         (return_statement
           (expression
             (integer_literal)))))))
+
+==================
+Native standard function
+==================
+
+native func native_next() int
+
+---
+
+(source_file
+  (native_function_declaration
+    native: (identifier)
+    name: (identifier)
+    (parameter_list)
+    return_type: (type
+      (builtin_type))))
