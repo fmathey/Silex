@@ -1,8 +1,0 @@
-func consume(values:int[]) void {}
-
-func main() void {
-    var grid:int[][] = [[1]]
-    for (var row in grid) {
-        consume(move row)
-    }
-}

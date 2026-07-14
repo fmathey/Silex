@@ -1,7 +1,0 @@
-{
-  "target": "A",
-  "modules": [
-    { "name": "A", "sources": ["A.sx"] },
-    { "name": "B", "sources": ["B.sx"] }
-  ]
-}

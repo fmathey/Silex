@@ -1,3 +1,0 @@
-func main() void {
-    var value:uint8 = 256
-}

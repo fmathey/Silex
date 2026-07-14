@@ -1,5 +1,0 @@
-struct Player {
-    health:int = false
-}
-
-func main() void {}

@@ -1,4 +1,0 @@
-func main() void {
-    let values:int[] = []
-    let duplicate:int[] = values.clone()
-}

@@ -1,5 +1,0 @@
-func answer() {
-    return 42
-}
-
-func main() {}

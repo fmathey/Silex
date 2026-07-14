@@ -1,4 +1,0 @@
-func main() void {
-    let count:int = 1.5
-    print(count)
-}

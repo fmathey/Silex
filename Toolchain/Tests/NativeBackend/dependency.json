@@ -1,5 +1,0 @@
-{
-  "name": "invalid-native-backend",
-  "sources": ["Invalid.cpp"],
-  "targets": ["x86_64-linux-musl"]
-}

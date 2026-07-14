@@ -1,9 +1,0 @@
-struct Player {
-    items:uint[]
-}
-
-func main() void {
-    var nested:uint[][] = []
-    var player = Player { items:[1, 2] }
-    nested.append(move player.items)
-}

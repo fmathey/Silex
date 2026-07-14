@@ -1,4 +1,0 @@
-func main() {
-    let value:int = 256
-    print(value as uint8)
-}

@@ -1,4 +1,0 @@
-func main() void {
-    let values:int[] = [10]
-    print(values[true])
-}

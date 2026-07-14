@@ -1,5 +1,0 @@
-use Math.Vec3
-
-pub struct Ray {
-    origin:Vec3
-}

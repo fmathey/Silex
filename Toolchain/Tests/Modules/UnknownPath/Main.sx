@@ -1,5 +1,0 @@
-import Lib
-
-func main() void {
-    let value:Lib.Missing
-}

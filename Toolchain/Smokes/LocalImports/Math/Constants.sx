@@ -1,3 +1,0 @@
-pub func dimensions() int {
-    return 3
-}

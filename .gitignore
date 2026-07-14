@@ -1,7 +1,3 @@
-.DS_Store
-.zig-cache/
-zig-out/
-.silex/
-Editors/Zed/grammars/
-Editors/Zed/.dev/
-Editors/Zed/target/
+.cache/
+build/
+node_modules/

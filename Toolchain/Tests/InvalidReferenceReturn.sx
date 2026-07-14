@@ -1,5 +1,0 @@
-func identity(value:int@) int@ {
-    return value
-}
-
-func main() void {}

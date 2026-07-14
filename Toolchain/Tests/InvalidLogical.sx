@@ -1,5 +1,0 @@
-func main() void {
-    if (1 && true) {
-        print("unreachable")
-    }
-}
