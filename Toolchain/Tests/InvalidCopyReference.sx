@@ -1,0 +1,5 @@
+func main() void {
+    var values:int[] = []
+    let values_ref:int[]@ = &values
+    let copied = copy values_ref
+}

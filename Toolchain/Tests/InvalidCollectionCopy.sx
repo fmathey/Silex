@@ -1,4 +1,0 @@
-func main() void {
-    var values:int[] = [1]
-    var copied = values
-}

@@ -106,7 +106,6 @@ pub const Expression = struct {
         pub const Operation = enum {
             count,
             is_empty,
-            clone,
             append,
             append_range,
             prepend,
@@ -1397,8 +1396,6 @@ pub const Analyzer = struct {
             .count
         else if (std.mem.eql(u8, call.name, "is_empty"))
             .is_empty
-        else if (std.mem.eql(u8, call.name, "clone"))
-            .clone
         else if (std.mem.eql(u8, call.name, "append"))
             .append
         else if (std.mem.eql(u8, call.name, "prepend"))
@@ -1431,7 +1428,7 @@ pub const Analyzer = struct {
         };
         const allows = switch (operation) {
             .count => object.type == .str or element_type != null,
-            .is_empty, .clone => element_type != null,
+            .is_empty => element_type != null,
             .replace, .swap, .reverse => element_type != null,
             .append, .append_range, .prepend, .insert, .take, .take_first, .take_last, .clear => object.type == .list,
         };
@@ -1439,12 +1436,8 @@ pub const Analyzer = struct {
             const message = try std.fmt.allocPrint(self.allocator, "method '{s}' is not available on '{s}'", .{ call.name, typeName(object.type) });
             return self.fail(call.name_position, message);
         }
-        if (operation == .clone and !self.isCloneable(object.type)) {
-            const message = try std.fmt.allocPrint(self.allocator, "cannot clone '{s}' because the type contains a value that is not cloneable", .{typeName(object.type)});
-            return self.fail(call.name_position, message);
-        }
         const expected_arguments: usize = switch (operation) {
-            .count, .is_empty, .clone, .take_first, .take_last, .reverse, .clear => 0,
+            .count, .is_empty, .take_first, .take_last, .reverse, .clear => 0,
             .append, .append_range, .prepend, .take => 1,
             .insert, .replace, .swap => 2,
         };
@@ -1453,7 +1446,7 @@ pub const Analyzer = struct {
             return self.fail(call.name_position, message);
         }
         switch (operation) {
-            .count, .is_empty, .clone => {},
+            .count, .is_empty => {},
             else => try self.requireMutableCollectionReceiver(call.object, scope, call.name_position, call.name),
         }
 
@@ -1495,8 +1488,8 @@ pub const Analyzer = struct {
                                     .value = .{ .unary = .{ .operator = .dereference, .operand = value } },
                                 });
                             }
-                            if (isPlaceValue(value) and !self.isCloneable(range_element)) {
-                                const message = try std.fmt.allocPrint(self.allocator, "cannot append '{s}' values by copy because the type is not cloneable", .{typeName(range_element)});
+                            if (isPlaceValue(value) and !self.supportsCopy(range_element)) {
+                                const message = try std.fmt.allocPrint(self.allocator, "cannot append '{s}' values by copy because the type does not support 'copy'", .{typeName(range_element)});
                                 return self.fail(argument.position, message);
                             }
                             resolved_operation = .append_range;
@@ -1517,7 +1510,6 @@ pub const Analyzer = struct {
         const result_type: Type = switch (operation) {
             .count => .int,
             .is_empty => .bool,
-            .clone => object.type,
             .append, .append_range, .prepend, .insert, .swap, .reverse, .clear => .void,
             .take, .take_first, .take_last, .replace => element_type.?,
         };
@@ -1959,11 +1951,10 @@ pub const Analyzer = struct {
 
     fn copyExpression(self: *Analyzer, unary: Ast.Expression.Unary, scope: *const Scope) AnalyzeError!*Expression {
         const operand = try self.expression(unary.operand, scope);
-        const result_type = switch (operand.type) {
-            .reference => |reference| reference.target.*,
-            else => operand.type,
-        };
-        return self.copiedExpression(operand, result_type, unary.operator_position);
+        if (operand.type == .reference) {
+            return self.fail(unary.operator_position, "cannot apply 'copy' to a reference; dereference it explicitly with 'copy *value'");
+        }
+        return self.copiedExpression(operand, operand.type, unary.operator_position);
     }
 
     fn copiedExpression(
@@ -1972,8 +1963,8 @@ pub const Analyzer = struct {
         result_type: Type,
         position: Source.Position,
     ) AnalyzeError!*Expression {
-        if (!self.isCloneable(result_type)) {
-            const message = try std.fmt.allocPrint(self.allocator, "cannot copy '{s}' because the type is not cloneable", .{typeName(result_type)});
+        if (!self.supportsCopy(result_type)) {
+            const message = try std.fmt.allocPrint(self.allocator, "cannot copy '{s}' because the type does not support 'copy'", .{typeName(result_type)});
             return self.fail(position, message);
         }
         return self.newExpression(.{
@@ -2107,7 +2098,7 @@ pub const Analyzer = struct {
     fn isCopyable(self: *const Analyzer, type_value: Type) bool {
         return switch (type_value) {
             .void => false,
-            .list => false,
+            .list => |element| self.supportsCopy(element.*),
             .fixed_array => |array| self.isCopyable(array.element.*),
             .reference => |reference| !reference.mutable,
             .structure => |structure_type| structure: {
@@ -2119,15 +2110,15 @@ pub const Analyzer = struct {
         };
     }
 
-    fn isCloneable(self: *const Analyzer, type_value: Type) bool {
+    fn supportsCopy(self: *const Analyzer, type_value: Type) bool {
         return switch (type_value) {
             .void => false,
-            .list => |element| self.isCloneable(element.*),
-            .fixed_array => |array| self.isCloneable(array.element.*),
-            .reference => |reference| self.isCloneable(reference.target.*),
+            .list => |element| self.supportsCopy(element.*),
+            .fixed_array => |array| self.supportsCopy(array.element.*),
+            .reference => false,
             .structure => |structure_type| structure: {
                 const structure = self.findStructureByGeneratedName(structure_type.generated_name) orelse break :structure false;
-                for (structure.fields) |field| if (!self.isCloneable(field.type)) break :structure false;
+                for (structure.fields) |field| if (!self.supportsCopy(field.type)) break :structure false;
                 break :structure true;
             },
             else => true,

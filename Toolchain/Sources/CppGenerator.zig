@@ -151,7 +151,7 @@ pub fn generateWithSources(
         \\}
         \\
         \\template <typename T>
-        \\T silexClone(const T& value) {
+        \\T silexCopy(const T& value) {
         \\    return value;
         \\}
         \\
@@ -696,11 +696,6 @@ fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expressi
                     try generateExpression(allocator, output, method.object);
                     try output.appendSlice(allocator, ".empty()");
                 },
-                .clone => {
-                    try output.appendSlice(allocator, "silexClone(");
-                    try generateExpression(allocator, output, method.object);
-                    try output.append(allocator, ')');
-                },
                 .append => {
                     try generateExpression(allocator, output, method.object);
                     try output.appendSlice(allocator, ".push_back(");
@@ -854,8 +849,7 @@ fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expressi
             } else if (unary.operator == .borrow) {
                 try output.appendSlice(allocator, "(&");
             } else if (unary.operator == .copy) {
-                try output.appendSlice(allocator, "silexClone(");
-                if (unary.operand.type == .reference) try output.append(allocator, '*');
+                try output.appendSlice(allocator, "silexCopy(");
             } else if (unary.operator == .move) {
                 try output.appendSlice(allocator, "std::move(");
             } else {
