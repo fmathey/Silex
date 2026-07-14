@@ -491,7 +491,7 @@ pub fn build(b: *std.Build) void {
         "silex: native compilation failed for target 'x86_64-linux-musl'; target support, SDKs, or native sources may be unavailable or incomplete\n",
     );
     backend_discovered_target_failure_command.expectStdErrMatch(b.fmt(
-        "silex: backend details: .silex{c}cache{c}v19{c}x86_64-linux-musl{c}",
+        "silex: backend details: .silex{c}cache{c}v20{c}x86_64-linux-musl{c}",
         .{
             std.fs.path.sep,
             std.fs.path.sep,
@@ -564,6 +564,7 @@ pub fn build(b: *std.Build) void {
     );
 
     const test_step = b.step("test", "Run the toolchain tests");
+    test_step.dependOn(b.getInstallStep());
     test_step.dependOn(&test_command.step);
     test_step.dependOn(&lsp_test_command.step);
     test_step.dependOn(&invalid_command.step);
@@ -878,6 +879,7 @@ pub fn build(b: *std.Build) void {
     native_source_command.expectStdOutEqual(hostText(b, "Native wrapper initialized\nSilex with native source\n"));
 
     const smoke_step = b.step("smoke", "Compile and run the smoke program");
+    smoke_step.dependOn(b.getInstallStep());
     smoke_step.dependOn(&native_source_command.step);
 
     const benchmark_suffix = if (b.graph.host.result.os.tag == .windows) ".exe" else "";

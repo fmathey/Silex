@@ -141,7 +141,18 @@ fn runCommand(allocator: Allocator, io: Io, args: []const []const u8) !u8 {
         native_dependencies.items,
     );
     const term = try Compiler.runProcess(io, &.{compilation.executable_path});
+    if (runTerminationMessage(term)) |message| std.debug.print("{s}", .{message});
     return Compiler.exitCode(term);
+}
+
+fn runTerminationMessage(term: std.process.Child.Term) ?[]const u8 {
+    return switch (term) {
+        .signal => |signal| if (signal == .SEGV)
+            "silex: program crashed: invalid memory access\n"
+        else
+            null,
+        else => null,
+    };
 }
 
 fn cleanCommand(allocator: Allocator, io: Io, args: []const []const u8) !u8 {
@@ -162,6 +173,15 @@ fn cleanCommand(allocator: Allocator, io: Io, args: []const []const u8) !u8 {
 
 fn isHelp(argument: []const u8) bool {
     return std.mem.eql(u8, argument, "--help") or std.mem.eql(u8, argument, "-h");
+}
+
+test "run explains invalid memory access without reporting an intentional interrupt" {
+    try std.testing.expectEqualStrings(
+        "silex: program crashed: invalid memory access\n",
+        runTerminationMessage(.{ .signal = .SEGV }).?,
+    );
+    try std.testing.expect(runTerminationMessage(.{ .signal = .INT }) == null);
+    try std.testing.expect(runTerminationMessage(.{ .exited = 0 }) == null);
 }
 
 const usage =

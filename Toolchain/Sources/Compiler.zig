@@ -12,17 +12,17 @@ const SourceGraph = @import("SourceGraph.zig");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
-pub const cache_format = "v19";
+pub const cache_format = "v20";
 pub const cache_entry_limit = 8;
 
 const NativeConfiguration = enum {
     unoptimized,
     optimized,
 
-    fn optimizationFlag(self: NativeConfiguration) ?[]const u8 {
+    fn compilerFlags(self: NativeConfiguration) []const []const u8 {
         return switch (self) {
-            .unoptimized => null,
-            .optimized => "-O2",
+            .unoptimized => &.{},
+            .optimized => &.{ "-O2", "-fno-finite-loops" },
         };
     }
 };
@@ -134,7 +134,7 @@ pub fn compile(
         var arguments: std.ArrayList([]const u8) = .empty;
         try arguments.appendSlice(allocator, &.{ zig_path, "c++" });
         if (target.zig_triple) |triple| try arguments.appendSlice(allocator, &.{ "-target", triple });
-        if (default_native_configuration.optimizationFlag()) |flag| try arguments.append(allocator, flag);
+        try arguments.appendSlice(allocator, default_native_configuration.compilerFlags());
         try arguments.appendSlice(allocator, &.{ "-std=c++23", "-Wno-nullability-completeness", cpp_path });
         for (native_dependencies) |dependency| try arguments.appendSlice(allocator, dependency.sources);
         try arguments.appendSlice(allocator, &.{ "-o", temporary_executable_path });
@@ -490,8 +490,11 @@ fn testProject() ProjectModule.Project {
     };
 }
 
-test "default native configuration enables optimization" {
-    try std.testing.expectEqualStrings("-O2", default_native_configuration.optimizationFlag().?);
+test "default native configuration preserves non-termination while optimizing" {
+    const flags = default_native_configuration.compilerFlags();
+    try std.testing.expectEqual(@as(usize, 2), flags.len);
+    try std.testing.expectEqualStrings("-O2", flags[0]);
+    try std.testing.expectEqualStrings("-fno-finite-loops", flags[1]);
 }
 
 test "default output belongs to current project" {
