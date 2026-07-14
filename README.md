@@ -4,56 +4,46 @@ Silex is a compiled programming language that produces native executables. The
 language aims for concise, familiar syntax.
 
 ```sx
-struct Position {
-    x:int
-    y:int
-
-    func translate(dx:int, dy:int) {
-        self.x += dx
-        self.y += dy
-    }
-}
-
 struct Rover {
     name:str
-    position:Position
     energy:int
     trail:int[]
 
-    func travel(dx:int, dy:int) {
-        self.position.translate(dx, dy)
-        self.energy -= 1
-        self.trail.append(self.position.x + self.position.y)
+    func travel(cost:int) int {
+        self.energy -= cost
+        self.trail.append(self.energy)
+        return self.energy
     }
 }
 
-func report_energy(energy:int@) {
-    print(*energy)
+func read_energy(energy:int@) int {
+    return *energy
 }
 
-func recharge(energy:int&) {
-    *energy += 3
+func recharge(energy:int&, amount:int) int {
+    *energy += amount
+    return *energy
 }
 
 func main() {
     var rover = Rover {
         name:"Silex",
-        position:Position { x:0, y:0 },
         energy:12,
         trail:[]
     }
-        ..travel(2, 1)
-        ..travel(-1, 3)
+        ..travel(2)
+        ..travel(3)
 
-    report_energy(&rover.energy)
-    recharge(&rover.energy)
+    let before:int = read_energy(&rover.energy)
+    let after:int = recharge(&rover.energy, 3)
 
     var replay:int[] = copy rover.trail
-    replay.append(42)
-    let handoff = move replay
+    let handoff:int[] = move replay
 
     print(rover.name)
-    print(handoff.count())
+    print(before)
+    print(after)
+    print(handoff[^1])
 }
 ```
 
