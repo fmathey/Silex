@@ -1,4 +1,4 @@
-func main() void {
+func main() {
     let binary = 0b1010_0101
     let octal = 0o7_55
     let hexadecimal = 0xCA_FE

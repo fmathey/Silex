@@ -6,11 +6,11 @@ struct Position {
         return self.x + self.y
     }
 
-    func move(dx:int, dy:int) void {
+    func move(dx:int, dy:int) {
         self.translate(dx, dy)
     }
 
-    func translate(dx:int, dy:int) void {
+    func translate(dx:int, dy:int) {
         self.x = self.x + dx
         self.y = self.y + dy
     }
@@ -21,7 +21,7 @@ struct Player {
     position:Position
 }
 
-func main() void {
+func main() {
     var player = Player {
         position:Position {
             y:20,
@@ -30,10 +30,17 @@ func main() void {
         name:"Ada"
     }
 
-    player.position.move(2, 0)
+    player.position
+        ..move(2, 0)
+        ..translate(0, 3)
     print(player.name)
     print(player.position.total())
 
     let origin = Position { x:0, y:0 }
     print(origin.total())
+
+    var configured = Position { x:0, y:0 }
+        ..x = 7
+        ..move(1, 2)
+    print(configured.total())
 }

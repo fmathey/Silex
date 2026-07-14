@@ -1,0 +1,32 @@
+==================
+Optional void return type
+==================
+
+func implicit() {}
+func explicit() void {}
+func answer() int {
+    return 42
+}
+
+---
+
+(source_file
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (block))
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (void_type)
+    (block))
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (type
+      (builtin_type))
+    (block
+      (statement
+        (return_statement
+          (expression
+            (integer_literal)))))))

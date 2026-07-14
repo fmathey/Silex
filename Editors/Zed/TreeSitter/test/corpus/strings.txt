@@ -2,7 +2,7 @@
 String escapes and concatenation
 ===============================
 
-func main() void {
+func main() {
     var message = "Hello, " + "Silex\n"
     message += "\u{1F642}"
     print(message.count())
@@ -14,7 +14,6 @@ func main() void {
   (function_definition
     name: (identifier)
     (parameter_list)
-    return_type: (void_type)
     body: (block
       (statement
         (variable_declaration

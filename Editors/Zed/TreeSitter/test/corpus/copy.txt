@@ -2,7 +2,7 @@
 Explicit copy
 ==================
 
-func main() void {
+func main() {
     let first = copy source
     let second = copy player.items
 }
@@ -13,7 +13,6 @@ func main() void {
   (function_definition
     (identifier)
     (parameter_list)
-    (void_type)
     (block
       (statement
         (variable_declaration

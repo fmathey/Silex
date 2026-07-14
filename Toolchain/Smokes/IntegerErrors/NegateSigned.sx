@@ -1,4 +1,4 @@
-func main() void {
+func main() {
     var value:int8 = -128
     print(-value)
 }

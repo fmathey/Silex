@@ -6,7 +6,7 @@ func widen(value:int8) int64 {
     return value
 }
 
-func main() void {
+func main() {
     var byte:uint8 = 255
     var wide:uint = 42
     var precise:float64 = 1.5
@@ -35,7 +35,6 @@ func main() void {
   (function_definition
     name: (identifier)
     (parameter_list)
-    return_type: (void_type)
     body: (block
       (statement
         (variable_declaration

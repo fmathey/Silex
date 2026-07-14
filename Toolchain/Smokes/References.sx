@@ -1,8 +1,8 @@
-func increment(value:int&) void {
+func increment(value:int&) {
     *value += 1
 }
 
-func main() void {
+func main() {
     var count = 1
 
     if (true) {

@@ -68,6 +68,7 @@ pub const TokenTag = enum {
     colon,
     comma,
     dot,
+    dot_dot,
     left_parenthesis,
     right_parenthesis,
     left_brace,
@@ -135,6 +136,7 @@ pub const Lexer = struct {
         if (character == '-') return self.arithmeticToken(start, position, '-', .minus, .minus_minus, .minus_equal);
         if (character == '*') return self.arithmeticToken(start, position, 0, .star, .star, .star_equal);
         if (character == '/') return self.arithmeticToken(start, position, 0, .slash, .slash, .slash_equal);
+        if (character == '.') return self.optionalDoubleToken(start, position, '.', .dot, .dot_dot);
 
         self.advance();
         return switch (character) {
@@ -142,7 +144,6 @@ pub const Lexer = struct {
             '@' => self.token(.at, start, position),
             '^' => self.token(.caret, start, position),
             ',' => self.token(.comma, start, position),
-            '.' => self.token(.dot, start, position),
             '(' => self.token(.left_parenthesis, start, position),
             ')' => self.token(.right_parenthesis, start, position),
             '{' => self.token(.left_brace, start, position),
@@ -490,6 +491,21 @@ test "recognize compound and update operators" {
         .minus_equal,
         .star_equal,
         .slash_equal,
+    };
+    for (expected) |tag| try std.testing.expectEqual(tag, (try lexer.next()).tag);
+}
+
+test "distinguish member and cascade operators" {
+    var lexer = Lexer.init("value.field value..method()");
+    const expected = [_]TokenTag{
+        .identifier,
+        .dot,
+        .identifier,
+        .identifier,
+        .dot_dot,
+        .identifier,
+        .left_parenthesis,
+        .right_parenthesis,
     };
     for (expected) |tag| try std.testing.expectEqual(tag, (try lexer.next()).tag);
 }

@@ -1,4 +1,4 @@
-func main() void {
+func main() {
     let value:float = 128.0
     print(value as int8)
 }

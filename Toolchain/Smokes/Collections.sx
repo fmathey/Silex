@@ -1,4 +1,4 @@
-func print_ref(value:int@) void {
+func print_ref(value:int@) {
     print(*value)
 }
 
@@ -13,12 +13,12 @@ func copy_borrowed(values:int[]@) int[] {
 struct Player {
     items:uint[]
 
-    func add_items(items:uint[]@) void {
+    func add_items(items:uint[]@) {
         self.items.append(items)
     }
 }
 
-func main() void {
+func main() {
     var fixed:int[3] = [1, 2, 3]
     print(fixed[0])
     print(fixed[^1])
@@ -132,4 +132,11 @@ func main() void {
     player_copy.items[0] = 77
     print(player.items[0])
     print(player_copy.items[0])
+
+    var cascaded:int[] = []
+        ..append(1)
+        ..append(2)
+        ..reverse()
+    print(cascaded[0])
+    print(cascaded[^1])
 }

@@ -126,6 +126,13 @@ pub fn build(b: *std.Build) void {
         "Tests/MissingReturn.sx:1:6: error: function 'value' must return 'int' on every path\n",
     );
 
+    const implicit_void_return_value_command = b.addRunArtifact(executable);
+    implicit_void_return_value_command.addArgs(&.{ "compile", "Tests/ImplicitVoidReturnValue.sx" });
+    implicit_void_return_value_command.expectExitCode(1);
+    implicit_void_return_value_command.expectStdErrEqual(
+        "Tests/ImplicitVoidReturnValue.sx:2:5: error: void function cannot return a value\n",
+    );
+
     const invalid_arguments_command = b.addRunArtifact(executable);
     invalid_arguments_command.addArgs(&.{ "compile", "Tests/InvalidArguments.sx" });
     invalid_arguments_command.expectExitCode(1);
@@ -145,6 +152,13 @@ pub fn build(b: *std.Build) void {
     immutable_struct_field_command.expectExitCode(1);
     immutable_struct_field_command.expectStdErrEqual(
         "Tests/ImmutableStructField.sx:8:5: error: cannot assign to immutable variable 'position'\n",
+    );
+
+    const immutable_cascade_command = b.addRunArtifact(executable);
+    immutable_cascade_command.addArgs(&.{ "compile", "Tests/ImmutableCascade.sx" });
+    immutable_cascade_command.expectExitCode(1);
+    immutable_cascade_command.expectStdErrEqual(
+        "Tests/ImmutableCascade.sx:8:11: error: cannot assign through cascade on immutable value 'point'\n",
     );
 
     const duplicate_struct_field_command = b.addRunArtifact(executable);
@@ -477,7 +491,7 @@ pub fn build(b: *std.Build) void {
         "silex: native compilation failed for target 'x86_64-linux-musl'; target support, SDKs, or native sources may be unavailable or incomplete\n",
     );
     backend_discovered_target_failure_command.expectStdErrMatch(b.fmt(
-        "silex: backend details: .silex{c}cache{c}v17{c}x86_64-linux-musl{c}",
+        "silex: backend details: .silex{c}cache{c}v19{c}x86_64-linux-musl{c}",
         .{
             std.fs.path.sep,
             std.fs.path.sep,
@@ -564,9 +578,11 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&missing_separator_command.step);
     test_step.dependOn(&missing_type_command.step);
     test_step.dependOn(&missing_return_command.step);
+    test_step.dependOn(&implicit_void_return_value_command.step);
     test_step.dependOn(&invalid_arguments_command.step);
     test_step.dependOn(&unknown_struct_field_command.step);
     test_step.dependOn(&immutable_struct_field_command.step);
+    test_step.dependOn(&immutable_cascade_command.step);
     test_step.dependOn(&duplicate_struct_field_command.step);
     test_step.dependOn(&invalid_struct_field_type_command.step);
     test_step.dependOn(&immutable_method_call_command.step);
@@ -644,7 +660,7 @@ pub fn build(b: *std.Build) void {
     const structures_command = b.addRunArtifact(executable);
     structures_command.step.dependOn(&compact_command.step);
     structures_command.addArgs(&.{ "run", "Smokes/Structures.sx" });
-    structures_command.expectStdOutEqual(hostText(b, "Ada\n32\n0\n"));
+    structures_command.expectStdOutEqual(hostText(b, "Ada\n35\n0\n10\n"));
 
     const defaults_command = b.addRunArtifact(executable);
     defaults_command.step.dependOn(&structures_command.step);
@@ -679,7 +695,7 @@ pub fn build(b: *std.Build) void {
     const collections_command = b.addRunArtifact(executable);
     collections_command.step.dependOn(&strings_command.step);
     collections_command.addArgs(&.{ "run", "Smokes/Collections.sx" });
-    collections_command.expectStdOutEqual(hostText(b, "1\n3\n20\n20\n1\nfalse\n1\n99\n3\n1\n3\n6\n2\n5\ntrue\n15\n15\n10\n30\n20\n40\n50\n40\n40\n500\n2\n3\n40\n600\n40\n700\n40\n800\n0\ntrue\n7\n17\n17\n7\n70\n7\n80\n2\n7\n9\n8\n17\n2\n17\n14\n11\n99\n11\n77\n"));
+    collections_command.expectStdOutEqual(hostText(b, "1\n3\n20\n20\n1\nfalse\n1\n99\n3\n1\n3\n6\n2\n5\ntrue\n15\n15\n10\n30\n20\n40\n50\n40\n40\n500\n2\n3\n40\n600\n40\n700\n40\n800\n0\ntrue\n7\n17\n17\n7\n70\n7\n80\n2\n7\n9\n8\n17\n2\n17\n14\n11\n99\n11\n77\n2\n1\n"));
 
     const collection_take_last_empty_command = b.addRunArtifact(executable);
     collection_take_last_empty_command.step.dependOn(&collections_command.step);

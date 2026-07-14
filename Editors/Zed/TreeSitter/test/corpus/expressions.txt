@@ -2,7 +2,7 @@
 Arithmetic precedence
 ==================
 
-func main() void {
+func main() {
     print(1 + 2 * 3);
 }
 
@@ -12,7 +12,6 @@ func main() void {
   (function_definition
     (identifier)
     (parameter_list)
-    (void_type)
     (block
       (statement
         (print_statement
@@ -32,7 +31,7 @@ func main() void {
 Explicit numeric conversions
 ===============================
 
-func main() void {
+func main() {
     let value:int = 12.0 as int
     print(value as float)
 }
@@ -43,7 +42,6 @@ func main() void {
   (function_definition
     (identifier)
     (parameter_list)
-    (void_type)
     (block
       (statement
         (variable_declaration
@@ -71,7 +69,7 @@ func main() void {
 Variables and conditional block
 ===============================
 
-func main() void {
+func main() {
     let a = 5;
     var hit:bool = true;
     if (hit) {
@@ -86,7 +84,6 @@ func main() void {
   (function_definition
     (identifier)
     (parameter_list)
-    (void_type)
     (block
       (statement
         (variable_declaration
@@ -121,7 +118,7 @@ func main() void {
 Logical precedence and else block
 =================================
 
-func main() void {
+func main() {
     let value = 5;
     if (!(value >= 10) && value != 0 || false) {
         print("active");
@@ -136,7 +133,6 @@ func main() void {
   (function_definition
     (identifier)
     (parameter_list)
-    (void_type)
     (block
       (statement
         (variable_declaration
@@ -184,7 +180,7 @@ func main() void {
 While loop
 ====================
 
-func main() void {
+func main() {
     var count = 2;
     while (count > 0) {
         print(count);
@@ -198,7 +194,6 @@ func main() void {
   (function_definition
     (identifier)
     (parameter_list)
-    (void_type)
     (block
       (statement
         (variable_declaration
@@ -233,7 +228,7 @@ func main() void {
 Automatic terminators
 =====================
 
-func main() void {
+func main() {
     let a = 1 // comment
     let b =
         a +
@@ -250,7 +245,6 @@ func main() void {
   (function_definition
     (identifier)
     (parameter_list)
-    (void_type)
     (block
       (statement
         (variable_declaration
@@ -296,7 +290,7 @@ func main() void {
 Missing separator between same-line statements
 ==============================================
 
-func main() void {
+func main() {
     let a = 1 let b = 2
 }
 
@@ -306,7 +300,6 @@ func main() void {
   (function_definition
     (identifier)
     (parameter_list)
-    (void_type)
     (block
       (statement
         (variable_declaration
@@ -324,7 +317,7 @@ func main() void {
 Functions calls and returns
 =============================
 
-func main() void {
+func main() {
     announce("result")
     print(add(2, 3))
 }
@@ -333,7 +326,7 @@ func add(left:int, right:int) int {
     return left + right
 }
 
-func announce(message:str) void {
+func announce(message:str) {
     print(message)
     return
 }
@@ -344,7 +337,6 @@ func announce(message:str) void {
   (function_definition
     (identifier)
     (parameter_list)
-    (void_type)
     (block
       (statement
         (expression_statement
@@ -391,7 +383,6 @@ func announce(message:str) void {
         (identifier)
         (type
           (builtin_type))))
-    (void_type)
     (block
       (statement
         (print_statement
@@ -410,7 +401,7 @@ struct Settings {
     name:str = "Silex"
 }
 
-func main() void {
+func main() {
     var settings:Settings
     settings.count += 4
     settings.count *= 2
@@ -438,7 +429,6 @@ func main() void {
   (function_definition
     (identifier)
     (parameter_list)
-    (void_type)
     (block
       (statement
         (variable_declaration
@@ -492,7 +482,7 @@ struct Position {
     y:int
 }
 
-func main() void {
+func main() {
     var position = Position { y:20, x:10 }
     position.x = 12
     print(position.x)
@@ -514,7 +504,6 @@ func main() void {
   (function_definition
     (identifier)
     (parameter_list)
-    (void_type)
     (block
       (statement
         (variable_declaration
@@ -556,12 +545,12 @@ struct Counter {
         return self.value
     }
 
-    func increment(amount:int) void {
+    func increment(amount:int) {
         self.value = self.value + amount
     }
 }
 
-func main() void {
+func main() {
     var counter = Counter { value:1 }
     counter.increment(2)
     print(counter.current())
@@ -595,7 +584,6 @@ func main() void {
           (identifier)
           (type
             (builtin_type))))
-      (void_type)
       (block
         (statement
           (assignment_statement
@@ -613,7 +601,6 @@ func main() void {
   (function_definition
     (identifier)
     (parameter_list)
-    (void_type)
     (block
       (statement
         (variable_declaration
@@ -649,7 +636,7 @@ struct Motion {
     speed:float = 1.5
 }
 
-func main() void {
+func main() {
     var motion:Motion
     motion.position += motion.speed * 2
     let offset = -2.5
@@ -675,7 +662,6 @@ func main() void {
   (function_definition
     (identifier)
     (parameter_list)
-    (void_type)
     (block
       (statement
         (variable_declaration
@@ -727,11 +713,11 @@ func main() void {
 References and transfer
 ============================
 
-func increment(value:int&) void {
+func increment(value:int&) {
     *value += 1
 }
 
-func main() void {
+func main() {
     var count = 1
     let view:int@ = &count
     increment(&count)
@@ -750,7 +736,6 @@ func main() void {
         (type
           (reference_type
             (builtin_type)))))
-    (void_type)
     (block
       (statement
         (assignment_statement
@@ -762,7 +747,6 @@ func main() void {
   (function_definition
     (identifier)
     (parameter_list)
-    (void_type)
     (block
       (statement
         (variable_declaration

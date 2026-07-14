@@ -78,7 +78,7 @@ module.exports = grammar({
         "func",
         field("name", $.identifier),
         $.parameter_list,
-        field("return_type", choice($.void_type, $.type)),
+        optional(field("return_type", choice($.void_type, $.type))),
         field("body", $.block),
       ),
 
@@ -173,7 +173,8 @@ module.exports = grammar({
 
     return_statement: ($) => seq("return", optional(field("value", $.expression))),
 
-    expression_statement: ($) => choice($.call_expression, $.method_call_expression),
+    expression_statement: ($) =>
+      choice($.call_expression, $.method_call_expression, $.cascade_expression),
 
     if_statement: ($) =>
       seq(
@@ -221,6 +222,7 @@ module.exports = grammar({
         $.conversion_expression,
         $.call_expression,
         $.method_call_expression,
+        $.cascade_expression,
         $.structure_initializer,
         $.sequence_literal,
         $.member_expression,
@@ -232,6 +234,156 @@ module.exports = grammar({
         $.boolean_literal,
         $.self_expression,
         $.identifier,
+      ),
+
+    cascade_expression: ($) =>
+      prec.left(
+        PREC.member,
+        seq(
+          field(
+            "receiver",
+            choice(
+              $.identifier,
+              $.self_expression,
+              $.call_expression,
+              $.structure_initializer,
+              $.member_expression,
+              $.index_expression,
+              $.method_call_expression,
+              $.sequence_literal,
+              $.string_literal,
+              $.float_literal,
+              $.integer_literal,
+              $.boolean_literal,
+              $.parenthesized_expression,
+            ),
+          ),
+          repeat1($.cascade_operation),
+        ),
+      ),
+
+    cascade_operation: ($) =>
+      seq(
+        field("operator", ".."),
+        choice($.cascade_method_call, $.cascade_field_assignment),
+      ),
+
+    cascade_method_call: ($) =>
+      seq(
+        field("method", $.identifier),
+        "(",
+        optional(seq($.expression, repeat(seq(",", $.expression)))),
+        ")",
+      ),
+
+    cascade_field_assignment: ($) =>
+      seq(
+        field("field", $.identifier),
+        "=",
+        field("value", $._cascade_assignment_value),
+      ),
+
+    _cascade_assignment_value: ($) =>
+      choice(
+        alias($.cascade_binary_expression, $.binary_expression),
+        alias($.cascade_unary_expression, $.unary_expression),
+        alias($.cascade_dereference_expression, $.dereference_expression),
+        alias($.cascade_borrow_expression, $.borrow_expression),
+        alias($.cascade_conversion_expression, $.conversion_expression),
+        $.copy_expression,
+        $.move_expression,
+        $.call_expression,
+        $.method_call_expression,
+        $.structure_initializer,
+        $.sequence_literal,
+        $.member_expression,
+        $.index_expression,
+        $.parenthesized_expression,
+        $.string_literal,
+        $.float_literal,
+        $.integer_literal,
+        $.boolean_literal,
+        $.self_expression,
+        $.identifier,
+      ),
+
+    cascade_binary_expression: ($) =>
+      choice(
+        prec.left(
+          PREC.logicalOr,
+          seq(
+            field("left", $._cascade_assignment_value),
+            field("operator", "||"),
+            field("right", $._cascade_assignment_value),
+          ),
+        ),
+        prec.left(
+          PREC.logicalAnd,
+          seq(
+            field("left", $._cascade_assignment_value),
+            field("operator", "&&"),
+            field("right", $._cascade_assignment_value),
+          ),
+        ),
+        prec.left(
+          PREC.equality,
+          seq(
+            field("left", $._cascade_assignment_value),
+            field("operator", choice("==", "!=")),
+            field("right", $._cascade_assignment_value),
+          ),
+        ),
+        prec.left(
+          PREC.comparison,
+          seq(
+            field("left", $._cascade_assignment_value),
+            field("operator", choice("<", "<=", ">", ">=")),
+            field("right", $._cascade_assignment_value),
+          ),
+        ),
+        prec.left(
+          PREC.additive,
+          seq(
+            field("left", $._cascade_assignment_value),
+            field("operator", choice("+", "-")),
+            field("right", $._cascade_assignment_value),
+          ),
+        ),
+        prec.left(
+          PREC.multiplicative,
+          seq(
+            field("left", $._cascade_assignment_value),
+            field("operator", choice("*", "/")),
+            field("right", $._cascade_assignment_value),
+          ),
+        ),
+      ),
+
+    cascade_unary_expression: ($) =>
+      prec(
+        PREC.unary,
+        seq(
+          field("operator", choice("!", "-")),
+          field("operand", $._cascade_assignment_value),
+        ),
+      ),
+
+    cascade_dereference_expression: ($) =>
+      prec(
+        PREC.unary,
+        seq(field("operator", "*"), field("operand", $._cascade_assignment_value)),
+      ),
+
+    cascade_borrow_expression: ($) =>
+      prec(
+        PREC.unary,
+        seq(field("operator", "&"), field("operand", $._cascade_assignment_value)),
+      ),
+
+    cascade_conversion_expression: ($) =>
+      prec.left(
+        PREC.conversion,
+        seq(field("value", $._cascade_assignment_value), "as", field("type", $.type)),
       ),
 
     structure_initializer: ($) =>

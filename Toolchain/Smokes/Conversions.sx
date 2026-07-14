@@ -1,4 +1,4 @@
-func main() void {
+func main() {
     let signed:int = -12
     let narrow:int8 = signed as int8
     let unsigned:uint8 = 255

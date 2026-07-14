@@ -2,7 +2,7 @@
 Collections
 =============================
 
-func main() void {
+func main() {
     var fixed:int[3] = [1, 2, 3]
     var values:int[] = []
     values.append(fixed[0])
@@ -18,7 +18,6 @@ func main() void {
   (function_definition
     (identifier)
     (parameter_list)
-    (void_type)
     (block
       (statement
         (variable_declaration

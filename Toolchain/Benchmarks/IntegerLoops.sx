@@ -3,7 +3,7 @@ struct Component {
     velocity:int64
     acceleration:int64
 
-    func update() void {
+    func update() {
         self.velocity += self.acceleration
         if (self.velocity > 1000) {
             self.acceleration = -3
@@ -22,7 +22,7 @@ struct Component {
     }
 }
 
-func main() void {
+func main() {
     var component0 = Component { position:0, velocity:-1000, acceleration:3 }
     var component1 = Component { position:100, velocity:-750, acceleration:-3 }
     var component2 = Component { position:200, velocity:-500, acceleration:3 }

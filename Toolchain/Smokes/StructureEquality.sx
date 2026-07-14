@@ -8,7 +8,7 @@ struct Player {
     position:Position
 }
 
-func main() void {
+func main() {
     let first = Player { name:"Ada", position:Position { x:10, y:20 } }
     let copy = Player { name:"Ada", position:Position { x:10, y:20 } }
     let renamed = Player { name:"Bob", position:Position { x:10, y:20 } }

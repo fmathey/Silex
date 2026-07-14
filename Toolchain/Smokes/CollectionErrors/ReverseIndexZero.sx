@@ -1,4 +1,4 @@
-func main() void {
+func main() {
     let values:int[] = [10, 20, 30]
     print(values[^0])
 }

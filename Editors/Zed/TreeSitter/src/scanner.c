@@ -44,8 +44,17 @@ bool tree_sitter_silex_external_scanner_scan(
     }
 
     if (lexer->lookahead == '\n') {
-        lexer->advance(lexer, true);
+        do {
+            lexer->advance(lexer, true);
+        } while (
+            lexer->lookahead == ' ' || lexer->lookahead == '\t' ||
+            lexer->lookahead == '\r' || lexer->lookahead == '\n'
+        );
         lexer->mark_end(lexer);
+        if (lexer->lookahead == '.') {
+            lexer->advance(lexer, false);
+            if (lexer->lookahead == '.') return false;
+        }
         lexer->result_symbol = AUTOMATIC_SEMICOLON;
         return true;
     }

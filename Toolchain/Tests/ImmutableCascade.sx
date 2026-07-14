@@ -1,0 +1,9 @@
+struct Point {
+    x:int
+}
+
+func main() void {
+    let point = Point { x:0 }
+    point
+        ..x = 1
+}

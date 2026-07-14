@@ -110,7 +110,7 @@ func check_uint64() bool {
     return value == 8 && negated == 0 && maximum * 1 == 18446744073709551615 && maximum / 1 == 18446744073709551615
 }
 
-func main() void {
+func main() {
     print(check_int8())
     print(check_int16())
     print(check_int32())

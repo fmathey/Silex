@@ -33,6 +33,15 @@
 (method_call_expression
   method: (identifier) @function.method.call)
 
+(cascade_operation
+  operator: ".." @operator)
+
+(cascade_method_call
+  method: (identifier) @function.method.call)
+
+(cascade_field_assignment
+  field: (identifier) @property)
+
 (parameter
   name: (identifier) @variable.parameter)
 
@@ -63,7 +72,7 @@
   "copy" @keyword)
 (move_expression
   "move" @keyword)
-(self_expression) @variable.builtin
+(self_expression) @keyword
 (comment) @comment
 
 [

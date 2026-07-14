@@ -32,6 +32,7 @@ const DeclaredMember = struct {
     structure: []const u8,
     name: []const u8,
     type_name: ?[]const u8,
+    collection: ?CollectionKind = null,
     kind: u8,
     detail: []const u8,
 };
@@ -39,7 +40,19 @@ const DeclaredMember = struct {
 const DeclaredVariable = struct {
     name: []const u8,
     type_name: []const u8,
+    collection: ?CollectionKind = null,
     offset: usize,
+};
+
+const CollectionKind = enum {
+    list,
+    fixed_array,
+};
+
+const ReceiverType = union(enum) {
+    structure: []const u8,
+    list,
+    fixed_array,
 };
 
 const StructureRange = struct {
@@ -367,6 +380,7 @@ fn completionItems(
 ) ![]const CompletionItem {
     if (position) |cursor| {
         if (try memberCompletionItems(allocator, source, cursor)) |items| return items;
+        if (isIncompleteCascadePrefix(source, cursor)) return try allocator.alloc(CompletionItem, 0);
     }
 
     var items: std.ArrayList(CompletionItem) = .empty;
@@ -385,6 +399,15 @@ fn completionItems(
         }
     }
     return items.toOwnedSlice(allocator);
+}
+
+fn isIncompleteCascadePrefix(source: []const u8, position: Position) bool {
+    const cursor_offset = byteOffsetAtPosition(source, position) orelse return false;
+    const line_start = if (std.mem.lastIndexOfScalar(u8, source[0..cursor_offset], '\n')) |newline|
+        newline + 1
+    else
+        0;
+    return std.mem.eql(u8, std.mem.trim(u8, source[line_start..cursor_offset], " \t\r"), ".");
 }
 
 fn importCompletionPrefix(source: []const u8, position: Position) ?[]const u8 {
@@ -664,14 +687,25 @@ fn memberCompletionItems(
     defer info.deinit(allocator);
     try collectSemanticInfo(allocator, source, tokens.items, &info);
 
-    var structure_name = receiverType(info, receiver_path[0], cursor_offset) orelse
+    var receiver_type = receiverType(info, receiver_path[0], cursor_offset) orelse
         return try allocator.alloc(CompletionItem, 0);
     for (receiver_path[1..]) |field_name| {
-        structure_name = fieldType(info.members.items, structure_name, field_name) orelse
+        const structure_name = switch (receiver_type) {
+            .structure => |name| name,
+            .list, .fixed_array => return try allocator.alloc(CompletionItem, 0),
+        };
+        receiver_type = fieldType(info.members.items, structure_name, field_name) orelse
             return try allocator.alloc(CompletionItem, 0);
     }
 
+    switch (receiver_type) {
+        .list => return try collectionCompletionItems(allocator, true),
+        .fixed_array => return try collectionCompletionItems(allocator, false),
+        .structure => {},
+    }
+
     var items: std.ArrayList(CompletionItem) = .empty;
+    const structure_name = receiver_type.structure;
     for (info.members.items) |member| {
         if (!std.mem.eql(u8, member.structure, structure_name)) continue;
         try items.append(allocator, .{
@@ -681,6 +715,23 @@ fn memberCompletionItems(
         });
     }
     return try items.toOwnedSlice(allocator);
+}
+
+fn collectionCompletionItems(allocator: Allocator, dynamic: bool) ![]const CompletionItem {
+    const common = [_][]const u8{ "count", "is_empty", "replace", "swap", "reverse" };
+    const list_only = [_][]const u8{ "append", "prepend", "insert", "take", "take_first", "take_last", "clear" };
+    const count = common.len + if (dynamic) list_only.len else 0;
+    const items = try allocator.alloc(CompletionItem, count);
+    var index: usize = 0;
+    for (common) |name| {
+        items[index] = .{ .label = name, .kind = 2, .detail = "Silex collection method" };
+        index += 1;
+    }
+    if (dynamic) for (list_only) |name| {
+        items[index] = .{ .label = name, .kind = 2, .detail = "Silex list method" };
+        index += 1;
+    };
+    return items;
 }
 
 fn collectSemanticInfo(
@@ -741,6 +792,7 @@ fn collectSemanticInfo(
                         .structure = structure_name,
                         .name = token.lexeme,
                         .type_name = tokens[member_index + 2].lexeme,
+                        .collection = collectionKind(tokens, member_index + 2),
                         .kind = 5,
                         .detail = "Silex field",
                     });
@@ -755,6 +807,7 @@ fn collectSemanticInfo(
                 try info.variables.append(allocator, .{
                     .name = tokens[index + 1].lexeme,
                     .type_name = tokens[index + 3].lexeme,
+                    .collection = collectionKind(tokens, index + 3),
                     .offset = tokenOffset(source, tokens[index + 1]),
                 });
             } else if (tokens[index + 2].tag == .equal and tokens[index + 3].tag == .identifier and
@@ -792,6 +845,7 @@ fn collectParameters(
             try variables.append(allocator, .{
                 .name = tokens[index].lexeme,
                 .type_name = tokens[index + 2].lexeme,
+                .collection = collectionKind(tokens, index + 2),
                 .offset = tokenOffset(source, tokens[index]),
             });
         }
@@ -807,14 +861,25 @@ fn memberReceiverPath(
     while (prefix_start > 0 and isIdentifierContinue(source[prefix_start - 1])) prefix_start -= 1;
     if (prefix_start == 0 or source[prefix_start - 1] != '.') return null;
 
-    var path_start = prefix_start - 1;
+    const is_cascade = prefix_start >= 2 and source[prefix_start - 2] == '.';
+    const path_end = if (is_cascade)
+        cascadeReceiverEnd(source, prefix_start - 2) orelse return null
+    else
+        prefix_start - 1;
+    var path_start = path_end;
     while (path_start > 0 and
         (isIdentifierContinue(source[path_start - 1]) or source[path_start - 1] == '.'))
     {
         path_start -= 1;
     }
-    const path_source = source[path_start .. prefix_start - 1];
-    if (path_source.len == 0) return null;
+    const path_source = source[path_start..path_end];
+    if (path_source.len == 0) {
+        if (!is_cascade) return null;
+        const declaration_name = cascadeDeclarationName(source, path_end) orelse return null;
+        const path = try allocator.alloc([]const u8, 1);
+        path[0] = declaration_name;
+        return path;
+    }
 
     var path: std.ArrayList([]const u8) = .empty;
     var iterator = std.mem.splitScalar(u8, path_source, '.');
@@ -828,31 +893,85 @@ fn memberReceiverPath(
     return try path.toOwnedSlice(allocator);
 }
 
-fn receiverType(info: SemanticInfo, receiver: []const u8, cursor_offset: usize) ?[]const u8 {
+fn cascadeDeclarationName(source: []const u8, anchor_end: usize) ?[]const u8 {
+    const line_start = if (std.mem.lastIndexOfScalar(u8, source[0..anchor_end], '\n')) |newline|
+        newline + 1
+    else
+        0;
+    const line = std.mem.trim(u8, source[line_start..anchor_end], " \t\r");
+    const keyword_length: usize = if (std.mem.startsWith(u8, line, "var "))
+        "var ".len
+    else if (std.mem.startsWith(u8, line, "let "))
+        "let ".len
+    else
+        return null;
+    var name_end = keyword_length;
+    while (name_end < line.len and isIdentifierContinue(line[name_end])) name_end += 1;
+    if (name_end == keyword_length) return null;
+    return line[keyword_length..name_end];
+}
+
+fn cascadeReceiverEnd(source: []const u8, operator_start: usize) ?usize {
+    const line_start = if (std.mem.lastIndexOfScalar(u8, source[0..operator_start], '\n')) |newline|
+        newline + 1
+    else
+        0;
+    const compact_receiver = std.mem.trim(u8, source[line_start..operator_start], " \t\r");
+    if (compact_receiver.len != 0) {
+        return line_start + std.mem.trimEnd(u8, source[line_start..operator_start], " \t\r").len;
+    }
+
+    var search_end = line_start;
+    while (search_end > 0) {
+        const line_end = search_end - 1;
+        const previous_start = if (std.mem.lastIndexOfScalar(u8, source[0..line_end], '\n')) |newline|
+            newline + 1
+        else
+            0;
+        const line = source[previous_start..line_end];
+        const trimmed = std.mem.trim(u8, line, " \t\r");
+        if (trimmed.len != 0 and !std.mem.startsWith(u8, trimmed, "..")) {
+            return previous_start + std.mem.trimEnd(u8, line, " \t\r").len;
+        }
+        search_end = previous_start;
+    }
+    return null;
+}
+
+fn receiverType(info: SemanticInfo, receiver: []const u8, cursor_offset: usize) ?ReceiverType {
     if (std.mem.eql(u8, receiver, "self")) {
         for (info.structures.items) |structure| {
-            if (structure.start <= cursor_offset and cursor_offset <= structure.end) return structure.name;
+            if (structure.start <= cursor_offset and cursor_offset <= structure.end) {
+                return .{ .structure = structure.name };
+            }
         }
         return null;
     }
 
-    var result: ?[]const u8 = null;
+    var result: ?ReceiverType = null;
     var result_offset: usize = 0;
     for (info.variables.items) |variable| {
         if (variable.offset <= cursor_offset and variable.offset >= result_offset and
             std.mem.eql(u8, variable.name, receiver))
         {
-            result = variable.type_name;
+            result = if (variable.collection) |collection| switch (collection) {
+                .list => .list,
+                .fixed_array => .fixed_array,
+            } else .{ .structure = variable.type_name };
             result_offset = variable.offset;
         }
     }
     return result;
 }
 
-fn fieldType(members: []const DeclaredMember, structure: []const u8, field: []const u8) ?[]const u8 {
+fn fieldType(members: []const DeclaredMember, structure: []const u8, field: []const u8) ?ReceiverType {
     for (members) |member| {
         if (std.mem.eql(u8, member.structure, structure) and std.mem.eql(u8, member.name, field)) {
-            return member.type_name;
+            if (member.collection) |collection| return switch (collection) {
+                .list => .list,
+                .fixed_array => .fixed_array,
+            };
+            return if (member.type_name) |type_name| .{ .structure = type_name } else null;
         }
     }
     return null;
@@ -889,6 +1008,27 @@ fn tokenOffset(source: []const u8, token: LexerModule.Token) usize {
 
 fn isIdentifierContinue(character: u8) bool {
     return std.ascii.isAlphanumeric(character) or character == '_';
+}
+
+fn collectionKind(tokens: []const LexerModule.Token, type_index: usize) ?CollectionKind {
+    var index = type_index + 1;
+    var result: ?CollectionKind = null;
+    while (index < tokens.len and tokens[index].tag == .left_bracket) {
+        if (index + 1 < tokens.len and tokens[index + 1].tag == .right_bracket) {
+            result = .list;
+            index += 2;
+            continue;
+        }
+        if (index + 2 < tokens.len and tokens[index + 1].tag == .integer and
+            tokens[index + 2].tag == .right_bracket)
+        {
+            result = .fixed_array;
+            index += 3;
+            continue;
+        }
+        break;
+    }
+    return result;
 }
 
 fn isTypeToken(tag: LexerModule.TokenTag) bool {
@@ -1014,6 +1154,95 @@ test "member completion only includes members of the receiver structure" {
     try std.testing.expectEqual(@as(usize, 1), items.len);
     try std.testing.expectEqualStrings("speed", items[0].label);
     try std.testing.expectEqual(@as(u8, 5), items[0].kind);
+}
+
+test "self completion resolves fields and methods of the enclosing structure" {
+    const source =
+        \\struct Counter {
+        \\    value:int
+        \\
+        \\    func current() int {
+        \\        return self.
+        \\    }
+        \\}
+    ;
+    const items = try completionItems(std.testing.allocator, source, .{ .line = 4, .character = 20 });
+    defer std.testing.allocator.free(items);
+    try std.testing.expect(containsCompletion(items, "value"));
+    try std.testing.expect(containsCompletion(items, "current"));
+}
+
+test "cascade completion resolves a receiver on the preceding line" {
+    const source =
+        \\struct Move {
+        \\    speed:float = 100
+        \\}
+        \\func main() void {
+        \\    var move:Move
+        \\    move
+        \\        ..
+        \\}
+    ;
+    const items = try completionItems(std.testing.allocator, source, .{ .line = 6, .character = 10 });
+    defer std.testing.allocator.free(items);
+    try std.testing.expectEqual(@as(usize, 1), items.len);
+    try std.testing.expectEqualStrings("speed", items[0].label);
+}
+
+test "first dot of an indented cascade does not offer global completions" {
+    const source =
+        \\func main() void {
+        \\    var values:int[]
+        \\    values
+        \\        .
+        \\}
+    ;
+    const items = try completionItems(std.testing.allocator, source, .{ .line = 3, .character = 9 });
+    defer std.testing.allocator.free(items);
+    try std.testing.expectEqual(@as(usize, 0), items.len);
+}
+
+test "cascade completion resolves an inferred structure initializer" {
+    const source =
+        \\struct Move {
+        \\    speed:float = 100
+        \\    func stop() void {}
+        \\}
+        \\func main() void {
+        \\    var move = Move { speed:10 }
+        \\        ..
+        \\}
+    ;
+    const items = try completionItems(std.testing.allocator, source, .{ .line = 6, .character = 10 });
+    defer std.testing.allocator.free(items);
+    try std.testing.expect(containsCompletion(items, "speed"));
+    try std.testing.expect(containsCompletion(items, "stop"));
+    try std.testing.expect(!containsCompletion(items, "return"));
+}
+
+test "collection completion distinguishes lists and fixed arrays" {
+    const list_source =
+        \\func main() void {
+        \\    var values:int[]
+        \\    values
+        \\        ..
+        \\}
+    ;
+    const list_items = try completionItems(std.testing.allocator, list_source, .{ .line = 3, .character = 10 });
+    defer std.testing.allocator.free(list_items);
+    try std.testing.expect(containsCompletion(list_items, "append"));
+    try std.testing.expect(containsCompletion(list_items, "reverse"));
+
+    const fixed_source =
+        \\func main() void {
+        \\    var values:int[3]
+        \\    values..
+        \\}
+    ;
+    const fixed_items = try completionItems(std.testing.allocator, fixed_source, .{ .line = 2, .character = 12 });
+    defer std.testing.allocator.free(fixed_items);
+    try std.testing.expect(containsCompletion(fixed_items, "reverse"));
+    try std.testing.expect(!containsCompletion(fixed_items, "append"));
 }
 
 test "syntax diagnostics use zero-based LSP positions" {

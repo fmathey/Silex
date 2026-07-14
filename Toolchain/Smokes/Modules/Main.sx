@@ -5,7 +5,7 @@ import Prefix.Shared.Deep
 use Plugins.WindowSession
 use NK.Window.Session as NativeSession
 
-func main() void {
+func main() {
     let session:WindowSession = Plugins.create_window()
     let raw:WindowSession = Plugins.raw_create()
     let native:NativeSession

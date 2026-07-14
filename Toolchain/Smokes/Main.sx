@@ -1,4 +1,4 @@
-func main() void {
+func main() {
     let a = 5
     let b:int = 10
     let message = "Hello from Silex smoke test"
@@ -37,6 +37,6 @@ func is_positive(value:int) bool {
     return value > 0
 }
 
-func announce(message:str) void {
+func announce(message:str) {
     print(message)
 }

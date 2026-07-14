@@ -2,7 +2,7 @@
 Numeric literal forms
 ===========================
 
-func main() void {
+func main() {
     let binary = 0b1010_0101
     let octal = 0o7_55
     let hexadecimal = 0xCA_FE
@@ -17,7 +17,6 @@ func main() void {
   (function_definition
     name: (identifier)
     (parameter_list)
-    return_type: (void_type)
     body: (block
       (statement
         (variable_declaration

@@ -65,6 +65,8 @@ pub const Expression = struct {
         string_length: *Expression,
         sequence_literal: []const *Expression,
         collection_method: CollectionMethod,
+        cascade_target,
+        cascade: Cascade,
         variable: []const u8,
         self,
         call: Call,
@@ -117,6 +119,21 @@ pub const Expression = struct {
             swap,
             reverse,
             clear,
+        };
+    };
+
+    pub const Cascade = struct {
+        object: *Expression,
+        operations: []const Operation,
+
+        pub const Operation = union(enum) {
+            method_call: *Expression,
+            field_assignment: FieldAssignment,
+        };
+
+        pub const FieldAssignment = struct {
+            generated_name: []const u8,
+            value: *Expression,
         };
     };
 
@@ -243,6 +260,7 @@ pub const Receiver = union(enum) {
     immutable: []const u8,
     borrowed: []const u8,
     temporary,
+    cascade_temporary,
 };
 
 const Symbol = struct {
@@ -991,6 +1009,7 @@ pub const Analyzer = struct {
             .self => self.selfExpression(ast.position),
             .call => |call| self.callExpression(call, scope),
             .method_call => |call| self.methodCallExpression(call, scope),
+            .cascade => |cascade| self.cascadeExpression(cascade, scope, null),
             .structure_initializer => |initializer| self.structureInitializerExpression(initializer, scope),
             .member_access => |member| self.memberAccessExpression(member, scope),
             .index_access => |access| self.indexAccessExpression(access, scope),
@@ -1007,6 +1026,7 @@ pub const Analyzer = struct {
         expected_type: ?Type,
     ) AnalyzeError!*Expression {
         if (ast.value == .sequence_literal) return self.sequenceLiteralExpression(ast.value.sequence_literal, ast.position, scope, expected_type);
+        if (ast.value == .cascade) return self.cascadeExpression(ast.value.cascade, scope, expected_type);
         return self.expressionForBorrow(ast, scope, referenceMutability(expected_type));
     }
 
@@ -1330,8 +1350,29 @@ pub const Analyzer = struct {
         scope: *const Scope,
     ) AnalyzeError!*Expression {
         const object = try self.expression(call.object, scope);
+        const receiver = receiverFor(
+            call.object,
+            scope,
+            self.current_self_state.mutable_borrow or self.current_self_state.immutable_borrows != 0,
+        );
+        return self.methodCallExpressionWithObject(call, object, scope, receiver, false);
+    }
+
+    fn methodCallExpressionWithObject(
+        self: *Analyzer,
+        call: Ast.Expression.MethodCall,
+        object: *Expression,
+        scope: *const Scope,
+        receiver: Receiver,
+        allow_temporary_collection_mutation: bool,
+    ) AnalyzeError!*Expression {
         switch (object.type) {
-            .list, .fixed_array, .str => return self.collectionMethodCallExpression(call, object, scope),
+            .list, .fixed_array, .str => return self.collectionMethodCallExpression(
+                call,
+                object,
+                scope,
+                allow_temporary_collection_mutation,
+            ),
             .structure => {},
             else => return self.fail(call.name_position, "method call requires a struct or collection value"),
         }
@@ -1362,11 +1403,6 @@ pub const Analyzer = struct {
             try arguments.append(self.allocator, value);
             self.releaseTransientBorrow(value);
         }
-        const receiver = receiverFor(
-            call.object,
-            scope,
-            self.current_self_state.mutable_borrow or self.current_self_state.immutable_borrows != 0,
-        );
         const method_id = MethodId{ .structure_index = structure_index, .method_index = resolved_method_index };
         if (receiver == .self and self.current_method_index != null) {
             try self.current_method_dependencies.append(self.allocator, method_id);
@@ -1386,11 +1422,128 @@ pub const Analyzer = struct {
         });
     }
 
+    fn cascadeExpression(
+        self: *Analyzer,
+        cascade: Ast.Expression.Cascade,
+        scope: *const Scope,
+        expected_type: ?Type,
+    ) AnalyzeError!*Expression {
+        const object = try self.expressionForExpected(cascade.object, scope, expected_type);
+        if (object.type == .void) return self.fail(cascade.object.position, "cascade receiver cannot have type 'void'");
+
+        const target = try self.newExpression(.{
+            .type = object.type,
+            .position = cascade.object.position,
+            .value = .cascade_target,
+        });
+        const ordinary_receiver = receiverFor(
+            cascade.object,
+            scope,
+            self.current_self_state.mutable_borrow or self.current_self_state.immutable_borrows != 0,
+        );
+        const owns_temporary = isCascadeOwnedTemporary(cascade.object);
+        const receiver: Receiver = if (ordinary_receiver == .temporary and owns_temporary)
+            .cascade_temporary
+        else
+            ordinary_receiver;
+
+        var operations: std.ArrayList(Expression.Cascade.Operation) = .empty;
+        for (cascade.operations) |operation| switch (operation) {
+            .method_call => |cascade_method| {
+                const call = Ast.Expression.MethodCall{
+                    .object = cascade.object,
+                    .name = cascade_method.name,
+                    .name_position = cascade_method.name_position,
+                    .arguments = cascade_method.arguments,
+                };
+                const resolved = try self.methodCallExpressionWithObject(call, target, scope, receiver, owns_temporary);
+                try operations.append(self.allocator, .{ .method_call = resolved });
+            },
+            .field_assignment => |field_assignment| {
+                try self.requireMutableCascadeReceiver(
+                    cascade.object,
+                    scope,
+                    field_assignment.name_position,
+                    owns_temporary,
+                );
+                const structure_type = switch (object.type) {
+                    .structure => |structure| structure,
+                    else => return self.fail(field_assignment.name_position, "cascade field assignment requires a struct value"),
+                };
+                const structure = self.findStructureByGeneratedName(structure_type.generated_name).?;
+                var resolved_field: ?StructureFieldSymbol = null;
+                for (structure.fields) |field| {
+                    if (std.mem.eql(u8, field.source_name, field_assignment.name)) resolved_field = field;
+                }
+                const field = resolved_field orelse {
+                    const message = try std.fmt.allocPrint(
+                        self.allocator,
+                        "struct '{s}' has no field '{s}'",
+                        .{ structure.source_name, field_assignment.name },
+                    );
+                    return self.fail(field_assignment.name_position, message);
+                };
+                var value = try self.expressionForExpected(field_assignment.value, scope, field.type);
+                value = try self.coerce(value, field.type);
+                if (!typeEqual(value.type, field.type)) {
+                    const message = try typeMismatchMessage(self.allocator, field.type, value.type);
+                    return self.fail(field_assignment.value.position, message);
+                }
+                try operations.append(self.allocator, .{ .field_assignment = .{
+                    .generated_name = field.generated_name,
+                    .value = value,
+                } });
+            },
+        };
+
+        return self.newExpression(.{
+            .type = object.type,
+            .position = cascade.object.position,
+            .value = .{ .cascade = .{
+                .object = object,
+                .operations = try operations.toOwnedSlice(self.allocator),
+            } },
+        });
+    }
+
+    fn requireMutableCascadeReceiver(
+        self: *Analyzer,
+        ast_object: *const Ast.Expression,
+        scope: *const Scope,
+        position: Source.Position,
+        allow_temporary_mutation: bool,
+    ) AnalyzeError!void {
+        const root = assignmentRoot(ast_object) orelse {
+            if (allow_temporary_mutation) return;
+            return self.fail(position, "cascade mutations require a mutable value or a newly owned temporary");
+        };
+        switch (root) {
+            .self => {
+                if (self.current_self_state.mutable_borrow or self.current_self_state.immutable_borrows != 0) {
+                    return self.fail(position, "cannot mutate 'self' while one of its collections is iterated");
+                }
+                self.current_method_direct_mutation = true;
+            },
+            .variable => |name| {
+                const symbol = findSymbol(scope, name) orelse return self.fail(position, "unknown cascade receiver");
+                if (symbol.mutability == .immutable) {
+                    const message = try std.fmt.allocPrint(self.allocator, "cannot assign through cascade on immutable value '{s}'", .{name});
+                    return self.fail(position, message);
+                }
+                if (symbol.state.immutable_borrows != 0 or symbol.state.mutable_borrow) {
+                    const message = try std.fmt.allocPrint(self.allocator, "cannot mutate borrowed variable '{s}'", .{name});
+                    return self.fail(position, message);
+                }
+            },
+        }
+    }
+
     fn collectionMethodCallExpression(
         self: *Analyzer,
         call: Ast.Expression.MethodCall,
         object: *Expression,
         scope: *const Scope,
+        allow_temporary_mutation: bool,
     ) AnalyzeError!*Expression {
         const operation: Expression.CollectionMethod.Operation = if (std.mem.eql(u8, call.name, "count"))
             .count
@@ -1447,7 +1600,8 @@ pub const Analyzer = struct {
         }
         switch (operation) {
             .count, .is_empty => {},
-            else => try self.requireMutableCollectionReceiver(call.object, scope, call.name_position, call.name),
+            else => if (!allow_temporary_mutation or assignmentRoot(call.object) != null)
+                try self.requireMutableCollectionReceiver(call.object, scope, call.name_position, call.name),
         }
 
         var resolved_operation = operation;
@@ -1782,7 +1936,7 @@ pub const Analyzer = struct {
                 const value = std.fmt.parseFloat(f32, lexeme) catch return self.fail(expression_value.position, "float literal is outside the range of 'float'");
                 if (!std.math.isFinite(value)) return self.fail(expression_value.position, "float literal is outside the range of 'float'");
             },
-            .boolean, .string, .variable, .self => {},
+            .boolean, .string, .variable, .self, .cascade_target => {},
             .string_length => |argument| try self.validateExpression(argument),
             .sequence_literal => |values| for (values) |value| try self.validateExpression(value),
             .collection_method => |collection_method| {
@@ -1795,7 +1949,7 @@ pub const Analyzer = struct {
                 for (call.arguments) |argument| try self.validateExpression(argument);
                 if (!self.methodSymbol(call.method_id).is_mutating) return;
                 switch (call.receiver) {
-                    .self, .mutable => {},
+                    .self, .mutable, .cascade_temporary => {},
                     .borrowed_self => return self.fail(call.position, "cannot mutate 'self' while one of its collections is iterated"),
                     .immutable => |name| {
                         const message = try std.fmt.allocPrint(self.allocator, "cannot call mutating method '{s}' on immutable value '{s}'", .{ call.source_name, name });
@@ -1810,6 +1964,13 @@ pub const Analyzer = struct {
                         return self.fail(call.position, message);
                     },
                 }
+            },
+            .cascade => |cascade| {
+                try self.validateExpression(cascade.object);
+                for (cascade.operations) |operation| switch (operation) {
+                    .method_call => |cascade_method| try self.validateExpression(cascade_method),
+                    .field_assignment => |field_assignment| try self.validateExpression(field_assignment.value),
+                };
             },
             .structure_initializer => |initializer| for (initializer.fields) |field| try self.validateExpression(field),
             .member_access => |member| try self.validateExpression(member.object),
@@ -2514,6 +2675,16 @@ const AssignmentRoot = union(enum) {
     self,
     variable: []const u8,
 };
+
+fn isCascadeOwnedTemporary(expression: *const Ast.Expression) bool {
+    return switch (expression.value) {
+        .call, .method_call, .structure_initializer, .sequence_literal => true,
+        .member_access => |member| isCascadeOwnedTemporary(member.object),
+        .index_access => |access| isCascadeOwnedTemporary(access.object),
+        .unary => |unary| unary.operator == .copy or unary.operator == .move,
+        else => false,
+    };
+}
 
 fn assignmentRoot(expression: *const Ast.Expression) ?AssignmentRoot {
     return switch (expression.value) {

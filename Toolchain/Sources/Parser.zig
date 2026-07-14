@@ -153,7 +153,10 @@ pub const Parser = struct {
         const name_position = self.current.position;
         try self.advance();
         const parameters = try self.parseParameters();
-        const return_type = try self.parseReturnType();
+        const return_type: Ast.ReturnType = if (self.current.tag == .left_brace)
+            .void
+        else
+            try self.parseReturnType();
         return .{
             .is_public = is_public,
             .position = position,
@@ -334,7 +337,7 @@ pub const Parser = struct {
 
     fn parseIdentifierStatement(self: *Parser) ParseError!Ast.Statement {
         const position = self.current.position;
-        const target = try self.parseIdentifierExpression();
+        const target = try self.parseExpression(false);
         if (assignmentOperator(self.current.tag)) |operator| {
             try self.advance();
             var value: ?*Ast.Expression = null;
@@ -349,7 +352,7 @@ pub const Parser = struct {
                 .value = value,
             } };
         }
-        if (target.value == .call or target.value == .method_call) {
+        if (target.value == .call or target.value == .method_call or target.value == .cascade) {
             try self.expectStatementTerminator();
             return .{ .expression_statement = target };
         }
@@ -441,7 +444,53 @@ pub const Parser = struct {
     }
 
     fn parseExpression(self: *Parser, allow_line_breaks: bool) ParseError!*Ast.Expression {
-        return self.parseLogicalOr(allow_line_breaks);
+        return self.parseCascade(try self.parseLogicalOr(allow_line_breaks));
+    }
+
+    fn parseCascade(self: *Parser, object: *Ast.Expression) ParseError!*Ast.Expression {
+        if (self.current.tag != .dot_dot) return object;
+
+        var operations: std.ArrayList(Ast.Expression.Cascade.Operation) = .empty;
+        while (self.current.tag == .dot_dot) {
+            try self.advance();
+            if (self.current.tag != .identifier) return self.fail("expected member name after '..'");
+            const name = self.current.lexeme;
+            const name_position = self.current.position;
+            try self.advance();
+
+            if (self.current.tag == .left_parenthesis) {
+                try self.advance();
+                var arguments: std.ArrayList(*Ast.Expression) = .empty;
+                while (self.current.tag != .right_parenthesis) {
+                    try arguments.append(self.allocator, try self.parseExpression(true));
+                    if (self.current.tag != .comma) break;
+                    try self.advance();
+                }
+                try self.expect(.right_parenthesis, "expected ')' after cascade method arguments");
+                try operations.append(self.allocator, .{ .method_call = .{
+                    .name = name,
+                    .name_position = name_position,
+                    .arguments = try arguments.toOwnedSlice(self.allocator),
+                } });
+                continue;
+            }
+
+            if (self.current.tag != .equal) return self.fail("expected '(' or '=' after cascade member");
+            try self.advance();
+            try operations.append(self.allocator, .{ .field_assignment = .{
+                .name = name,
+                .name_position = name_position,
+                .value = try self.parseLogicalOr(false),
+            } });
+        }
+
+        return self.newExpression(.{
+            .position = object.position,
+            .value = .{ .cascade = .{
+                .object = object,
+                .operations = try operations.toOwnedSlice(self.allocator),
+            } },
+        });
     }
 
     fn parseLogicalOr(self: *Parser, allow_line_breaks: bool) ParseError!*Ast.Expression {
@@ -1118,6 +1167,26 @@ test "operator cannot begin continuation outside parentheses" {
     try std.testing.expectEqualStrings("expected statement", parser.diagnostic.?.message);
 }
 
+test "parse method and field cascade operations" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var parser = Parser.init(arena.allocator(),
+        \\struct Point { x:int }
+        \\func main() void {
+        \\    var point = Point { x:0 }
+        \\        ..x = 10
+        \\        ..move(1, 2)
+        \\}
+    );
+    const program = try parser.parse();
+    const cascade = program.functions[0].statements[0].variable_declaration.initializer.?.value.cascade;
+    try std.testing.expectEqual(@as(usize, 2), cascade.operations.len);
+    try std.testing.expect(cascade.operations[0] == .field_assignment);
+    try std.testing.expectEqualStrings("10", cascade.operations[0].field_assignment.value.value.integer);
+    try std.testing.expect(cascade.operations[1] == .method_call);
+    try std.testing.expectEqualStrings("move", cascade.operations[1].method_call.name);
+}
+
 test "parse functions parameters calls and returns" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -1134,6 +1203,20 @@ test "parse functions parameters calls and returns" {
     try std.testing.expectEqual(@as(usize, 2), program.functions[1].parameters.len);
     try std.testing.expectEqualStrings("add", program.functions[0].statements[0].print.argument.value.call.name);
     try std.testing.expect(program.functions[1].statements[0].return_statement.value != null);
+}
+
+test "void return type is optional but typed returns remain explicit" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var parser = Parser.init(arena.allocator(),
+        \\func implicit() {}
+        \\func explicit() void {}
+        \\func answer() int { return 42 }
+    );
+    const program = try parser.parse();
+    try std.testing.expectEqual(Ast.ReturnType.void, program.functions[0].return_type);
+    try std.testing.expectEqual(Ast.ReturnType.void, program.functions[1].return_type);
+    try std.testing.expectEqual(Ast.ReturnType.int, program.functions[2].return_type);
 }
 
 test "parse fixed arrays and lists" {

@@ -1,14 +1,14 @@
 struct Numbers {
     values:int[]
 
-    func double_values() void {
+    func double_values() {
         for (var value in self.values) {
             value *= 2
         }
     }
 }
 
-func main() void {
+func main() {
     let fixed:int[3] = [1, 2, 3]
     var total = 0
     for (value in fixed) {

@@ -8,7 +8,7 @@ struct Player {
     active:bool
     position:Position = Position { x:3 }
 
-    func update() void {
+    func update() {
         self.position.x += 4
         self.position.y *= 3
         self.position.x--
@@ -18,7 +18,7 @@ struct Player {
     }
 }
 
-func main() void {
+func main() {
     var player:Player
     player.update()
 

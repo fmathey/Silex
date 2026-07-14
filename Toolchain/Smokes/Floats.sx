@@ -2,7 +2,7 @@ struct Motion {
     position:float
     speed:float = 1.5
 
-    func advance(delta:float) void {
+    func advance(delta:float) {
         self.position += self.speed * delta
     }
 }
@@ -11,7 +11,7 @@ func promoted() float {
     return 2
 }
 
-func main() void {
+func main() {
     var motion:Motion
     motion.advance(2)
     print(motion.position)

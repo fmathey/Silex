@@ -17,12 +17,12 @@ struct Position {
     x:float
     y:float = 10.0
 
-    func multiply_x(factor:float) void {
+    func multiply_x(factor:float) {
         self.x *= factor
     }
 }
 
-func main() void {
+func main() {
     var position:Position
     var hit = true
 
@@ -122,7 +122,7 @@ Sandbox/
 import Math
 use Math.Vec3
 
-func main() void {
+func main() {
     let screen:Math.Vec2
     let direction:Vec3
 }

@@ -155,6 +155,16 @@ pub fn generateWithSources(
         \\    return value;
         \\}
         \\
+        \\template <typename T, typename Operation>
+        \\decltype(auto) silexCascade(T&& value, Operation&& operation) {
+        \\    operation(value);
+        \\    if constexpr (std::is_lvalue_reference_v<T&&>) {
+        \\        return (value);
+        \\    } else {
+        \\        return std::remove_reference_t<T>(std::move(value));
+        \\    }
+        \\}
+        \\
         \\template <typename T, typename Range>
         \\void silexListAppendRange(std::vector<T>& values, Range&& source) {
         \\    if constexpr (std::is_lvalue_reference_v<Range&&>) {
@@ -682,6 +692,26 @@ fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expressi
                 try generateExpression(allocator, output, value);
             }
             try output.append(allocator, '}');
+        },
+        .cascade_target => try output.appendSlice(allocator, "silexCascadeValue"),
+        .cascade => |cascade| {
+            try output.appendSlice(allocator, "silexCascade(");
+            try generateExpression(allocator, output, cascade.object);
+            try output.appendSlice(allocator, ", [&](auto& silexCascadeValue) {");
+            for (cascade.operations) |operation| switch (operation) {
+                .method_call => |method| {
+                    try generateExpression(allocator, output, method);
+                    try output.append(allocator, ';');
+                },
+                .field_assignment => |assignment| {
+                    try output.appendSlice(allocator, "silexCascadeValue.");
+                    try output.appendSlice(allocator, assignment.generated_name);
+                    try output.appendSlice(allocator, " = ");
+                    try generateExpression(allocator, output, assignment.value);
+                    try output.append(allocator, ';');
+                },
+            };
+            try output.appendSlice(allocator, " })");
         },
         .collection_method => |method| {
             switch (method.operation) {
@@ -1403,4 +1433,26 @@ test "generate inferred const and mutating methods" {
     try std.testing.expect(std.mem.indexOf(u8, cpp, "void method1();") != null);
     try std.testing.expect(std.mem.indexOf(u8, cpp, "SilexStruct0::method0() const") != null);
     try std.testing.expect(std.mem.indexOf(u8, cpp, "SilexStruct0::method1()") != null);
+}
+
+test "generate cascades through one stable receiver" {
+    const Parser = @import("Parser.zig").Parser;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var parser = Parser.init(allocator,
+        \\func main() void {
+        \\    var values:int[] = []
+        \\        ..append(1)
+        \\        ..reverse()
+        \\}
+    );
+    var analyzer = Semantic.Analyzer.init(allocator);
+    const cpp = try generate(allocator, try analyzer.analyze(try parser.parse()));
+
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "decltype(auto) silexCascade") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "silexCascade(std::vector<std::int64_t>{}, [&](auto& silexCascadeValue) {") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "silexCascadeValue.push_back(std::int64_t{1});") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "std::reverse(silexCascadeValue.begin(), silexCascadeValue.end());") != null);
 }

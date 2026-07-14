@@ -106,6 +106,7 @@ pub const Expression = struct {
         self,
         call: Call,
         method_call: MethodCall,
+        cascade: Cascade,
         structure_initializer: StructureInitializer,
         member_access: MemberAccess,
         index_access: IndexAccess,
@@ -131,6 +132,28 @@ pub const Expression = struct {
         name: []const u8,
         name_position: Source.Position,
         arguments: []const *Expression,
+    };
+
+    pub const Cascade = struct {
+        object: *Expression,
+        operations: []const Operation,
+
+        pub const Operation = union(enum) {
+            method_call: CascadeMethodCall,
+            field_assignment: FieldAssignment,
+        };
+
+        pub const CascadeMethodCall = struct {
+            name: []const u8,
+            name_position: Source.Position,
+            arguments: []const *Expression,
+        };
+
+        pub const FieldAssignment = struct {
+            name: []const u8,
+            name_position: Source.Position,
+            value: *Expression,
+        };
     };
 
     pub const StructureInitializer = struct {

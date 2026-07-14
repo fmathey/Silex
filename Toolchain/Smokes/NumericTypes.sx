@@ -2,7 +2,7 @@ func widen(value:int8) int64 {
     return value
 }
 
-func main() void {
+func main() {
     var signed8:int8 = -128
     var signed16:int16 = 32767
     var signed32:int32 = 2147483647

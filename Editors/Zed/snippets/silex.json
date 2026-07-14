@@ -2,7 +2,7 @@
   "Main function": {
     "prefix": "main",
     "body": [
-      "func main() void {",
+      "func main() {",
       "    $0",
       "}"
     ],
@@ -88,6 +88,14 @@
     ],
     "description": "Duplicate an owning value"
   },
+  "Cascade": {
+    "prefix": "cascade",
+    "body": [
+      "${1:receiver}",
+      "    ..${2:method}($0)"
+    ],
+    "description": "Apply operations to one receiver"
+  },
   "Default initialized variable": {
     "prefix": "vart",
     "body": [
@@ -146,20 +154,38 @@
   "Function": {
     "prefix": "func",
     "body": [
-      "func ${1:name}(${2}) ${3:void} {",
+      "func ${1:name}(${2}) {",
       "    $0",
       "}"
     ],
-    "description": "Declare a function"
+    "description": "Declare a void function"
+  },
+  "Returning function": {
+    "prefix": "funcr",
+    "body": [
+      "func ${1:name}(${2}) ${3:int} {",
+      "    return $0",
+      "}"
+    ],
+    "description": "Declare a function with an explicit return type"
   },
   "Method": {
     "prefix": "method",
     "body": [
-      "func ${1:name}(${2}) ${3:void} {",
+      "func ${1:name}(${2}) {",
       "    $0",
       "}"
     ],
-    "description": "Declare a struct method"
+    "description": "Declare a void struct method"
+  },
+  "Returning method": {
+    "prefix": "methodr",
+    "body": [
+      "func ${1:name}(${2}) ${3:int} {",
+      "    return $0",
+      "}"
+    ],
+    "description": "Declare a struct method with an explicit return type"
   },
   "Return": {
     "prefix": "return",
