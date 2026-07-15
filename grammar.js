@@ -236,12 +236,29 @@ module.exports = grammar({
       seq(
         "for",
         "(",
-        optional(field("mutability", "var")),
+        field("mutability", choice("let", "var")),
         field("name", $.identifier),
         "in",
-        field("iterable", $.expression),
+        field("iterable", choice($.integer_range, $.expression)),
         ")",
         field("body", $.block),
+      ),
+
+    integer_range: ($) =>
+      choice(
+        seq(
+          field("start", $.expression),
+          field("operator", "..."),
+          field("end", $.expression),
+        ),
+        seq(
+          "range",
+          "(",
+          field("start", $.expression),
+          ",",
+          field("end", $.expression),
+          ")",
+        ),
       ),
 
     break_statement: (_) => "break",
@@ -261,6 +278,7 @@ module.exports = grammar({
         $.sequence_literal,
         $.member_expression,
         $.index_expression,
+        $.slice_expression,
         $.parenthesized_expression,
         $.string_literal,
         $.float_literal,
@@ -274,32 +292,55 @@ module.exports = grammar({
       prec.left(
         PREC.member,
         seq(
-          field(
-            "receiver",
-            choice(
-              $.identifier,
-              $.self_expression,
-              $.call_expression,
-              $.structure_initializer,
-              $.member_expression,
-              $.index_expression,
-              $.method_call_expression,
-              $.sequence_literal,
-              $.string_literal,
-              $.float_literal,
-              $.integer_literal,
-              $.boolean_literal,
-              $.parenthesized_expression,
+          field("receiver", $._cascade_receiver),
+          choice(
+            repeat1($.cascade_operation),
+            seq(
+              repeat($.cascade_operation),
+              alias($.cascade_method_operation, $.cascade_operation),
+              repeat1($.cascade_terminal_operation),
             ),
           ),
-          repeat1($.cascade_operation),
         ),
+      ),
+
+    _cascade_receiver: ($) =>
+      choice(
+        $.identifier,
+        $.self_expression,
+        $.call_expression,
+        $.structure_initializer,
+        $.member_expression,
+        $.index_expression,
+        $.slice_expression,
+        $.method_call_expression,
+        $.sequence_literal,
+        $.string_literal,
+        $.float_literal,
+        $.integer_literal,
+        $.boolean_literal,
+        $.parenthesized_expression,
       ),
 
     cascade_operation: ($) =>
       seq(
         field("operator", ".."),
         choice($.cascade_method_call, $.cascade_field_assignment),
+      ),
+
+    cascade_method_operation: ($) =>
+      seq(field("operator", ".."), $.cascade_method_call),
+
+    cascade_terminal_operation: ($) =>
+      choice(
+        seq(".", field("field", $.identifier)),
+        seq(
+          ".",
+          field("method", $.identifier),
+          "(",
+          optional(seq($.expression, repeat(seq(",", $.expression)))),
+          ")",
+        ),
       ),
 
     cascade_method_call: ($) =>
@@ -329,6 +370,7 @@ module.exports = grammar({
         $.sequence_literal,
         $.member_expression,
         $.index_expression,
+        $.slice_expression,
         $.parenthesized_expression,
         $.string_literal,
         $.float_literal,
@@ -462,6 +504,7 @@ module.exports = grammar({
               $.structure_initializer,
               $.member_expression,
               $.index_expression,
+              $.slice_expression,
               $.method_call_expression,
               $.sequence_literal,
               $.string_literal,
@@ -497,6 +540,7 @@ module.exports = grammar({
               $.structure_initializer,
               $.member_expression,
               $.index_expression,
+              $.slice_expression,
               $.method_call_expression,
               $.sequence_literal,
               $.string_literal,
@@ -527,6 +571,7 @@ module.exports = grammar({
               $.structure_initializer,
               $.member_expression,
               $.index_expression,
+              $.slice_expression,
               $.method_call_expression,
               $.sequence_literal,
               $.string_literal,
@@ -537,8 +582,38 @@ module.exports = grammar({
             ),
           ),
           "[",
-          optional(field("from_end", "^")),
           field("index", $.expression),
+          "]",
+        ),
+      ),
+
+    slice_expression: ($) =>
+      prec.left(
+        PREC.member,
+        seq(
+          field(
+            "object",
+            choice(
+              $.identifier,
+              $.self_expression,
+              $.call_expression,
+              $.structure_initializer,
+              $.member_expression,
+              $.index_expression,
+              $.slice_expression,
+              $.method_call_expression,
+              $.sequence_literal,
+              $.string_literal,
+              $.float_literal,
+              $.integer_literal,
+              $.boolean_literal,
+              $.parenthesized_expression,
+            ),
+          ),
+          "[",
+          field("start", $.expression),
+          ":",
+          field("end", $.expression),
           "]",
         ),
       ),

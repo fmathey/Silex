@@ -6,8 +6,9 @@ func main() {
     var fixed:int[3] = [1, 2, 3]
     var values:int[] = []
     values.append(fixed[0])
-    fixed[^1] = values[0]
-    print(values[^1])
+    fixed[-1] = values[0]
+    print(values[-1])
+    let middle:int[] = values[0:-1]
     values.reverse()
     print("Aé".count())
 }
@@ -59,7 +60,9 @@ func main() {
           (index_expression
             (identifier)
             (expression
-              (integer_literal)))
+              (unary_expression
+                (expression
+                  (integer_literal)))))
           (expression
             (index_expression
               (identifier)
@@ -72,7 +75,25 @@ func main() {
             (index_expression
               (identifier)
               (expression
-                (integer_literal))))))
+                (unary_expression
+                  (expression
+                    (integer_literal))))))))
+      (statement
+        (variable_declaration
+          (identifier)
+          (type_annotation
+            (type
+              (array_type
+                (builtin_type))))
+          (expression
+            (slice_expression
+              (identifier)
+              (expression
+                (integer_literal))
+              (expression
+                (unary_expression
+                  (expression
+                    (integer_literal))))))))
       (statement
         (expression_statement
           (method_call_expression

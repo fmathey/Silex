@@ -42,10 +42,19 @@
 (cascade_operation
   operator: ".." @operator)
 
+(integer_range
+  operator: "..." @operator)
+
 (cascade_method_call
   method: (identifier) @function.method.call)
 
 (cascade_field_assignment
+  field: (identifier) @property)
+
+(cascade_terminal_operation
+  method: (identifier) @function.method.call)
+
+(cascade_terminal_operation
   field: (identifier) @property)
 
 (parameter
@@ -90,6 +99,7 @@
   "else"
   "while"
   "for"
+  "range"
   "in"
   "return"
   "struct"

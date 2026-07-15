@@ -3,9 +3,8 @@ Collection cascade
 ==================
 
 func main() {
-    var values:int[] = []
-        ..append(10)
-        ..reverse()
+    var values:int[] = []..append(10)..reverse()
+    print(values..append(20).count())
 }
 
 ---
@@ -32,7 +31,20 @@ func main() {
                     (integer_literal))))
               (cascade_operation
                 (cascade_method_call
-                  method: (identifier))))))))))
+                  method: (identifier)))))))
+      (statement
+        (print_statement
+          function: (identifier)
+          argument: (expression
+            (cascade_expression
+              receiver: (identifier)
+              (cascade_operation
+                (cascade_method_call
+                  method: (identifier)
+                  (expression
+                    (integer_literal))))
+              (cascade_terminal_operation
+                method: (identifier)))))))))
 
 ==================
 Struct configuration cascade
