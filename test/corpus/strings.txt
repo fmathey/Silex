@@ -1,0 +1,40 @@
+===============================
+String escapes and concatenation
+===============================
+
+func main() {
+    var message = "Hello, " + "Silex\n"
+    message += "\u{1F642}"
+    print(message.count())
+}
+
+---
+
+(source_file
+  (function_definition
+    name: (identifier)
+    (parameter_list)
+    body: (block
+      (statement
+        (variable_declaration
+          name: (identifier)
+          initializer: (expression
+            (binary_expression
+              left: (expression
+                (string_literal))
+              right: (expression
+                (string_literal
+                  (escape_sequence)))))))
+      (statement
+        (assignment_statement
+          left: (identifier)
+          right: (expression
+            (string_literal
+              (escape_sequence)))))
+      (statement
+        (print_statement
+          function: (identifier)
+          argument: (expression
+            (method_call_expression
+              object: (identifier)
+              method: (identifier))))))))

@@ -1,0 +1,108 @@
+=============================
+Collections
+=============================
+
+func main() {
+    var fixed:int[3] = [1, 2, 3]
+    var values:int[] = []
+    values.append(fixed[0])
+    fixed[-1] = values[0]
+    print(values[-1])
+    let middle:int[] = values[0:-1]
+    values.reverse()
+    print("Aé".count())
+}
+
+---
+
+(source_file
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (block
+      (statement
+        (variable_declaration
+          (identifier)
+          (type_annotation
+            (type
+              (array_type
+                (builtin_type)
+                (integer_literal))))
+          (expression
+            (sequence_literal
+              (expression
+                (integer_literal))
+              (expression
+                (integer_literal))
+              (expression
+                (integer_literal))))))
+      (statement
+        (variable_declaration
+          (identifier)
+          (type_annotation
+            (type
+              (array_type
+                (builtin_type))))
+          (expression
+            (sequence_literal))))
+      (statement
+        (expression_statement
+          (method_call_expression
+            (identifier)
+            (identifier)
+            (expression
+              (index_expression
+                (identifier)
+                (expression
+                  (integer_literal)))))))
+      (statement
+        (assignment_statement
+          (index_expression
+            (identifier)
+            (expression
+              (unary_expression
+                (expression
+                  (integer_literal)))))
+          (expression
+            (index_expression
+              (identifier)
+              (expression
+                (integer_literal))))))
+      (statement
+        (print_statement
+          (identifier)
+          (expression
+            (index_expression
+              (identifier)
+              (expression
+                (unary_expression
+                  (expression
+                    (integer_literal))))))))
+      (statement
+        (variable_declaration
+          (identifier)
+          (type_annotation
+            (type
+              (array_type
+                (builtin_type))))
+          (expression
+            (slice_expression
+              (identifier)
+              (expression
+                (integer_literal))
+              (expression
+                (unary_expression
+                  (expression
+                    (integer_literal))))))))
+      (statement
+        (expression_statement
+          (method_call_expression
+            (identifier)
+            (identifier))))
+      (statement
+        (print_statement
+          (identifier)
+          (expression
+            (method_call_expression
+              (string_literal)
+              (identifier))))))))
