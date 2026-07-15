@@ -87,8 +87,9 @@ same sequence of values.
 `stop()` freezes its total, and `pause()` with `resume()` excludes suspended
 time. `reset()` accumulates the current interval and begins the next one rather
 than clearing the total. The time scale is applied when an interval is
-accumulated or read. Interval getters return zero while paused or stopped;
-total getters retain the accumulated value.
+accumulated or read. Interval getters return zero while paused; after `stop()`
+they retain the final interval. Total getters retain the accumulated value while
+paused or stopped.
 
 The implementation uses one native monotonic-microsecond reading inherited
 from `STD/Native.json`; clock state and duration calculations remain Silex

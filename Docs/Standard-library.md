@@ -35,8 +35,9 @@ automatically when `STD.Random` is loaded.
 
 `STD.Time.Clock` measures elapsed and total time with a monotonic platform
 clock. A new value is initially stopped; call `start()` to begin a measurement.
-`stop()` freezes its accumulated total, while `pause()` and `resume()` exclude a
-temporary suspension without starting a new measurement.
+`stop()` freezes both its final interval and its accumulated total, while
+`pause()` and `resume()` exclude a temporary suspension without starting a new
+measurement. The elapsed getters can therefore be read after `stop()`.
 
 `reset()` commits the current elapsed interval to the total and begins the next
 interval. This makes it suitable for a frame tick: read

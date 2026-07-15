@@ -9,6 +9,7 @@ func seconds_between(start:int, end:int) float {
 
 pub struct Clock {
     last_microseconds:int
+    last_elapsed_seconds:float
     total_seconds:float
     time_scale:float = 1.0
     started:bool
@@ -16,6 +17,7 @@ pub struct Clock {
 
     func start() {
         self.last_microseconds = native_monotonic_microseconds()
+        self.last_elapsed_seconds = 0.0
         self.total_seconds = 0.0
         self.started = true
         self.paused = false
@@ -27,7 +29,10 @@ pub struct Clock {
         }
         let now = native_monotonic_microseconds()
         if (!self.paused) {
-            self.total_seconds += seconds_between(self.last_microseconds, now) * self.time_scale
+            self.last_elapsed_seconds = seconds_between(self.last_microseconds, now) * self.time_scale
+            self.total_seconds += self.last_elapsed_seconds
+        } else {
+            self.last_elapsed_seconds = 0.0
         }
         self.last_microseconds = now
     }
@@ -45,7 +50,8 @@ pub struct Clock {
             return
         }
         let now = native_monotonic_microseconds()
-        self.total_seconds += seconds_between(self.last_microseconds, now) * self.time_scale
+        self.last_elapsed_seconds = seconds_between(self.last_microseconds, now) * self.time_scale
+        self.total_seconds += self.last_elapsed_seconds
         self.last_microseconds = now
         self.paused = true
     }
@@ -56,7 +62,8 @@ pub struct Clock {
         }
         let now = native_monotonic_microseconds()
         if (!self.paused) {
-            self.total_seconds += seconds_between(self.last_microseconds, now) * self.time_scale
+            self.last_elapsed_seconds = seconds_between(self.last_microseconds, now) * self.time_scale
+            self.total_seconds += self.last_elapsed_seconds
         }
         self.last_microseconds = now
         self.started = false
@@ -70,7 +77,8 @@ pub struct Clock {
     func set_time_scale(scale:float) {
         if (self.started && !self.paused) {
             let now = native_monotonic_microseconds()
-            self.total_seconds += seconds_between(self.last_microseconds, now) * self.time_scale
+            self.last_elapsed_seconds = seconds_between(self.last_microseconds, now) * self.time_scale
+            self.total_seconds += self.last_elapsed_seconds
             self.last_microseconds = now
         }
         self.time_scale = scale
@@ -81,7 +89,10 @@ pub struct Clock {
     }
 
     func get_elapsed_seconds() float {
-        if (!self.started || self.paused) {
+        if (!self.started) {
+            return self.last_elapsed_seconds
+        }
+        if (self.paused) {
             return 0.0
         }
         return seconds_between(self.last_microseconds, native_monotonic_microseconds()) * self.time_scale

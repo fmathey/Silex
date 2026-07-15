@@ -63,11 +63,15 @@ func main() {
     print(clock.get_time_scale() == 2.0)
     while (clock.get_elapsed_seconds() <= 0.001) {}
     clock.stop()
+    let stopped_elapsed = clock.get_elapsed_seconds()
     let stopped_total = clock.get_total_seconds()
     wait.start()
     while (wait.get_elapsed_seconds() <= 0.001) {}
-    print(clock.get_elapsed_seconds() == 0.0)
+    let stopped_elapsed_is_frozen = stopped_elapsed > 0.0 && clock.get_elapsed_seconds() == stopped_elapsed
+    print(stopped_elapsed_is_frozen)
     print(!clock.is_paused())
     print(clock.get_total_seconds() == stopped_total)
-    print(clock.get_total_milliseconds() == stopped_total * 1_000.0)
+    let elapsed_milliseconds_are_consistent = clock.get_elapsed_milliseconds() == stopped_elapsed * 1_000.0
+    let total_milliseconds_are_consistent = clock.get_total_milliseconds() == stopped_total * 1_000.0
+    print(elapsed_milliseconds_are_consistent && total_milliseconds_are_consistent)
 }
