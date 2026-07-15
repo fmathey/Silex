@@ -1050,12 +1050,13 @@ pub fn build(b: *std.Build) void {
     local_imports_command.addArgs(&.{ "run", "Smokes/LocalImports/Main.sx" });
     local_imports_command.expectStdOutEqual(hostText(b, "2\n3\n9\n3\n7\n"));
 
+    const standard_library_output = "1065361344\n1152851127339773951\n508277857751731680\n6637030065269067181\n7345633470618427510\n8792660973527785782\n1082269761\n1152992998833853505\n1954144627577988649\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n1301891922867780472\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n";
     const standard_library_command = b.addRunArtifact(executable);
     standard_library_command.step.dependOn(&local_imports_command.step);
     standard_library_command.addArgs(&.{ "run", "Smokes/StandardLibrary/Main.sx" });
     standard_library_command.expectStdOutEqual(hostText(
         b,
-        "1065361344\n1152851127339773951\n508277857751731680\n6637030065269067181\n7345633470618427510\n8792660973527785782\n1082269761\n1152992998833853505\n1954144627577988649\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n1301891922867780472\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n",
+        standard_library_output,
     ));
 
     const qualified_parent_alias_command = b.addRunArtifact(executable);
@@ -1092,7 +1093,7 @@ pub fn build(b: *std.Build) void {
     standard_library_manifest_command.addArgs(&.{ "run", "Smokes/StandardLibrary/silex.json" });
     standard_library_manifest_command.expectStdOutEqual(hostText(
         b,
-        "1065361344\n1152851127339773951\n508277857751731680\n6637030065269067181\n7345633470618427510\n8792660973527785782\n1082269761\n1152992998833853505\n1954144627577988649\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n1301891922867780472\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n",
+        standard_library_output,
     ));
 
     const distributed_native_runtime_command = b.addRunArtifact(executable);
@@ -1298,7 +1299,7 @@ pub fn build(b: *std.Build) void {
         .root_module = distribution_module,
     });
     const host = b.graph.host.result;
-    const distribution_name = b.fmt("silex-0.9.0-{s}-{s}", .{
+    const distribution_name = b.fmt("silex-0.12.0-{s}-{s}", .{
         @tagName(host.cpu.arch),
         @tagName(host.os.tag),
     });
@@ -1337,7 +1338,7 @@ pub fn build(b: *std.Build) void {
     const verify_distribution = b.addSystemCommand(&.{ installed_silex, "run", "Main.sx" });
     verify_distribution.setCwd(distribution_check_files.getDirectory());
     verify_distribution.setEnvironmentVariable("PATH", "");
-    verify_distribution.expectStdOutEqual(hostText(b, "true\ntrue\n"));
+    verify_distribution.expectStdOutEqual(hostText(b, standard_library_output));
     verify_distribution.step.dependOn(distribution_step);
 
     const distribution_check_step = b.step("dist-check", "Build and verify the self-contained host distribution");
