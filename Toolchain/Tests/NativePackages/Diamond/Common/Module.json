@@ -1,0 +1,10 @@
+{
+  "name": "Common",
+  "version": "1.0.0",
+  "native": {
+    "provides": ["CommonNative"],
+    "sources": { "c": ["src/Common.c"] },
+    "public_include_dirs": ["include"],
+    "public_defines": { "COMMON_VALUE": "21" }
+  }
+}

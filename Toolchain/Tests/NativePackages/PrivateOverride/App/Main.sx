@@ -1,0 +1,5 @@
+import Consumer
+
+func main() {
+    print(Consumer.value())
+}

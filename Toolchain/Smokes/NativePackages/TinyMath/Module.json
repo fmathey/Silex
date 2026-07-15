@@ -1,0 +1,14 @@
+{
+  "name": "TinyMath",
+  "version": "1.0.0",
+  "native": {
+    "provides": ["TinyMath"],
+    "sources": {
+      "c": ["Vendor/TinyMath/src/TinyMath.c"]
+    },
+    "public_include_dirs": ["Vendor/TinyMath/include"],
+    "public_defines": {
+      "TINY_MATH_BIAS": "2"
+    }
+  }
+}

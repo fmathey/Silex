@@ -1,0 +1,11 @@
+{
+  "name": "Consumer",
+  "version": "1.0.0",
+  "dependencies": {
+    "Left": { "path": "../Left" },
+    "Right": { "path": "../Right" }
+  },
+  "native": {
+    "sources": { "cpp": ["Broken.cpp"] }
+  }
+}

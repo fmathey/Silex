@@ -5,6 +5,9 @@ const CppGenerator = @import("CppGenerator.zig");
 const Semantic = @import("Semantic.zig");
 const TargetModule = @import("Target.zig");
 const NativeDependency = @import("NativeDependency.zig");
+const NativeObjectCache = @import("NativeObjectCache.zig");
+const ModuleManifest = @import("ModuleManifest.zig");
+const PackageGraph = @import("PackageGraph.zig");
 const ProjectModule = @import("Project.zig");
 const Modules = @import("Modules.zig");
 const SourceGraph = @import("SourceGraph.zig");
@@ -12,7 +15,7 @@ const SourceGraph = @import("SourceGraph.zig");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
-pub const cache_format = "v21";
+pub const cache_format = "v24";
 pub const cache_entry_limit = 8;
 
 const NativeConfiguration = enum {
@@ -35,17 +38,20 @@ pub const Compilation = struct {
     artifact_root: []const u8,
     program_name: []const u8,
     cache_hit: bool,
+    compiled_packages: []const []const u8,
+    reused_packages: []const []const u8,
     target: TargetModule.Target,
 };
 
 pub fn compile(
     allocator: Allocator,
     io: Io,
+    environ_map: *const std.process.Environ.Map,
     input_path: []const u8,
     target: TargetModule.Target,
     native_dependencies: []const NativeDependency.Dependency,
 ) !Compilation {
-    var loader = SourceGraph.Loader.init(allocator, io);
+    var loader = SourceGraph.Loader.init(allocator, io, environ_map);
     const loaded = loader.load(input_path) catch |err| switch (err) {
         error.InvalidSource => return report(loader.source_paths.items, loader.diagnostic.?),
         else => |other| return other,
@@ -54,7 +60,15 @@ pub fn compile(
     const source_paths = loaded.source_paths;
     const source_contents = loaded.source_contents;
     const files = loaded.files;
-    const module_runtimes = try loadModuleRuntimes(allocator, io, project, target);
+    const module_runtimes = try loadModuleRuntimes(allocator, io, project, loaded.package_graph, target);
+    const object_plan = try NativeObjectCache.makePlan(
+        allocator,
+        io,
+        loaded.package_graph,
+        module_runtimes,
+        target,
+        default_native_configuration.compilerFlags(),
+    );
     const native_module_names = try nativeModuleNames(allocator, project);
     const canonical_source_paths = try canonicalizeSourcePaths(allocator, io, source_paths);
     const ast = if (project.single_file)
@@ -100,10 +114,15 @@ pub fn compile(
         source_contents,
         target,
         native_dependencies,
+        object_plan,
         module_runtimes,
         default_native_configuration,
     );
-    const cache_root = try std.fs.path.join(allocator, &.{ artifact_root, ".silex", "cache" });
+    const legacy_cache_root = try std.fs.path.join(allocator, &.{ artifact_root, ".silex", "cache" });
+    Io.Dir.cwd().deleteTree(io, legacy_cache_root) catch |err| {
+        std.debug.print("silex: warning: unable to remove legacy project cache: {t}\n", .{err});
+    };
+    const cache_root = try std.fs.path.join(allocator, &.{ artifact_root, ".silex", "build" });
     const version_cache_dir = try std.fs.path.join(allocator, &.{ cache_root, cache_format });
     const target_cache_dir = try std.fs.path.join(allocator, &.{ version_cache_dir, target_name });
     try Io.Dir.cwd().createDirPath(io, target_cache_dir);
@@ -126,6 +145,8 @@ pub fn compile(
         std.debug.print("silex: warning: unable to prune compilation cache: {t}\n", .{err});
     };
 
+    var compiled_packages: []const []const u8 = &.{};
+    var reused_packages: []const []const u8 = &.{};
     if (!cache_hit) {
         try Io.Dir.cwd().writeFile(io, .{ .sub_path = cpp_path, .data = cpp });
         const zig_path = resolveZig(allocator, io) catch {
@@ -135,7 +156,7 @@ pub fn compile(
             );
             return error.Reported;
         };
-        const runtime_objects = try compileModuleRuntimeObjects(
+        const local_runtime_objects = try compileLocalRuntimeObjects(
             allocator,
             io,
             zig_path,
@@ -145,16 +166,46 @@ pub fn compile(
             cache_dir,
             backend_log_path,
         );
+        const shared = NativeObjectCache.prepareShared(
+            allocator,
+            io,
+            environ_map,
+            zig_path,
+            target,
+            target_name,
+            default_native_configuration.compilerFlags(),
+            module_runtimes,
+            object_plan,
+            backend_log_path,
+        ) catch |err| switch (err) {
+            error.NativeObjectCompilationFailed => {
+                reportNativeBackendFailure(target_name, backend_log_path);
+                return error.Reported;
+            },
+            else => |other| return other,
+        };
+        compiled_packages = shared.compiled_packages;
+        reused_packages = shared.reused_packages;
         var arguments: std.ArrayList([]const u8) = .empty;
         try arguments.appendSlice(allocator, &.{ zig_path, "c++" });
         if (target.zig_triple) |triple| try arguments.appendSlice(allocator, &.{ "-target", triple });
         try arguments.appendSlice(allocator, default_native_configuration.compilerFlags());
         try arguments.appendSlice(allocator, &.{ "-std=c++23", "-Wno-nullability-completeness", cpp_path });
         for (native_dependencies) |dependency| try arguments.appendSlice(allocator, dependency.sources);
-        try arguments.appendSlice(allocator, runtime_objects);
-        for (module_runtimes) |runtime| {
-            for (runtime.system_libraries) |library| try arguments.append(allocator, try std.fmt.allocPrint(allocator, "-l{s}", .{library}));
-            for (runtime.frameworks) |framework| try arguments.appendSlice(allocator, &.{ "-framework", framework });
+        try arguments.appendSlice(allocator, local_runtime_objects);
+        try arguments.appendSlice(allocator, shared.objects);
+        var linked_libraries: std.ArrayList([]const u8) = .empty;
+        var linked_frameworks: std.ArrayList([]const u8) = .empty;
+        var runtime_link_index = module_runtimes.len;
+        while (runtime_link_index > 0) {
+            runtime_link_index -= 1;
+            const runtime = module_runtimes[runtime_link_index];
+            for (runtime.system_libraries) |library| if (try appendUniqueName(allocator, &linked_libraries, library)) {
+                try arguments.append(allocator, try std.fmt.allocPrint(allocator, "-l{s}", .{library}));
+            };
+            for (runtime.frameworks) |framework| if (try appendUniqueName(allocator, &linked_frameworks, framework)) {
+                try arguments.appendSlice(allocator, &.{ "-framework", framework });
+            };
         }
         try arguments.appendSlice(allocator, &.{ "-o", temporary_executable_path });
 
@@ -182,6 +233,8 @@ pub fn compile(
         .artifact_root = artifact_root,
         .program_name = program_name,
         .cache_hit = cache_hit,
+        .compiled_packages = compiled_packages,
+        .reused_packages = reused_packages,
         .target = target,
     };
 }
@@ -198,49 +251,246 @@ fn loadModuleRuntimes(
     allocator: Allocator,
     io: Io,
     project: ProjectModule.Project,
+    package_graph: PackageGraph.Graph,
     target: TargetModule.Target,
 ) ![]const NativeDependency.ModuleRuntime {
-    var runtimes: std.ArrayList(NativeDependency.ModuleRuntime) = .empty;
-    const target_name = try target.cacheName(allocator);
-    for (project.modules) |module| {
-        const manifest_path = module.module_manifest_path orelse continue;
-        var already_loaded = false;
-        for (runtimes.items) |runtime| {
-            if (std.mem.eql(u8, runtime.manifest_path, manifest_path)) {
-                already_loaded = true;
-                break;
-            }
-        }
-        if (already_loaded) continue;
-        const module_directory = module.native_module_directory.?;
-        const runtime_name = module.native_runtime_name orelse module.name;
-        const runtime = NativeDependency.loadModuleRuntime(
+    var loaded_runtimes: std.ArrayList(NativeDependency.ModuleRuntime) = .empty;
+    for (package_graph.packages, 0..) |package, package_index| {
+        const manifest_path = package.manifest_path orelse continue;
+        const manifest = ModuleManifest.load(allocator, io, manifest_path) catch |err| {
+            std.debug.print("silex: invalid module manifest at '{s}': {t}\n", .{ manifest_path, err });
+            return error.Reported;
+        };
+        if (manifest.native == null) continue;
+        const runtime_name = package.name orelse project.modules[project.target_module].name;
+        try appendModuleRuntime(
             allocator,
             io,
+            &loaded_runtimes,
             runtime_name,
-            module_directory,
+            package.root,
+            package.root,
             manifest_path,
+            package_index,
             target,
-        ) catch |err| switch (err) {
-            error.NativeModuleTargetUnsupported => {
-                std.debug.print("silex: native module '{s}' does not support target '{s}'\n", .{ runtime_name, target_name });
-                return error.Reported;
-            },
-            else => {
-                std.debug.print("silex: invalid module manifest for module '{s}' at '{s}': {t}\n", .{
-                    runtime_name,
-                    manifest_path,
-                    err,
-                });
-                return error.Reported;
-            },
-        };
-        try runtimes.append(allocator, runtime);
+        );
+    }
+    for (project.modules) |module| {
+        const manifest_path = module.module_manifest_path orelse continue;
+        try appendModuleRuntime(
+            allocator,
+            io,
+            &loaded_runtimes,
+            module.native_runtime_name orelse module.name,
+            module.native_module_directory.?,
+            package_graph.packages[module.package_index].root,
+            manifest_path,
+            module.package_index,
+            target,
+        );
+    }
+
+    try validateNativeProviders(package_graph, loaded_runtimes.items);
+    try validatePackagePublicDefines(allocator, package_graph, loaded_runtimes.items);
+
+    var package_order: std.ArrayList(usize) = .empty;
+    const visited = try allocator.alloc(bool, package_graph.packages.len);
+    @memset(visited, false);
+    try appendPackageOrder(allocator, package_graph, 0, visited, &package_order);
+
+    var runtimes: std.ArrayList(NativeDependency.ModuleRuntime) = .empty;
+    for (package_order.items) |package_index| {
+        for (loaded_runtimes.items) |runtime| {
+            if (runtime.package_index != package_index) continue;
+            try runtimes.append(allocator, try applyDirectNativeInterface(
+                allocator,
+                package_graph,
+                loaded_runtimes.items,
+                runtime,
+            ));
+        }
     }
     return runtimes.toOwnedSlice(allocator);
 }
 
-fn compileModuleRuntimeObjects(
+fn appendModuleRuntime(
+    allocator: Allocator,
+    io: Io,
+    runtimes: *std.ArrayList(NativeDependency.ModuleRuntime),
+    runtime_name: []const u8,
+    module_directory: []const u8,
+    package_root: []const u8,
+    manifest_path: []const u8,
+    package_index: usize,
+    target: TargetModule.Target,
+) !void {
+    for (runtimes.items) |runtime| if (std.mem.eql(u8, runtime.manifest_path, manifest_path)) return;
+    var diagnostic: ?NativeDependency.ModuleRuntimeDiagnostic = null;
+    var runtime = NativeDependency.loadModuleRuntime(
+        allocator,
+        io,
+        runtime_name,
+        module_directory,
+        package_root,
+        manifest_path,
+        target,
+        &diagnostic,
+    ) catch |err| switch (err) {
+        error.DuplicateNativeSource => {
+            const duplicate = diagnostic.?.duplicate_source;
+            std.debug.print(
+                "silex: native module '{s}' repeats source '{s}' in '{s}' and '{s}'\n",
+                .{ runtime_name, duplicate.path, duplicate.first_level, duplicate.repeated_level },
+            );
+            return error.Reported;
+        },
+        else => {
+            std.debug.print("silex: invalid module manifest for module '{s}' at '{s}': {t}\n", .{
+                runtime_name,
+                manifest_path,
+                err,
+            });
+            return error.Reported;
+        },
+    };
+    runtime.package_index = package_index;
+    try runtimes.append(allocator, runtime);
+}
+
+const PublicDefineRequirement = struct {
+    define: NativeDependency.Define,
+    package_index: usize,
+};
+
+fn appendPackageOrder(
+    allocator: Allocator,
+    graph: PackageGraph.Graph,
+    package_index: usize,
+    visited: []bool,
+    order: *std.ArrayList(usize),
+) !void {
+    if (visited[package_index]) return;
+    visited[package_index] = true;
+    for (graph.packages[package_index].dependencies) |dependency| {
+        try appendPackageOrder(allocator, graph, dependency.package_index, visited, order);
+    }
+    try order.append(allocator, package_index);
+}
+
+fn validateNativeProviders(
+    graph: PackageGraph.Graph,
+    runtimes: []const NativeDependency.ModuleRuntime,
+) !void {
+    for (runtimes, 0..) |runtime, runtime_index| for (runtime.provides) |provided| {
+        for (runtimes[0..runtime_index]) |existing| {
+            if (existing.package_index == runtime.package_index) continue;
+            for (existing.provides) |existing_provided| {
+                if (!std.mem.eql(u8, existing_provided, provided)) continue;
+                std.debug.print(
+                    "silex: native identity '{s}' is provided by both {s} and {s}\n",
+                    .{
+                        provided,
+                        graph.packages[existing.package_index].first_chain,
+                        graph.packages[runtime.package_index].first_chain,
+                    },
+                );
+                return error.Reported;
+            }
+        }
+    };
+}
+
+fn validatePackagePublicDefines(
+    allocator: Allocator,
+    graph: PackageGraph.Graph,
+    runtimes: []const NativeDependency.ModuleRuntime,
+) !void {
+    for (graph.packages) |package| {
+        var requirements: std.ArrayList(PublicDefineRequirement) = .empty;
+        for (package.dependencies) |dependency| {
+            for (runtimes) |runtime| {
+                if (runtime.package_index != dependency.package_index) continue;
+                for (runtime.public_defines) |define| {
+                    for (requirements.items) |existing| {
+                        if (!std.mem.eql(u8, existing.define.name, define.name)) continue;
+                        if (std.mem.eql(u8, existing.define.value, define.value)) break;
+                        std.debug.print(
+                            "silex: package {s} requires conflicting public define '{s}': '{s}' from {s} and '{s}' from {s}\n",
+                            .{
+                                package.first_chain,
+                                define.name,
+                                existing.define.value,
+                                graph.packages[existing.package_index].first_chain,
+                                define.value,
+                                graph.packages[dependency.package_index].first_chain,
+                            },
+                        );
+                        return error.Reported;
+                    } else try requirements.append(allocator, .{
+                        .define = define,
+                        .package_index = dependency.package_index,
+                    });
+                }
+            }
+        }
+    }
+}
+
+fn applyDirectNativeInterface(
+    allocator: Allocator,
+    graph: PackageGraph.Graph,
+    runtimes: []const NativeDependency.ModuleRuntime,
+    runtime: NativeDependency.ModuleRuntime,
+) !NativeDependency.ModuleRuntime {
+    var include_dirs: std.ArrayList([]const u8) = .empty;
+    try include_dirs.appendSlice(allocator, runtime.include_dirs);
+    var defines: std.ArrayList(NativeDependency.Define) = .empty;
+    try defines.appendSlice(allocator, runtime.defines);
+
+    for (graph.packages[runtime.package_index].dependencies) |dependency| {
+        for (runtimes) |dependency_runtime| {
+            if (dependency_runtime.package_index != dependency.package_index) continue;
+            for (dependency_runtime.public_include_dirs) |include_dir| {
+                _ = try appendUniqueName(allocator, &include_dirs, include_dir);
+            }
+            for (dependency_runtime.public_defines) |define| {
+                for (defines.items) |existing| {
+                    if (!std.mem.eql(u8, existing.name, define.name)) continue;
+                    if (std.mem.eql(u8, existing.value, define.value)) break;
+                    std.debug.print(
+                        "silex: native module '{s}' defines '{s}={s}' but direct dependency {s} requires '{s}={s}'\n",
+                        .{
+                            runtime.module_name,
+                            existing.name,
+                            existing.value,
+                            graph.packages[dependency.package_index].first_chain,
+                            define.name,
+                            define.value,
+                        },
+                    );
+                    return error.Reported;
+                } else try defines.append(allocator, define);
+            }
+        }
+    }
+
+    var composed = runtime;
+    composed.include_dirs = try include_dirs.toOwnedSlice(allocator);
+    composed.defines = try defines.toOwnedSlice(allocator);
+    return composed;
+}
+
+fn appendUniqueName(
+    allocator: Allocator,
+    values: *std.ArrayList([]const u8),
+    value: []const u8,
+) !bool {
+    for (values.items) |existing| if (std.mem.eql(u8, existing, value)) return false;
+    try values.append(allocator, value);
+    return true;
+}
+
+fn compileLocalRuntimeObjects(
     allocator: Allocator,
     io: Io,
     zig_path: []const u8,
@@ -252,6 +502,7 @@ fn compileModuleRuntimeObjects(
 ) ![]const []const u8 {
     var objects: std.ArrayList([]const u8) = .empty;
     for (runtimes, 0..) |runtime, runtime_index| {
+        if (runtime.package_index != 0) continue;
         for (runtime.sources, 0..) |source, source_index| {
             const object_name = try std.fmt.allocPrint(allocator, "native-{d}-{d}.o", .{ runtime_index, source_index });
             const object_path = try std.fs.path.join(allocator, &.{ cache_dir, object_name });
@@ -263,9 +514,14 @@ fn compileModuleRuntimeObjects(
             try arguments.appendSlice(allocator, &.{ zig_path, driver });
             if (target.zig_triple) |triple| try arguments.appendSlice(allocator, &.{ "-target", triple });
             try arguments.appendSlice(allocator, default_native_configuration.compilerFlags());
-            if (source.kind == .cpp or source.kind == .objective_cpp) try arguments.append(allocator, "-std=c++23");
+            if (source.kind == .cpp or source.kind == .objective_cpp) {
+                try arguments.appendSlice(allocator, &.{ "-std=c++23", "-Wno-nullability-completeness" });
+            }
             for (runtime.include_dirs) |include_dir| try arguments.append(allocator, try std.fmt.allocPrint(allocator, "-I{s}", .{include_dir}));
-            for (runtime.defines) |define| try arguments.append(allocator, try std.fmt.allocPrint(allocator, "-D{s}", .{define}));
+            for (runtime.defines) |define| try arguments.append(
+                allocator,
+                try std.fmt.allocPrint(allocator, "-D{s}={s}", .{ define.name, define.value }),
+            );
             try arguments.appendSlice(allocator, &.{ "-c", source.path, "-o", object_path });
 
             const result = try std.process.run(allocator, io, .{
@@ -374,6 +630,7 @@ fn cacheKey(
     source_contents: []const []const u8,
     target: TargetModule.Target,
     native_dependencies: []const NativeDependency.Dependency,
+    object_plan: NativeObjectCache.Plan,
     module_runtimes: []const NativeDependency.ModuleRuntime,
     native_configuration: NativeConfiguration,
 ) ![64]u8 {
@@ -417,44 +674,24 @@ fn cacheKey(
             hasher.update(source);
         }
     }
-    for (module_runtimes) |runtime| try hashNativeModuleDirectory(allocator, io, &hasher, runtime.module_directory);
+    for (object_plan.entries) |entry| {
+        hasher.update("\x00native-object-set\x00");
+        hasher.update(&entry.key);
+    }
+    for (module_runtimes) |runtime| {
+        for (runtime.system_libraries) |library| {
+            hasher.update("\x00system-library\x00");
+            hasher.update(library);
+        }
+        for (runtime.frameworks) |framework| {
+            hasher.update("\x00framework\x00");
+            hasher.update(framework);
+        }
+    }
 
     var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
     hasher.final(&digest);
     return std.fmt.bytesToHex(digest, .lower);
-}
-
-fn hashNativeModuleDirectory(
-    allocator: Allocator,
-    io: Io,
-    hasher: *std.crypto.hash.sha2.Sha256,
-    directory_path: []const u8,
-) !void {
-    var directory = try Io.Dir.cwd().openDir(io, directory_path, .{ .iterate = true });
-    defer directory.close(io);
-    var names: std.ArrayList([]const u8) = .empty;
-    var iterator = directory.iterateAssumeFirstIteration();
-    while (try iterator.next(io)) |entry| try names.append(allocator, try allocator.dupe(u8, entry.name));
-    std.mem.sort([]const u8, names.items, {}, struct {
-        fn lessThan(_: void, left: []const u8, right: []const u8) bool {
-            return std.mem.lessThan(u8, left, right);
-        }
-    }.lessThan);
-    for (names.items) |name| {
-        const path = try std.fs.path.join(allocator, &.{ directory_path, name });
-        const stat = try Io.Dir.cwd().statFile(io, path, .{});
-        switch (stat.kind) {
-            .file => {
-                const contents = try Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(16 * 1024 * 1024));
-                hasher.update("\x00native-module-file\x00");
-                hasher.update(path);
-                hasher.update("\x00");
-                hasher.update(contents);
-            },
-            .directory => try hashNativeModuleDirectory(allocator, io, hasher, path),
-            else => {},
-        }
-    }
 }
 
 fn canonicalizeSourcePaths(allocator: Allocator, io: Io, source_paths: []const []const u8) ![]const []const u8 {
@@ -578,10 +815,11 @@ fn fileExists(io: Io, path: []const u8) !bool {
 test "cache key follows generated content" {
     const target = TargetModule.Target.native();
     const project = testProject();
-    const first = try cacheKey(std.testing.allocator, std.testing.io, "first", project, &.{"Test.sx"}, &.{"source"}, target, &.{}, &.{}, .optimized);
-    const repeated = try cacheKey(std.testing.allocator, std.testing.io, "first", project, &.{"Test.sx"}, &.{"source"}, target, &.{}, &.{}, .optimized);
-    const changed = try cacheKey(std.testing.allocator, std.testing.io, "second", project, &.{"Test.sx"}, &.{"source"}, target, &.{}, &.{}, .optimized);
-    const changed_source = try cacheKey(std.testing.allocator, std.testing.io, "first", project, &.{"Test.sx"}, &.{"changed source"}, target, &.{}, &.{}, .optimized);
+    const plan: NativeObjectCache.Plan = .{ .entries = &.{} };
+    const first = try cacheKey(std.testing.allocator, std.testing.io, "first", project, &.{"Test.sx"}, &.{"source"}, target, &.{}, plan, &.{}, .optimized);
+    const repeated = try cacheKey(std.testing.allocator, std.testing.io, "first", project, &.{"Test.sx"}, &.{"source"}, target, &.{}, plan, &.{}, .optimized);
+    const changed = try cacheKey(std.testing.allocator, std.testing.io, "second", project, &.{"Test.sx"}, &.{"source"}, target, &.{}, plan, &.{}, .optimized);
+    const changed_source = try cacheKey(std.testing.allocator, std.testing.io, "first", project, &.{"Test.sx"}, &.{"changed source"}, target, &.{}, plan, &.{}, .optimized);
     try std.testing.expectEqualSlices(u8, &first, &repeated);
     try std.testing.expect(!std.mem.eql(u8, &first, &changed));
     try std.testing.expect(!std.mem.eql(u8, &first, &changed_source));
@@ -590,50 +828,10 @@ test "cache key follows generated content" {
 test "cache key separates native configurations" {
     const target = TargetModule.Target.native();
     const project = testProject();
-    const optimized = try cacheKey(std.testing.allocator, std.testing.io, "program", project, &.{"Test.sx"}, &.{"source"}, target, &.{}, &.{}, .optimized);
-    const unoptimized = try cacheKey(std.testing.allocator, std.testing.io, "program", project, &.{"Test.sx"}, &.{"source"}, target, &.{}, &.{}, .unoptimized);
+    const plan: NativeObjectCache.Plan = .{ .entries = &.{} };
+    const optimized = try cacheKey(std.testing.allocator, std.testing.io, "program", project, &.{"Test.sx"}, &.{"source"}, target, &.{}, plan, &.{}, .optimized);
+    const unoptimized = try cacheKey(std.testing.allocator, std.testing.io, "program", project, &.{"Test.sx"}, &.{"source"}, target, &.{}, plan, &.{}, .unoptimized);
     try std.testing.expect(!std.mem.eql(u8, &optimized, &unoptimized));
-}
-
-test "native module headers invalidate the cache key" {
-    var temporary = std.testing.tmpDir(.{ .iterate = true });
-    defer temporary.cleanup();
-
-    try temporary.dir.createDir(std.testing.io, "NativeRuntime", .default_dir);
-    try temporary.dir.writeFile(std.testing.io, .{
-        .sub_path = "NativeRuntime/Module.json",
-        .data = "{\"native\":{\"common\":{},\"targets\":{}}}",
-    });
-    try temporary.dir.writeFile(std.testing.io, .{
-        .sub_path = "NativeRuntime/Runtime.hpp",
-        .data = "#define VALUE 1\n",
-    });
-    const module_directory = try std.fs.path.join(std.testing.allocator, &.{
-        ".zig-cache",
-        "tmp",
-        &temporary.sub_path,
-        "NativeRuntime",
-    });
-    defer std.testing.allocator.free(module_directory);
-    const runtime = NativeDependency.ModuleRuntime{
-        .module_name = "NativeRuntime",
-        .module_directory = module_directory,
-        .manifest_path = try std.fs.path.join(std.testing.allocator, &.{ module_directory, "Module.json" }),
-        .sources = &.{},
-        .include_dirs = &.{},
-        .defines = &.{},
-        .system_libraries = &.{},
-        .frameworks = &.{},
-    };
-    const target = TargetModule.Target.native();
-    const project = testProject();
-    const first = try cacheKey(std.testing.allocator, std.testing.io, "program", project, &.{"Test.sx"}, &.{"source"}, target, &.{}, &.{runtime}, .optimized);
-    try temporary.dir.writeFile(std.testing.io, .{
-        .sub_path = "NativeRuntime/Runtime.hpp",
-        .data = "#define VALUE 2\n",
-    });
-    const changed = try cacheKey(std.testing.allocator, std.testing.io, "program", project, &.{"Test.sx"}, &.{"source"}, target, &.{}, &.{runtime}, .optimized);
-    try std.testing.expect(!std.mem.eql(u8, &first, &changed));
 }
 
 test "native system linkage always reruns the final link" {
@@ -699,9 +897,9 @@ test "clean removes all Silex artifacts" {
     var temporary = std.testing.tmpDir(.{ .iterate = true });
     defer temporary.cleanup();
 
-    try temporary.dir.createDirPath(std.testing.io, ".silex/cache/v15");
+    try temporary.dir.createDirPath(std.testing.io, ".silex/build/v15");
     try temporary.dir.writeFile(std.testing.io, .{
-        .sub_path = ".silex/cache/v15/probe",
+        .sub_path = ".silex/build/v15/probe",
         .data = "cached",
     });
     const artifact_root = try std.fs.path.join(std.testing.allocator, &.{

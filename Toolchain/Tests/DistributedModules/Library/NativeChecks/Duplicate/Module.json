@@ -1,0 +1,12 @@
+{
+  "native": {
+    "sources": {
+      "c": [
+        "Runtime.c"
+      ],
+      "cpp": [
+        "Runtime.c"
+      ]
+    }
+  }
+}

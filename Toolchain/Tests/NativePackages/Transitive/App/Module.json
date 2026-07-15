@@ -1,0 +1,8 @@
+{
+  "dependencies": {
+    "Foundation": { "path": "../Foundation" }
+  },
+  "native": {
+    "sources": { "cpp": ["App.cpp"] }
+  }
+}

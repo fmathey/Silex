@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "Left": { "path": "../Left" },
+    "Right": { "path": "../Right" }
+  }
+}

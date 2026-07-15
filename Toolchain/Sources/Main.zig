@@ -1,6 +1,9 @@
 const std = @import("std");
+const build_options = @import("build_options");
 const Compiler = @import("Compiler.zig");
 const Lsp = @import("Lsp.zig");
+const ModuleInit = @import("ModuleInit.zig");
+const PackageGraph = @import("PackageGraph.zig");
 const TargetModule = @import("Target.zig");
 const NativeDependency = @import("NativeDependency.zig");
 
@@ -24,12 +27,14 @@ fn runCli(init: std.process.Init) !u8 {
     }
 
     if (args.len == 2 and std.mem.eql(u8, args[1], "--version")) {
-        try Io.File.stdout().writeStreamingAll(init.io, "Silex 0.12.0\n");
+        try Io.File.stdout().writeStreamingAll(init.io, "Silex " ++ build_options.silex_version ++ "\n");
         return 0;
     }
 
-    if (std.mem.eql(u8, args[1], "compile")) return compileCommand(allocator, init.io, args[2..]);
-    if (std.mem.eql(u8, args[1], "run")) return runCommand(allocator, init.io, args[2..]);
+    if (std.mem.eql(u8, args[1], "compile")) return compileCommand(allocator, init.io, init.environ_map, args[2..]);
+    if (std.mem.eql(u8, args[1], "run")) return runCommand(allocator, init.io, init.environ_map, args[2..]);
+    if (std.mem.eql(u8, args[1], "update")) return updateCommand(allocator, init.io, init.environ_map, args[2..]);
+    if (std.mem.eql(u8, args[1], "module")) return moduleCommand(allocator, init.io, args[2..]);
     if (std.mem.eql(u8, args[1], "clean")) return cleanCommand(allocator, init.io, args[2..]);
     if (std.mem.eql(u8, args[1], "lsp")) return Lsp.run(allocator, init.io);
 
@@ -37,7 +42,19 @@ fn runCli(init: std.process.Init) !u8 {
     return 1;
 }
 
-fn compileCommand(allocator: Allocator, io: Io, args: []const []const u8) !u8 {
+fn moduleCommand(allocator: Allocator, io: Io, args: []const []const u8) !u8 {
+    if (args.len == 0) {
+        std.debug.print("silex: module expects the 'init' command\n", .{});
+        return 1;
+    }
+    if (!std.mem.eql(u8, args[0], "init")) {
+        std.debug.print("silex: unknown module command '{s}'\n", .{args[0]});
+        return 1;
+    }
+    return ModuleInit.run(allocator, io, args[1..]);
+}
+
+fn compileCommand(allocator: Allocator, io: Io, environ_map: *const std.process.Environ.Map, args: []const []const u8) !u8 {
     if (args.len == 0) {
         std.debug.print("silex: missing source or project manifest\n\n{s}", .{usage});
         return 1;
@@ -86,7 +103,7 @@ fn compileCommand(allocator: Allocator, io: Io, args: []const []const u8) !u8 {
         }
     }
 
-    const compilation = try Compiler.compile(allocator, io, input_path, target, native_dependencies.items);
+    const compilation = try Compiler.compile(allocator, io, environ_map, input_path, target, native_dependencies.items);
     const output = output_path orelse try Compiler.defaultOutputPath(
         allocator,
         compilation.artifact_root,
@@ -103,12 +120,17 @@ fn compileCommand(allocator: Allocator, io: Io, args: []const []const u8) !u8 {
         std.debug.print("Generated C++: {s}\n", .{generated_path});
     }
 
-    const status = if (compilation.cache_hit) "Up to date" else "Compiled";
-    std.debug.print("{s} {s} -> {s}\n", .{ status, input_path, output });
+    for (compilation.compiled_packages) |package| std.debug.print("Compiled native package {s}\n", .{package});
+    for (compilation.reused_packages) |package| std.debug.print("Reused native package {s}\n", .{package});
+    if (compilation.cache_hit) {
+        std.debug.print("Up to date {s} -> {s}\n", .{ input_path, output });
+    } else {
+        std.debug.print("Linked application {s} -> {s}\n", .{ input_path, output });
+    }
     return 0;
 }
 
-fn runCommand(allocator: Allocator, io: Io, args: []const []const u8) !u8 {
+fn runCommand(allocator: Allocator, io: Io, environ_map: *const std.process.Environ.Map, args: []const []const u8) !u8 {
     if (args.len == 0) {
         std.debug.print("silex: run expects a source or project manifest\n\n{s}", .{usage});
         return 1;
@@ -136,6 +158,7 @@ fn runCommand(allocator: Allocator, io: Io, args: []const []const u8) !u8 {
     const compilation = try Compiler.compile(
         allocator,
         io,
+        environ_map,
         args[0],
         TargetModule.Target.native(),
         native_dependencies.items,
@@ -143,6 +166,17 @@ fn runCommand(allocator: Allocator, io: Io, args: []const []const u8) !u8 {
     const term = try Compiler.runProcess(io, &.{compilation.executable_path});
     if (runTerminationMessage(term)) |message| std.debug.print("{s}", .{message});
     return Compiler.exitCode(term);
+}
+
+fn updateCommand(allocator: Allocator, io: Io, environ_map: *const std.process.Environ.Map, args: []const []const u8) !u8 {
+    if (args.len > 1) {
+        std.debug.print("silex: update accepts at most one package name\n\n{s}", .{usage});
+        return 1;
+    }
+    const mode: PackageGraph.Mode = if (args.len == 0) .update_all else .{ .update_one = args[0] };
+    _ = try PackageGraph.resolve(allocator, io, environ_map, ".", mode);
+    std.debug.print("Updated Silex.lock\n", .{});
+    return 0;
 }
 
 fn runTerminationMessage(term: std.process.Child.Term) ?[]const u8 {
@@ -189,6 +223,8 @@ const usage =
     \\  silex compile <source.sx|project.json> [-o <executable>] [--emit-cpp]
     \\      [--target <arch-os-abi>] [--native <dependency.json>]
     \\  silex run <source.sx|project.json> [--native <dependency.json>]
+    \\  silex module init <directory> [--native]
+    \\  silex update [package]
     \\  silex clean
     \\  silex lsp
     \\  silex --help

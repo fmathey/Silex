@@ -1,0 +1,9 @@
+{
+  "name": "Second",
+  "version": "1.0.0",
+  "dependencies": {
+    "First": {
+      "path": "../First"
+    }
+  }
+}

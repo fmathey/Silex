@@ -6,6 +6,9 @@ const Io = std.Io;
 pub const Manifest = struct {
     author: ?[]const u8 = null,
     description: ?[]const u8 = null,
+    name: ?[]const u8 = null,
+    version: ?[]const u8 = null,
+    dependencies: ?std.json.Value = null,
     native: ?std.json.Value = null,
 };
 
@@ -34,4 +37,12 @@ test "module metadata and native configuration are optional" {
     if (parse(allocator, "{\"unknown\":true}")) |_| {
         return error.TestExpectedError;
     } else |_| {}
+
+    const package = try parse(
+        allocator,
+        "{\"name\":\"Foundation\",\"version\":\"1.2.3\",\"dependencies\":{\"Utility\":{\"path\":\"../Utility\"}}}",
+    );
+    try std.testing.expectEqualStrings("Foundation", package.name.?);
+    try std.testing.expectEqualStrings("1.2.3", package.version.?);
+    try std.testing.expect(package.dependencies != null);
 }

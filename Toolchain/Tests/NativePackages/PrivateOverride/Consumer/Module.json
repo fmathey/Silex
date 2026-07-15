@@ -1,0 +1,11 @@
+{
+  "name": "Consumer",
+  "version": "1.0.0",
+  "dependencies": {
+    "Provider": { "path": "../Provider" }
+  },
+  "native": {
+    "sources": { "cpp": ["Broken.cpp"] },
+    "defines": { "SHARED_MODE": "private" }
+  }
+}

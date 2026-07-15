@@ -1,27 +1,9 @@
 {
   "native": {
-    "common": {
-      "sources": {
-        "c": [],
-        "cpp": [
-          "Runtime.cpp"
-        ],
-        "objective_c": [],
-        "objective_cpp": []
-      },
-      "include_dirs": [],
-      "defines": {},
-      "system_libraries": [],
-      "frameworks": []
-    },
-    "targets": {
-      "aarch64-macos-none": {},
-      "x86_64-macos-none": {},
-      "x86_64-linux-gnu": {},
-      "aarch64-linux-musl": {},
-      "x86_64-linux-musl": {},
-      "x86_64-windows-gnu": {},
-      "x86_64-windows-msvc": {}
+    "sources": {
+      "cpp": [
+        "Runtime.cpp"
+      ]
     }
   }
 }

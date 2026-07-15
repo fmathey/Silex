@@ -1,0 +1,6 @@
+import Foundation.Math
+import Utility
+
+pub func answer() int {
+    return Utility.base() + Foundation.Math.one() + 2
+}

@@ -1,0 +1,5 @@
+import NativeChecks.Duplicate
+
+func main() {
+    print(NativeChecks.Duplicate.value())
+}

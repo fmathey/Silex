@@ -1,0 +1,8 @@
+{
+  "name": "Provider",
+  "version": "1.0.0",
+  "native": {
+    "public_include_dirs": ["include"],
+    "public_defines": { "SHARED_MODE": "public" }
+  }
+}

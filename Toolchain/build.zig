@@ -1,10 +1,12 @@
 const std = @import("std");
+const silex_version = "0.13.0";
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
     const build_options = b.addOptions();
+    build_options.addOption([]const u8, "silex_version", silex_version);
     build_options.addOption([]const u8, "developer_zig", b.graph.zig_exe);
     build_options.addOption([]const u8, "developer_standard_library_root", b.getInstallPath(.prefix, "lib/silex"));
 
@@ -21,6 +23,7 @@ pub fn build(b: *std.Build) void {
     });
 
     const native_module_test_options = b.addOptions();
+    native_module_test_options.addOption([]const u8, "silex_version", silex_version);
     native_module_test_options.addOption([]const u8, "developer_zig", b.graph.zig_exe);
     native_module_test_options.addOption(
         []const u8,
@@ -36,6 +39,30 @@ pub fn build(b: *std.Build) void {
     const native_module_test_executable = b.addExecutable(.{
         .name = "silex-native-module-tests",
         .root_module = native_module_test_module,
+    });
+    const module_init_smoke_setup = b.addExecutable(.{
+        .name = "silex-module-init-smoke-setup",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("Tests/ModuleInitSmokeSetup.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const git_packages_integration = b.addExecutable(.{
+        .name = "silex-git-packages-integration",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("Tests/GitPackagesIntegration.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const native_object_cache_integration = b.addExecutable(.{
+        .name = "silex-native-object-cache-integration",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("Tests/NativeObjectCacheIntegration.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
     b.installArtifact(executable);
     const install_library = b.addInstallDirectory(.{
@@ -74,6 +101,21 @@ pub fn build(b: *std.Build) void {
     invalid_command.expectStdErrEqual(
         "Tests/InvalidArithmetic.sx:2:19: error: arithmetic operator requires numeric operands, found 'str' and 'int'\n",
     );
+
+    const missing_module_subcommand_command = b.addRunArtifact(executable);
+    missing_module_subcommand_command.addArg("module");
+    missing_module_subcommand_command.expectExitCode(1);
+    missing_module_subcommand_command.expectStdErrEqual("silex: module expects the 'init' command\n");
+
+    const missing_module_init_path_command = b.addRunArtifact(executable);
+    missing_module_init_path_command.addArgs(&.{ "module", "init" });
+    missing_module_init_path_command.expectExitCode(1);
+    missing_module_init_path_command.expectStdErrEqual("silex: module init expects a directory path\n");
+
+    const invalid_module_init_option_command = b.addRunArtifact(executable);
+    invalid_module_init_option_command.addArgs(&.{ "module", "init", "Core", "--force" });
+    invalid_module_init_option_command.expectExitCode(1);
+    invalid_module_init_option_command.expectStdErrEqual("silex: module init does not accept option '--force'\n");
 
     const immutable_assignment_command = b.addRunArtifact(executable);
     immutable_assignment_command.addArgs(&.{ "compile", "Tests/InvalidImmutableAssignment.sx" });
@@ -138,8 +180,17 @@ pub fn build(b: *std.Build) void {
         "runtime error: native function 'NativeChecks.Throw.native_fail' failed: planned native failure\n",
     );
 
+    const duplicate_native_source_command = b.addRunArtifact(native_module_test_executable);
+    duplicate_native_source_command.step.dependOn(&native_exception_command.step);
+    duplicate_native_source_command.addArgs(&.{ "compile", "Tests/DistributedModules/NativeDuplicateSource/Main.sx" });
+    duplicate_native_source_command.expectExitCode(1);
+    duplicate_native_source_command.expectStdErrEqual(b.fmt(
+        "silex: native module 'NativeChecks.Duplicate' repeats source '{s}' in 'native' and 'native'\n",
+        .{b.pathFromRoot("Tests/DistributedModules/Library/NativeChecks/Duplicate/Runtime.c")},
+    ));
+
     const inherited_native_runtime_command = b.addRunArtifact(native_module_test_executable);
-    inherited_native_runtime_command.step.dependOn(&native_exception_command.step);
+    inherited_native_runtime_command.step.dependOn(&duplicate_native_source_command.step);
     inherited_native_runtime_command.addArgs(&.{ "run", "Tests/DistributedModules/NativeInherited/Main.sx" });
     inherited_native_runtime_command.expectStdOutEqual(hostText(b, "42\n"));
 
@@ -606,7 +657,7 @@ pub fn build(b: *std.Build) void {
         "silex: native compilation failed for target 'x86_64-linux-musl'; target support, SDKs, or native sources may be unavailable or incomplete\n",
     );
     backend_discovered_target_failure_command.expectStdErrMatch(b.fmt(
-        "silex: backend details: .silex{c}cache{c}v21{c}x86_64-linux-musl{c}",
+        "silex: backend details: .silex{c}build{c}v24{c}x86_64-linux-musl{c}",
         .{
             std.fs.path.sep,
             std.fs.path.sep,
@@ -696,11 +747,119 @@ pub fn build(b: *std.Build) void {
     parent_only_import_command.addArgs(&.{ "run", "Tests/LocalImports/ParentOnly/Main.sx" });
     parent_only_import_command.expectStdOutEqual(hostText(b, "parent only\n"));
 
+    const package_diamond_command = b.addRunArtifact(executable);
+    package_diamond_command.addArgs(&.{ "run", "Tests/Packages/Diamond/App/Main.sx" });
+    package_diamond_command.expectStdOutEqual(hostText(b, "23\n"));
+
+    const transitive_package_visibility_command = b.addRunArtifact(executable);
+    transitive_package_visibility_command.addArgs(&.{ "compile", "Tests/Packages/Visibility/App/Main.sx" });
+    transitive_package_visibility_command.expectExitCode(1);
+    transitive_package_visibility_command.expectStdErrEqual(
+        "Tests/Packages/Visibility/App/Main.sx:1:1: error: package 'application' cannot import transitive package 'Utility' without declaring it directly\n",
+    );
+
+    const package_cycle_command = b.addRunArtifact(executable);
+    package_cycle_command.addArgs(&.{ "compile", "Tests/Packages/Cycle/App/Main.sx" });
+    package_cycle_command.expectExitCode(1);
+    package_cycle_command.expectStdErrEqual(
+        "silex: package dependency cycle: application -> First -> Second -> First\n",
+    );
+
+    const package_name_mismatch_command = b.addRunArtifact(executable);
+    package_name_mismatch_command.addArgs(&.{ "compile", "Tests/Packages/NameMismatch/App/Main.sx" });
+    package_name_mismatch_command.expectExitCode(1);
+    package_name_mismatch_command.expectStdErrMatch("points to package named 'Actual'");
+
+    const package_multiple_providers_command = b.addRunArtifact(executable);
+    package_multiple_providers_command.addArgs(&.{ "compile", "Tests/Packages/MultipleProviders/App/Main.sx" });
+    package_multiple_providers_command.expectExitCode(1);
+    package_multiple_providers_command.expectStdErrMatch("silex: package 'Shared' has multiple providers:");
+
+    const incomplete_package_command = b.addRunArtifact(executable);
+    incomplete_package_command.addArgs(&.{ "compile", "Tests/Packages/Incomplete/App/Main.sx" });
+    incomplete_package_command.expectExitCode(1);
+    incomplete_package_command.expectStdErrMatch("is missing required version");
+
+    const missing_package_path_command = b.addRunArtifact(executable);
+    missing_package_path_command.addArgs(&.{ "compile", "Tests/Packages/Missing/App/Main.sx" });
+    missing_package_path_command.expectExitCode(1);
+    missing_package_path_command.expectStdErrMatch("package path for application -> Missing is unavailable");
+
+    const invalid_package_origin_command = b.addRunArtifact(executable);
+    invalid_package_origin_command.addArgs(&.{ "compile", "Tests/Packages/InvalidOrigin/App/Main.sx" });
+    invalid_package_origin_command.expectExitCode(1);
+    invalid_package_origin_command.expectStdErrEqual(
+        "silex: dependency application -> Foundation must contain exactly one 'path' or 'git' origin\n",
+    );
+
+    const git_packages_integration_command = b.addRunArtifact(git_packages_integration);
+    git_packages_integration_command.has_side_effects = true;
+    git_packages_integration_command.step.dependOn(b.getInstallStep());
+    git_packages_integration_command.addFileArg(executable.getEmittedBin());
+    git_packages_integration_command.addArgs(&.{
+        ".zig-cache/git-packages-integration",
+        ".zig-cache/git-packages-home",
+    });
+
+    const native_object_cache_integration_command = b.addRunArtifact(native_object_cache_integration);
+    native_object_cache_integration_command.has_side_effects = true;
+    native_object_cache_integration_command.step.dependOn(b.getInstallStep());
+    native_object_cache_integration_command.addFileArg(executable.getEmittedBin());
+    native_object_cache_integration_command.addArgs(&.{
+        ".zig-cache/native-object-cache-integration",
+        ".zig-cache/native-object-cache-home",
+    });
+
+    const native_package_diamond_command = b.addRunArtifact(executable);
+    native_package_diamond_command.setEnvironmentVariable("SILEX_HOME", ".zig-cache/native-package-test-home/.silex");
+    native_package_diamond_command.addArgs(&.{ "run", "Tests/NativePackages/Diamond/App/Main.sx" });
+    native_package_diamond_command.expectStdOutEqual(hostText(b, "42\n"));
+
+    const duplicate_native_owner_command = b.addRunArtifact(executable);
+    duplicate_native_owner_command.setEnvironmentVariable("SILEX_HOME", ".zig-cache/native-package-test-home/.silex");
+    duplicate_native_owner_command.addArgs(&.{ "compile", "Tests/NativePackages/DuplicateOwner/App/Main.sx" });
+    duplicate_native_owner_command.expectExitCode(1);
+    duplicate_native_owner_command.expectStdErrEqual(
+        "silex: native identity 'SDL3' is provided by both application -> Left and application -> Right\n",
+    );
+
+    const conflicting_public_defines_command = b.addRunArtifact(executable);
+    conflicting_public_defines_command.setEnvironmentVariable("SILEX_HOME", ".zig-cache/native-package-test-home/.silex");
+    conflicting_public_defines_command.addArgs(&.{ "compile", "Tests/NativePackages/ConflictingDefines/App/Main.sx" });
+    conflicting_public_defines_command.expectExitCode(1);
+    conflicting_public_defines_command.expectStdErrEqual(
+        "silex: package application -> Consumer requires conflicting public define 'SHARED_MODE': " ++
+            "'left' from application -> Consumer -> Left and 'right' from application -> Consumer -> Right\n",
+    );
+
+    const private_public_define_conflict_command = b.addRunArtifact(executable);
+    private_public_define_conflict_command.setEnvironmentVariable("SILEX_HOME", ".zig-cache/native-package-test-home/.silex");
+    private_public_define_conflict_command.addArgs(&.{ "compile", "Tests/NativePackages/PrivateOverride/App/Main.sx" });
+    private_public_define_conflict_command.expectExitCode(1);
+    private_public_define_conflict_command.expectStdErrEqual(
+        "silex: native module 'Consumer' defines 'SHARED_MODE=private' but direct dependency " ++
+            "application -> Consumer -> Provider requires 'SHARED_MODE=public'\n",
+    );
+
+    const transitive_native_interface_command = b.addRunArtifact(executable);
+    transitive_native_interface_command.setEnvironmentVariable("SILEX_HOME", ".zig-cache/native-package-test-home/.silex");
+    transitive_native_interface_command.addArgs(&.{ "compile", "Tests/NativePackages/Transitive/App/Main.sx" });
+    transitive_native_interface_command.expectExitCode(1);
+    transitive_native_interface_command.expectStdErrMatch("silex: native compilation failed for target '");
+
+    const invalid_public_include_path_command = b.addRunArtifact(executable);
+    invalid_public_include_path_command.addArgs(&.{ "compile", "Tests/NativePackages/InvalidPublicPath/Module/Main.sx" });
+    invalid_public_include_path_command.expectExitCode(1);
+    invalid_public_include_path_command.expectStdErrMatch("silex: invalid module manifest for module 'Main'");
+
     const test_step = b.step("test", "Run the toolchain tests");
     test_step.dependOn(b.getInstallStep());
     test_step.dependOn(&test_command.step);
     test_step.dependOn(&lsp_test_command.step);
     test_step.dependOn(&invalid_command.step);
+    test_step.dependOn(&missing_module_subcommand_command.step);
+    test_step.dependOn(&missing_module_init_path_command.step);
+    test_step.dependOn(&invalid_module_init_option_command.step);
     test_step.dependOn(&immutable_assignment_command.step);
     test_step.dependOn(&invalid_mutable_reference_argument_command.step);
     test_step.dependOn(&missing_mutable_reference_argument_command.step);
@@ -710,6 +869,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&invalid_native_type_command.step);
     test_step.dependOn(&missing_native_symbol_command.step);
     test_step.dependOn(&native_exception_command.step);
+    test_step.dependOn(&duplicate_native_source_command.step);
     test_step.dependOn(&inherited_native_runtime_command.step);
     test_step.dependOn(&invalid_reference_type_command.step);
     test_step.dependOn(&invalid_condition_command.step);
@@ -787,6 +947,22 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&public_module_use_command.step);
     test_step.dependOn(&missing_local_import_command.step);
     test_step.dependOn(&parent_only_import_command.step);
+    test_step.dependOn(&package_diamond_command.step);
+    test_step.dependOn(&transitive_package_visibility_command.step);
+    test_step.dependOn(&package_cycle_command.step);
+    test_step.dependOn(&package_name_mismatch_command.step);
+    test_step.dependOn(&package_multiple_providers_command.step);
+    test_step.dependOn(&incomplete_package_command.step);
+    test_step.dependOn(&missing_package_path_command.step);
+    test_step.dependOn(&invalid_package_origin_command.step);
+    test_step.dependOn(&git_packages_integration_command.step);
+    test_step.dependOn(&native_object_cache_integration_command.step);
+    test_step.dependOn(&native_package_diamond_command.step);
+    test_step.dependOn(&duplicate_native_owner_command.step);
+    test_step.dependOn(&conflicting_public_defines_command.step);
+    test_step.dependOn(&private_public_define_conflict_command.step);
+    test_step.dependOn(&transitive_native_interface_command.step);
+    test_step.dependOn(&invalid_public_include_path_command.step);
 
     const smoke_command = b.addRunArtifact(executable);
     smoke_command.addArgs(&.{ "run", "Smokes/Main.sx" });
@@ -1111,21 +1287,19 @@ pub fn build(b: *std.Build) void {
     local_native_manifest_command.addArgs(&.{ "run", "Smokes/LocalNative/project.json" });
     local_native_manifest_command.expectStdOutEqual(hostText(b, "42\n"));
 
-    const unsupported_distributed_native_target_command = b.addRunArtifact(executable);
-    unsupported_distributed_native_target_command.step.dependOn(&local_native_manifest_command.step);
-    unsupported_distributed_native_target_command.addArgs(&.{
+    const portable_distributed_native_target_command = b.addRunArtifact(executable);
+    portable_distributed_native_target_command.step.dependOn(&local_native_manifest_command.step);
+    portable_distributed_native_target_command.addArgs(&.{
         "compile",
         "Smokes/DistributedNative/Main.sx",
         "--target",
         "riscv64-linux-musl",
+        "-o",
+        ".silex/portable-native-target/DistributedNative-riscv64-linux",
     });
-    unsupported_distributed_native_target_command.expectExitCode(1);
-    unsupported_distributed_native_target_command.expectStdErrEqual(
-        "silex: native module 'NativeRuntime' does not support target 'riscv64-linux-musl'\n",
-    );
 
     const distributed_module_collision_command = b.addRunArtifact(executable);
-    distributed_module_collision_command.step.dependOn(&unsupported_distributed_native_target_command.step);
+    distributed_module_collision_command.step.dependOn(&portable_distributed_native_target_command.step);
     distributed_module_collision_command.addArgs(&.{ "compile", "Tests/DistributedModules/Collision/Main.sx" });
     distributed_module_collision_command.expectExitCode(1);
     distributed_module_collision_command.expectStdErrEqual(
@@ -1142,9 +1316,52 @@ pub fn build(b: *std.Build) void {
     });
     native_source_command.expectStdOutEqual(hostText(b, "Native wrapper initialized\nSilex with native source\n"));
 
+    const module_init_smoke_root = ".zig-cache/module-init-smoke";
+    const module_init_smoke_directory = ".zig-cache/module-init-smoke/Answer";
+    const clean_module_init_smoke_command = b.addRunArtifact(module_init_smoke_setup);
+    clean_module_init_smoke_command.has_side_effects = true;
+    clean_module_init_smoke_command.step.dependOn(&native_source_command.step);
+    clean_module_init_smoke_command.addArgs(&.{ "clean", module_init_smoke_root });
+
+    const initialize_native_module_command = b.addRunArtifact(executable);
+    initialize_native_module_command.has_side_effects = true;
+    initialize_native_module_command.step.dependOn(&clean_module_init_smoke_command.step);
+    initialize_native_module_command.addArgs(&.{ "module", "init", module_init_smoke_directory, "--native" });
+    initialize_native_module_command.expectStdErrEqual(
+        "Created native module manifest: .zig-cache/module-init-smoke/Answer/Module.json\n" ++
+            "Created native source: .zig-cache/module-init-smoke/Answer/Module.cpp\n",
+    );
+
+    const populate_module_init_smoke_command = b.addRunArtifact(module_init_smoke_setup);
+    populate_module_init_smoke_command.has_side_effects = true;
+    populate_module_init_smoke_command.step.dependOn(&initialize_native_module_command.step);
+    populate_module_init_smoke_command.addArgs(&.{ "populate", module_init_smoke_root });
+
+    const module_init_smoke_command = b.addRunArtifact(executable);
+    module_init_smoke_command.has_side_effects = true;
+    module_init_smoke_command.step.dependOn(&populate_module_init_smoke_command.step);
+    module_init_smoke_command.addArgs(&.{ "run", ".zig-cache/module-init-smoke/Main.sx" });
+    module_init_smoke_command.expectStdOutEqual(hostText(b, "42\n"));
+
+    const local_package_smoke_command = b.addRunArtifact(executable);
+    local_package_smoke_command.step.dependOn(&module_init_smoke_command.step);
+    local_package_smoke_command.addArgs(&.{ "run", "Smokes/Packages/App/Main.sx" });
+    local_package_smoke_command.expectStdOutEqual(hostText(b, "43\n"));
+
+    const package_project_manifest_smoke_command = b.addRunArtifact(executable);
+    package_project_manifest_smoke_command.step.dependOn(&local_package_smoke_command.step);
+    package_project_manifest_smoke_command.addArgs(&.{ "run", "Smokes/Packages/App/project.json" });
+    package_project_manifest_smoke_command.expectStdOutEqual(hostText(b, "43\n"));
+
+    const native_package_smoke_command = b.addRunArtifact(executable);
+    native_package_smoke_command.setEnvironmentVariable("SILEX_HOME", ".zig-cache/native-package-test-home/.silex");
+    native_package_smoke_command.step.dependOn(&package_project_manifest_smoke_command.step);
+    native_package_smoke_command.addArgs(&.{ "run", "Smokes/NativePackages/App/Main.sx" });
+    native_package_smoke_command.expectStdOutEqual(hostText(b, "42\n"));
+
     const smoke_step = b.step("smoke", "Compile and run the smoke program");
     smoke_step.dependOn(b.getInstallStep());
-    smoke_step.dependOn(&native_source_command.step);
+    smoke_step.dependOn(&native_package_smoke_command.step);
 
     const benchmark_suffix = if (b.graph.host.result.os.tag == .windows) ".exe" else "";
     const silex_benchmark_path = b.fmt("zig-out/bin/IntegerLoopsSilex{s}", .{benchmark_suffix});
@@ -1285,6 +1502,7 @@ pub fn build(b: *std.Build) void {
     cross_native_smoke_step.dependOn(&cross_local_native_smoke_command.step);
 
     const distribution_options = b.addOptions();
+    distribution_options.addOption([]const u8, "silex_version", silex_version);
     distribution_options.addOption([]const u8, "developer_zig", "");
     distribution_options.addOption([]const u8, "developer_standard_library_root", "");
     const distribution_module = b.createModule(.{
@@ -1299,7 +1517,8 @@ pub fn build(b: *std.Build) void {
         .root_module = distribution_module,
     });
     const host = b.graph.host.result;
-    const distribution_name = b.fmt("silex-0.12.0-{s}-{s}", .{
+    const distribution_name = b.fmt("silex-{s}-{s}-{s}", .{
+        silex_version,
         @tagName(host.cpu.arch),
         @tagName(host.os.tag),
     });

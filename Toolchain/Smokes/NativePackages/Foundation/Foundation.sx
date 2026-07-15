@@ -1,0 +1,5 @@
+native func native_answer() int
+
+pub func answer() int {
+    return native_answer()
+}

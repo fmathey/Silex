@@ -1,0 +1,8 @@
+{
+  "dependencies": {
+    "Foundation": {
+      "path": "../Foundation",
+      "git": "https://example.invalid/Foundation.git"
+    }
+  }
+}

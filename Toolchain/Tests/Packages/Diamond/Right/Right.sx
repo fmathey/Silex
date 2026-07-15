@@ -1,0 +1,5 @@
+import Common
+
+pub func value() int {
+    return Common.base() + 2
+}

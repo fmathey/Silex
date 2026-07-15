@@ -1,0 +1,9 @@
+{
+  "name": "Foundation",
+  "version": "1.0.0",
+  "dependencies": {
+    "Utility": {
+      "path": "../Utility"
+    }
+  }
+}

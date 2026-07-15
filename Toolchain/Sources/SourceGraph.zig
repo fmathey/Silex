@@ -3,6 +3,7 @@ const Ast = @import("Ast.zig");
 const LexerModule = @import("Lexer.zig");
 const ModuleManifest = @import("ModuleManifest.zig");
 const Modules = @import("Modules.zig");
+const PackageGraph = @import("PackageGraph.zig");
 const ParserModule = @import("Parser.zig");
 const ProjectModule = @import("Project.zig");
 const Source = @import("Source.zig");
@@ -10,6 +11,7 @@ const StandardLibrary = @import("StandardLibrary.zig");
 
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
+const EnvironMap = std.process.Environ.Map;
 
 const ModuleBuilder = struct {
     name: []const u8,
@@ -18,6 +20,7 @@ const ModuleBuilder = struct {
     native_runtime_name: ?[]const u8 = null,
     module_manifest_path: ?[]const u8 = null,
     native_module_directory: ?[]const u8 = null,
+    package_index: usize = 0,
 };
 
 const NativeRuntime = struct {
@@ -26,7 +29,7 @@ const NativeRuntime = struct {
     manifest_path: []const u8,
 };
 
-const Provider = enum { application, local, distributed };
+const Provider = enum { application, local, package, distributed };
 
 const ModuleAlias = struct {
     qualifier: []const u8,
@@ -35,6 +38,7 @@ const ModuleAlias = struct {
 
 pub const Loaded = struct {
     project: ProjectModule.Project,
+    package_graph: PackageGraph.Graph,
     source_paths: []const []const u8,
     source_contents: []const []const u8,
     files: []const Modules.File,
@@ -43,24 +47,41 @@ pub const Loaded = struct {
 pub const Loader = struct {
     allocator: Allocator,
     io: Io,
+    environ_map: *const EnvironMap,
     source_paths: std.ArrayList([]const u8) = .empty,
     source_contents: std.ArrayList([]const u8) = .empty,
     files: std.ArrayList(Modules.File) = .empty,
     diagnostic: ?Source.Diagnostic = null,
+    package_graph: ?PackageGraph.Graph = null,
 
-    pub fn init(allocator: Allocator, io: Io) Loader {
-        return .{ .allocator = allocator, .io = io };
+    pub fn init(allocator: Allocator, io: Io, environ_map: *const EnvironMap) Loader {
+        return .{ .allocator = allocator, .io = io, .environ_map = environ_map };
     }
 
     pub fn load(self: *Loader, input_path: []const u8) !Loaded {
         var project = try ProjectModule.load(self.allocator, self.io, input_path);
         const project_root = std.fs.path.dirname(input_path) orelse ".";
+        self.package_graph = try PackageGraph.resolve(self.allocator, self.io, self.environ_map, project_root, .normal);
         const loads_local_modules = project.single_file;
         var modules: std.ArrayList(ModuleBuilder) = .empty;
         for (project.modules) |module| {
             var sources: std.ArrayList([]const u8) = .empty;
             try sources.appendSlice(self.allocator, module.sources);
-            const native_runtime = if (loads_local_modules)
+            const root_package_name = self.package_graph.?.packages[0].name;
+            const native_runtime = if (root_package_name) |package_name|
+                if (moduleBelongsToPackage(module.name, package_name))
+                    try findNativeRuntimeInPackage(
+                        self.allocator,
+                        self.io,
+                        self.package_graph.?.packages[0].root,
+                        package_name,
+                        module.name,
+                    )
+                else if (loads_local_modules)
+                    null
+                else
+                    try findNativeRuntime(self.allocator, self.io, project_root, module.name)
+            else if (loads_local_modules)
                 null
             else
                 try findNativeRuntime(self.allocator, self.io, project_root, module.name);
@@ -68,6 +89,7 @@ pub const Loader = struct {
                 .name = module.name,
                 .sources = sources,
                 .provider = .application,
+                .package_index = 0,
                 .native_runtime_name = if (native_runtime) |runtime| runtime.module_name else null,
                 .module_manifest_path = if (native_runtime) |runtime| runtime.manifest_path else null,
                 .native_module_directory = if (native_runtime) |runtime| runtime.module_directory else null,
@@ -80,9 +102,12 @@ pub const Loader = struct {
         var file_index: usize = 0;
         while (file_index < self.files.items.len) : (file_index += 1) {
             const file = self.files.items[file_index];
+            const package_index = modules.items[file.module_index].package_index;
             for (file.program.imports) |import_value| {
                 if (StandardLibrary.isReservedModule(import_value.path)) {
                     try self.loadDistributedModule(&modules, import_value.path, import_value.position);
+                } else if (self.package_graph.?.explicit) {
+                    try self.loadExplicitModule(&modules, project_root, import_value.path, import_value.position, package_index);
                 } else if (loads_local_modules) {
                     try self.loadLocalOrDistributedModule(&modules, project_root, import_value.path, import_value.position);
                 } else {
@@ -103,6 +128,7 @@ pub const Loader = struct {
                     canonical_path,
                     use_value.position,
                     loads_local_modules,
+                    package_index,
                 )) |module_name| {
                     try module_aliases.append(self.allocator, .{
                         .qualifier = use_value.alias orelse lastSegment(use_value.path),
@@ -115,6 +141,7 @@ pub const Loader = struct {
                 project_root,
                 file_index,
                 loads_local_modules,
+                package_index,
             );
         }
 
@@ -122,6 +149,7 @@ pub const Loader = struct {
         for (modules.items) |*module| try project_modules.append(self.allocator, .{
             .name = module.name,
             .sources = try module.sources.toOwnedSlice(self.allocator),
+            .package_index = module.package_index,
             .native_runtime_name = module.native_runtime_name,
             .module_manifest_path = module.module_manifest_path,
             .native_module_directory = module.native_module_directory,
@@ -138,13 +166,14 @@ pub const Loader = struct {
         canonical_path: []const u8,
         position: Source.Position,
         loads_local_modules: bool,
+        package_index: usize,
     ) !?[]const u8 {
-        if (try self.moduleExists(modules.items, project_root, canonical_path, loads_local_modules)) {
-            try self.loadNamedModule(modules, project_root, canonical_path, position, loads_local_modules);
+        if (try self.moduleExists(modules.items, project_root, canonical_path, loads_local_modules, package_index)) {
+            try self.loadNamedModule(modules, project_root, canonical_path, position, loads_local_modules, package_index);
             return canonical_path;
         }
         const module_name = moduleNameFromUse(canonical_path) orelse return null;
-        try self.loadNamedModule(modules, project_root, module_name, position, loads_local_modules);
+        try self.loadNamedModule(modules, project_root, module_name, position, loads_local_modules, package_index);
         return null;
     }
 
@@ -154,6 +183,7 @@ pub const Loader = struct {
         project_root: []const u8,
         file_index: usize,
         loads_local_modules: bool,
+        package_index: usize,
     ) !void {
         const file = self.files.items[file_index];
         var lexer = LexerModule.Lexer.initFile(self.source_contents.items[file_index], file_index);
@@ -193,6 +223,7 @@ pub const Loader = struct {
                     canonical,
                     tokens.items[index].position,
                     loads_local_modules,
+                    package_index,
                 );
             }
             index = end + 1;
@@ -206,11 +237,12 @@ pub const Loader = struct {
         canonical_path: []const u8,
         position: Source.Position,
         loads_local_modules: bool,
+        package_index: usize,
     ) !void {
         var candidate = canonical_path;
         while (true) {
-            if (try self.moduleExists(modules.items, project_root, candidate, loads_local_modules)) {
-                try self.loadNamedModule(modules, project_root, candidate, position, loads_local_modules);
+            if (try self.moduleExists(modules.items, project_root, candidate, loads_local_modules, package_index)) {
+                try self.loadNamedModule(modules, project_root, candidate, position, loads_local_modules, package_index);
                 return;
             }
             const separator = std.mem.lastIndexOfScalar(u8, candidate, '.') orelse return;
@@ -224,12 +256,16 @@ pub const Loader = struct {
         project_root: []const u8,
         module_name: []const u8,
         loads_local_modules: bool,
+        package_index: usize,
     ) !bool {
-        if (findModule(modules, module_name) != null) return true;
+        if (findModule(modules, module_name)) |module_index| {
+            return self.moduleAccessible(modules[module_index], package_index);
+        }
         if (StandardLibrary.isReservedModule(module_name)) {
             const library_root = StandardLibrary.root(self.allocator, self.io) catch return false;
             return isDirectory(self.io, try localModulePath(self.allocator, library_root, module_name));
         }
+        if (self.package_graph.?.explicit) return self.explicitModuleExists(project_root, module_name, package_index);
         if (loads_local_modules and
             try isDirectory(self.io, try localModulePath(self.allocator, project_root, module_name)))
         {
@@ -246,9 +282,13 @@ pub const Loader = struct {
         module_name: []const u8,
         position: Source.Position,
         loads_local_modules: bool,
+        package_index: usize,
     ) !void {
         if (StandardLibrary.isReservedModule(module_name)) {
             return self.loadDistributedModule(modules, module_name, position);
+        }
+        if (self.package_graph.?.explicit) {
+            return self.loadExplicitModule(modules, project_root, module_name, position, package_index);
         }
         if (loads_local_modules) {
             return self.loadLocalOrDistributedModule(modules, project_root, module_name, position);
@@ -266,15 +306,15 @@ pub const Loader = struct {
         const local_path = try localModulePath(self.allocator, project_root, module_name);
         const has_local = try isDirectory(self.io, local_path);
         const library_root = StandardLibrary.root(self.allocator, self.io) catch |err| {
-            if (has_local) return self.loadModule(modules, project_root, module_name, position, .local);
+            if (has_local) return self.loadModule(modules, project_root, null, module_name, position, .local, 0);
             return err;
         };
         const distributed_path = try localModulePath(self.allocator, library_root, module_name);
         const has_distributed = try isDirectory(self.io, distributed_path);
         if (has_local and has_distributed) return self.multipleProviders(position, module_name);
         if (findModule(modules.items, module_name) != null and !has_distributed) return;
-        if (has_local) return self.loadModule(modules, project_root, module_name, position, .local);
-        if (has_distributed) return self.loadModule(modules, library_root, module_name, position, .distributed);
+        if (has_local) return self.loadModule(modules, project_root, null, module_name, position, .local, 0);
+        if (has_distributed) return self.loadModule(modules, library_root, null, module_name, position, .distributed, 0);
         const message = try std.fmt.allocPrint(
             self.allocator,
             "local module '{s}' was not found at '{s}'",
@@ -304,23 +344,132 @@ pub const Loader = struct {
             const message = try std.fmt.allocPrint(self.allocator, "module '{s}' was not found", .{module_name});
             return self.fail(position, message);
         }
-        try self.loadModule(modules, library_root, module_name, position, .distributed);
+        try self.loadModule(modules, library_root, null, module_name, position, .distributed, 0);
+    }
+
+    fn moduleAccessible(self: *Loader, module: ModuleBuilder, package_index: usize) bool {
+        const graph = self.package_graph.?;
+        if (!graph.explicit) return true;
+        if (module.provider == .distributed and StandardLibrary.isReservedModule(module.name)) return true;
+        if (module.package_index == package_index) return true;
+        const root_name = firstSegment(module.name);
+        return graph.directDependency(package_index, root_name) == module.package_index;
+    }
+
+    fn explicitModuleExists(
+        self: *Loader,
+        project_root: []const u8,
+        module_name: []const u8,
+        package_index: usize,
+    ) !bool {
+        const graph = self.package_graph.?;
+        const package = graph.packages[package_index];
+        if (package.name) |name| {
+            if (moduleBelongsToPackage(module_name, name)) {
+                return isDirectory(self.io, try packageModulePath(self.allocator, package.root, name, module_name));
+            }
+        }
+        if (graph.directDependency(package_index, firstSegment(module_name))) |dependency_index| {
+            const dependency = graph.packages[dependency_index];
+            return isDirectory(self.io, try packageModulePath(self.allocator, dependency.root, dependency.name.?, module_name));
+        }
+        if (package_index == 0) {
+            return isDirectory(self.io, try localModulePath(self.allocator, project_root, module_name));
+        }
+        return false;
+    }
+
+    fn loadExplicitModule(
+        self: *Loader,
+        modules: *std.ArrayList(ModuleBuilder),
+        project_root: []const u8,
+        module_name: []const u8,
+        position: Source.Position,
+        package_index: usize,
+    ) !void {
+        if (StandardLibrary.isReservedModule(module_name)) {
+            return self.loadDistributedModule(modules, module_name, position);
+        }
+        if (findModule(modules.items, module_name)) |existing_index| {
+            if (self.moduleAccessible(modules.items[existing_index], package_index)) {
+                if (graphDependencyConflictsWithModule(
+                    self.package_graph.?,
+                    package_index,
+                    modules.items[existing_index],
+                )) return self.multipleProviders(position, module_name);
+                return;
+            }
+            return self.transitiveVisibilityError(position, package_index, firstSegment(module_name));
+        }
+
+        const graph = self.package_graph.?;
+        const package = graph.packages[package_index];
+        if (package.name) |name| {
+            if (moduleBelongsToPackage(module_name, name)) {
+                const path = try packageModulePath(self.allocator, package.root, name, module_name);
+                if (!try isDirectory(self.io, path)) return self.moduleNotFound(position, module_name, path, null);
+                return self.loadModule(modules, package.root, name, module_name, position, .package, package_index);
+            }
+        }
+
+        const dependency_index = graph.directDependency(package_index, firstSegment(module_name));
+        const local_path = if (package_index == 0)
+            try localModulePath(self.allocator, project_root, module_name)
+        else
+            null;
+        const has_local = if (local_path) |path| try isDirectory(self.io, path) else false;
+        if (dependency_index) |index| {
+            const dependency = graph.packages[index];
+            const dependency_path = try packageModulePath(self.allocator, dependency.root, dependency.name.?, module_name);
+            const has_dependency = try isDirectory(self.io, dependency_path);
+            if (has_local and has_dependency) return self.multipleProviders(position, module_name);
+            if (!has_dependency) return self.moduleNotFound(position, module_name, dependency_path, null);
+            return self.loadModule(modules, dependency.root, dependency.name.?, module_name, position, .package, index);
+        }
+        if (has_local) return self.loadModule(modules, project_root, null, module_name, position, .local, 0);
+        if (graph.findPackage(firstSegment(module_name)) != null) {
+            return self.transitiveVisibilityError(position, package_index, firstSegment(module_name));
+        }
+        const missing_path = local_path orelse try localModulePath(self.allocator, package.root, module_name);
+        return self.moduleNotFound(position, module_name, missing_path, null);
+    }
+
+    fn transitiveVisibilityError(
+        self: *Loader,
+        position: Source.Position,
+        package_index: usize,
+        dependency_name: []const u8,
+    ) !void {
+        return self.fail(position, try std.fmt.allocPrint(
+            self.allocator,
+            "package '{s}' cannot import transitive package '{s}' without declaring it directly",
+            .{ self.package_graph.?.packageLabel(package_index), dependency_name },
+        ));
     }
 
     fn loadModule(
         self: *Loader,
         modules: *std.ArrayList(ModuleBuilder),
         module_root: []const u8,
+        package_name: ?[]const u8,
         module_name: []const u8,
         position: Source.Position,
         provider: Provider,
+        package_index: usize,
     ) !void {
         if (findModule(modules.items, module_name)) |existing_index| {
-            if (modules.items[existing_index].provider != provider) return self.multipleProviders(position, module_name);
+            if (modules.items[existing_index].provider != provider or
+                modules.items[existing_index].package_index != package_index)
+            {
+                return self.multipleProviders(position, module_name);
+            }
             return;
         }
 
-        const directory_path = try localModulePath(self.allocator, module_root, module_name);
+        const directory_path = if (package_name) |name|
+            try packageModulePath(self.allocator, module_root, name, module_name)
+        else
+            try localModulePath(self.allocator, module_root, module_name);
         var directory = Io.Dir.cwd().openDir(self.io, directory_path, .{ .iterate = true }) catch |err| switch (err) {
             error.FileNotFound, error.NotDir => {
                 return self.moduleNotFound(position, module_name, directory_path, null);
@@ -342,10 +491,11 @@ pub const Loader = struct {
         }.lessThan);
 
         const module_index = modules.items.len;
-        const native_runtime = try findNativeRuntime(self.allocator, self.io, module_root, module_name);
+        const native_runtime = try findNativeRuntimeInPackage(self.allocator, self.io, module_root, package_name, module_name);
         try modules.append(self.allocator, .{
             .name = module_name,
             .provider = provider,
+            .package_index = package_index,
             .native_runtime_name = if (native_runtime) |runtime| runtime.module_name else null,
             .module_manifest_path = if (native_runtime) |runtime| runtime.manifest_path else null,
             .native_module_directory = if (native_runtime) |runtime| runtime.module_directory else null,
@@ -379,6 +529,7 @@ pub const Loader = struct {
     fn finish(self: *Loader, project: ProjectModule.Project) !Loaded {
         return .{
             .project = project,
+            .package_graph = self.package_graph.?,
             .source_paths = try self.source_paths.toOwnedSlice(self.allocator),
             .source_contents = try self.source_contents.toOwnedSlice(self.allocator),
             .files = try self.files.toOwnedSlice(self.allocator),
@@ -422,6 +573,15 @@ fn findModule(modules: []const ModuleBuilder, name: []const u8) ?usize {
         if (std.mem.eql(u8, module.name, name)) return index;
     }
     return null;
+}
+
+fn graphDependencyConflictsWithModule(
+    graph: PackageGraph.Graph,
+    package_index: usize,
+    module: ModuleBuilder,
+) bool {
+    const dependency_index = graph.directDependency(package_index, firstSegment(module.name)) orelse return false;
+    return dependency_index != module.package_index;
 }
 
 fn moduleNameFromUse(path: []const u8) ?[]const u8 {
@@ -494,6 +654,30 @@ fn lastSegment(path: []const u8) []const u8 {
     return path[separator + 1 ..];
 }
 
+fn firstSegment(path: []const u8) []const u8 {
+    const separator = std.mem.indexOfScalar(u8, path, '.') orelse return path;
+    return path[0..separator];
+}
+
+fn moduleBelongsToPackage(module_name: []const u8, package_name: []const u8) bool {
+    return std.mem.eql(u8, module_name, package_name) or
+        (std.mem.startsWith(u8, module_name, package_name) and
+            module_name.len > package_name.len and
+            module_name[package_name.len] == '.');
+}
+
+fn packageModulePath(
+    allocator: Allocator,
+    package_root: []const u8,
+    package_name: []const u8,
+    module_name: []const u8,
+) ![]const u8 {
+    std.debug.assert(moduleBelongsToPackage(module_name, package_name));
+    if (std.mem.eql(u8, module_name, package_name)) return allocator.dupe(u8, package_root);
+    const relative_name = module_name[package_name.len + 1 ..];
+    return localModulePath(allocator, package_root, relative_name);
+}
+
 fn localModulePath(allocator: Allocator, root: []const u8, module_name: []const u8) ![]const u8 {
     const relative_path = try allocator.dupe(u8, module_name);
     for (relative_path) |*character| {
@@ -517,9 +701,22 @@ fn findNativeRuntime(
     module_root: []const u8,
     module_name: []const u8,
 ) !?NativeRuntime {
+    return findNativeRuntimeInPackage(allocator, io, module_root, null, module_name);
+}
+
+fn findNativeRuntimeInPackage(
+    allocator: Allocator,
+    io: Io,
+    module_root: []const u8,
+    package_name: ?[]const u8,
+    module_name: []const u8,
+) !?NativeRuntime {
     var candidate_name = module_name;
     while (true) {
-        const candidate_directory = try localModulePath(allocator, module_root, candidate_name);
+        const candidate_directory = if (package_name) |name|
+            try packageModulePath(allocator, module_root, name, candidate_name)
+        else
+            try localModulePath(allocator, module_root, candidate_name);
         if (try nativeModuleManifestPath(allocator, io, candidate_directory)) |manifest_path| {
             return .{
                 .module_name = candidate_name,

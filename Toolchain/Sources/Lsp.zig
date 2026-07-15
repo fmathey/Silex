@@ -1,4 +1,5 @@
 const std = @import("std");
+const build_options = @import("build_options");
 const Ast = @import("Ast.zig");
 const LexerModule = @import("Lexer.zig");
 const ParserModule = @import("Parser.zig");
@@ -143,7 +144,7 @@ const Server = struct {
                 },
                 .serverInfo = .{
                     .name = "Silex",
-                    .version = "0.12.0",
+                    .version = build_options.silex_version,
                 },
             });
             return;

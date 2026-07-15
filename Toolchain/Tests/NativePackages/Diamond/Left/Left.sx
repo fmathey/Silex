@@ -1,0 +1,5 @@
+native func native_value() int
+
+pub func value() int {
+    return native_value()
+}

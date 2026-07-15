@@ -1,0 +1,8 @@
+{
+  "name": "Right",
+  "version": "1.0.0",
+  "native": {
+    "provides": ["SDL3"],
+    "sources": { "c": ["Broken.c"] }
+  }
+}

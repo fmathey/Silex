@@ -1,0 +1,14 @@
+{
+  "name": "Foundation",
+  "version": "1.0.0",
+  "dependencies": {
+    "TinyMath": {
+      "path": "../TinyMath"
+    }
+  },
+  "native": {
+    "sources": {
+      "cpp": ["Module.cpp"]
+    }
+  }
+}

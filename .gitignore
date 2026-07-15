@@ -5,3 +5,7 @@ zig-out/
 Editors/Zed/grammars/
 Editors/Zed/.dev/
 Editors/Zed/target/
+Toolchain/Tests/Packages/**/Silex.lock
+Toolchain/Smokes/Packages/**/Silex.lock
+Toolchain/Tests/NativePackages/**/Silex.lock
+Toolchain/Smokes/NativePackages/**/Silex.lock

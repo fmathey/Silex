@@ -1,0 +1,9 @@
+{
+  "name": "Right",
+  "version": "1.0.0",
+  "dependencies": {
+    "Common": {
+      "path": "../Left/../Common"
+    }
+  }
+}

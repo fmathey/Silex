@@ -1,0 +1,6 @@
+import Left
+import Right
+
+func main() {
+    print(Left.value() + Right.value())
+}
