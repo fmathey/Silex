@@ -1,0 +1,8 @@
+native func native_monotonic_microseconds() int
+
+func seconds_between(start:int, end:int) float {
+    let elapsed = end - start
+    let whole_seconds = elapsed / 1_000_000
+    let remaining_microseconds = elapsed % 1_000_000
+    return (whole_seconds as float) + (remaining_microseconds as float) / 1_000_000.0
+}

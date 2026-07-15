@@ -83,17 +83,23 @@ same sequence of values.
 
 ## STD.Time
 
-`STD.Time.Clock` is initially stopped. `start()` begins a new measurement,
-`stop()` freezes its total, and `pause()` with `resume()` excludes suspended
-time. `reset()` accumulates the current interval and begins the next one rather
-than clearing the total. The time scale is applied when an interval is
-accumulated or read. Interval getters return zero while paused; after `stop()`
-they retain the final interval. Total getters retain the accumulated value while
-paused or stopped.
+`STD.Time.Stopwatch` is initially stopped with a zero elapsed duration.
+`start()` starts or resumes without clearing, `stop()` freezes the accumulated
+duration, `reset()` clears and stops, and `restart()` clears and starts.
+Calling `start()` while running or `stop()` while stopped has no effect.
+
+`STD.Time.Clock` has no `start()` or `stop()`. The first `tick()` initializes
+its monotonic origin and returns zero. Every active tick after it returns the
+scaled interval since the preceding tick and adds that value to the logical
+total. A paused tick returns zero. Pausing or changing the scale preserves any
+partial interval so that the next active tick loses no active time and excludes
+all suspended time. `reset()` clears the total and partial interval, exits the
+paused state, and makes the next tick return zero. Reset does not change the
+configured time scale.
 
 The implementation uses one native monotonic-microsecond reading inherited
-from `STD/Native.json`; clock state and duration calculations remain Silex
-code in `STD/Time/Clock.sx`.
+from `STD/Native.json`; both types and their duration calculations remain Silex
+code in `STD/Time/`.
 
 ## Native module runtime
 

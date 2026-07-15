@@ -33,18 +33,18 @@ automatically when `STD.Random` is loaded.
 
 ## Time
 
-`STD.Time.Clock` measures elapsed and total time with a monotonic platform
-clock. A new value is initially stopped; call `start()` to begin a measurement.
-`stop()` freezes both its final interval and its accumulated total, while
-`pause()` and `resume()` exclude a temporary suspension without starting a new
-measurement. The elapsed getters can therefore be read after `stop()`.
+`STD.Time.Stopwatch` measures a real duration for benchmarks and other bounded
+operations. `start()` begins or resumes accumulation, `stop()` freezes it,
+`reset()` clears it while remaining stopped, and `restart()` clears and starts
+in one operation. `get_elapsed_seconds()` and
+`get_elapsed_milliseconds()` remain readable while running or stopped.
 
-`reset()` commits the current elapsed interval to the total and begins the next
-interval. This makes it suitable for a frame tick: read
-`get_elapsed_seconds()`, read `get_total_seconds()`, then call `reset()`.
-`set_time_scale(scale)` applies the previous scale to the interval already in
-progress before selecting the new scale. Seconds and milliseconds are
-available for both the current interval and the accumulated total.
+`STD.Time.Clock` drives a logical loop. Its first `tick()` establishes the
+monotonic origin and returns zero; subsequent ticks return the scaled seconds
+since the previous tick and advance the logical total. `pause()` with
+`resume()` excludes suspended time. `set_time_scale(scale)` preserves the
+already elapsed segment under the previous scale before selecting the new one.
+`reset()` clears the logical timeline and makes the next tick a new first tick.
 
 All state transitions and conversions are implemented in Silex. The shared
 native runtime only supplies a monotonic timestamp in microseconds.

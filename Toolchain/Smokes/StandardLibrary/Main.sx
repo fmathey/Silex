@@ -38,40 +38,69 @@ func main() {
     print(rejected.get_int(0, 4611686018427387904))
     print(random.get_int() > 0)
 
+    var stopwatch = Time.Stopwatch {}
+    print(!stopwatch.is_running())
+    print(stopwatch.get_elapsed_seconds() == 0.0)
+    stopwatch.start()
+    print(stopwatch.is_running())
+    while (stopwatch.get_elapsed_seconds() <= 0.001) {}
+    stopwatch.stop()
+    let first_measurement = stopwatch.get_elapsed_seconds()
+    print(!stopwatch.is_running() && first_measurement > 0.0)
+
+    var wait = Time.Stopwatch {}
+    wait.start()
+    while (wait.get_elapsed_seconds() <= 0.001) {}
+    wait.stop()
+    print(stopwatch.get_elapsed_seconds() == first_measurement)
+
+    stopwatch.start()
+    while (stopwatch.get_elapsed_seconds() <= first_measurement + 0.001) {}
+    stopwatch.stop()
+    let resumed_measurement = stopwatch.get_elapsed_seconds()
+    print(resumed_measurement > first_measurement)
+
+    stopwatch.reset()
+    print(!stopwatch.is_running() && stopwatch.get_elapsed_seconds() == 0.0)
+    stopwatch.restart()
+    print(stopwatch.is_running())
+    while (stopwatch.get_elapsed_seconds() <= 0.001) {}
+    stopwatch.stop()
+    let restarted_measurement = stopwatch.get_elapsed_seconds()
+    let restarted_milliseconds = stopwatch.get_elapsed_milliseconds()
+    print(restarted_measurement > 0.0 && restarted_milliseconds == restarted_measurement * 1_000.0)
+
     var clock = Time.Clock {}
-    print(clock.get_elapsed_seconds() == 0.0)
-    print(clock.get_total_seconds() == 0.0)
-    clock.start()
-    while (clock.get_elapsed_seconds() <= 0.001) {}
-    let first_elapsed = clock.get_elapsed_seconds()
-    print(first_elapsed > 0.0)
-    clock.reset()
-    print(clock.get_total_seconds() >= first_elapsed)
+    let clock_is_initial = clock.get_total_seconds() == 0.0 && !clock.is_paused()
+    print(clock_is_initial && clock.get_time_scale() == 1.0)
+    print(clock.tick() == 0.0)
+    while (clock.get_total_seconds() <= 0.001) {}
+    let first_tick = clock.tick()
+    print(first_tick > 0.0 && clock.get_total_seconds() >= first_tick)
 
     clock.pause()
     let paused_total = clock.get_total_seconds()
-    var wait = Time.Clock {}
-    wait.start()
+    wait.restart()
     while (wait.get_elapsed_seconds() <= 0.001) {}
-    print(clock.is_paused())
-    print(clock.get_elapsed_seconds() == 0.0)
-    print(clock.get_total_seconds() == paused_total)
+    wait.stop()
+    let paused_clock_is_frozen = clock.is_paused() && clock.get_total_seconds() == paused_total
+    print(paused_clock_is_frozen && clock.tick() == 0.0)
 
     clock.resume()
     print(!clock.is_paused())
+    while (clock.get_total_seconds() <= paused_total + 0.001) {}
+    let resumed_tick = clock.tick()
+    print(resumed_tick > 0.0 && clock.get_total_seconds() > paused_total)
+
     clock.set_time_scale(2.0)
     print(clock.get_time_scale() == 2.0)
-    while (clock.get_elapsed_seconds() <= 0.001) {}
-    clock.stop()
-    let stopped_elapsed = clock.get_elapsed_seconds()
-    let stopped_total = clock.get_total_seconds()
-    wait.start()
-    while (wait.get_elapsed_seconds() <= 0.001) {}
-    let stopped_elapsed_is_frozen = stopped_elapsed > 0.0 && clock.get_elapsed_seconds() == stopped_elapsed
-    print(stopped_elapsed_is_frozen)
-    print(!clock.is_paused())
-    print(clock.get_total_seconds() == stopped_total)
-    let elapsed_milliseconds_are_consistent = clock.get_elapsed_milliseconds() == stopped_elapsed * 1_000.0
-    let total_milliseconds_are_consistent = clock.get_total_milliseconds() == stopped_total * 1_000.0
-    print(elapsed_milliseconds_are_consistent && total_milliseconds_are_consistent)
+    let before_scaled_tick = clock.get_total_seconds()
+    while (clock.get_total_seconds() <= before_scaled_tick + 0.002) {}
+    print(clock.tick() > 0.002)
+    let clock_total = clock.get_total_seconds()
+    print(clock.get_total_milliseconds() == clock_total * 1_000.0)
+
+    clock.reset()
+    let clock_is_reset = clock.get_total_seconds() == 0.0 && !clock.is_paused()
+    print(clock_is_reset && clock.get_time_scale() == 2.0 && clock.tick() == 0.0)
 }

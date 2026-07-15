@@ -1,0 +1,50 @@
+pub struct Stopwatch {
+    last_microseconds:int
+    elapsed_seconds:float
+    running:bool
+
+    func start() {
+        if (self.running) {
+            return
+        }
+        self.last_microseconds = native_monotonic_microseconds()
+        self.running = true
+    }
+
+    func stop() {
+        if (!self.running) {
+            return
+        }
+        let now = native_monotonic_microseconds()
+        self.elapsed_seconds += seconds_between(self.last_microseconds, now)
+        self.last_microseconds = now
+        self.running = false
+    }
+
+    func reset() {
+        self.last_microseconds = 0
+        self.elapsed_seconds = 0.0
+        self.running = false
+    }
+
+    func restart() {
+        self.last_microseconds = native_monotonic_microseconds()
+        self.elapsed_seconds = 0.0
+        self.running = true
+    }
+
+    func is_running() bool {
+        return self.running
+    }
+
+    func get_elapsed_seconds() float {
+        if (!self.running) {
+            return self.elapsed_seconds
+        }
+        return self.elapsed_seconds + seconds_between(self.last_microseconds, native_monotonic_microseconds())
+    }
+
+    func get_elapsed_milliseconds() float {
+        return self.get_elapsed_seconds() * 1_000.0
+    }
+}

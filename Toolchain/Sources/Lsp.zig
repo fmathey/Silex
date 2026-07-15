@@ -1544,6 +1544,7 @@ test "standard library modules and exports complete" {
         .{ .qualifier = "STD.Time", .prefix = "", .type_only = false },
     );
     try std.testing.expect(containsCompletion(time_exports, "STD.Time.Clock"));
+    try std.testing.expect(containsCompletion(time_exports, "STD.Time.Stopwatch"));
 }
 
 test "member completion infers an imported standard-library factory result" {
@@ -1622,9 +1623,36 @@ test "member completion exposes STD Time clock methods" {
         source,
         .{ .line = 3, .character = 10 },
     );
-    try std.testing.expect(containsCompletion(items, "start"));
+    try std.testing.expect(containsCompletion(items, "tick"));
     try std.testing.expect(containsCompletion(items, "pause"));
+    try std.testing.expect(containsCompletion(items, "get_total_seconds"));
+    try std.testing.expect(!containsCompletion(items, "start"));
+    try std.testing.expect(!containsCompletion(items, "get_elapsed_seconds"));
+}
+
+test "member completion exposes STD Time stopwatch methods" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const source =
+        \\import STD.Time as Time
+        \\func main() void {
+        \\    var stopwatch = Time.Stopwatch {}
+        \\    stopwatch.
+        \\}
+    ;
+    const items = try completionItems(
+        arena.allocator(),
+        std.testing.io,
+        source,
+        .{ .line = 3, .character = 14 },
+    );
+    try std.testing.expect(containsCompletion(items, "start"));
+    try std.testing.expect(containsCompletion(items, "stop"));
+    try std.testing.expect(containsCompletion(items, "reset"));
+    try std.testing.expect(containsCompletion(items, "restart"));
     try std.testing.expect(containsCompletion(items, "get_elapsed_seconds"));
+    try std.testing.expect(!containsCompletion(items, "tick"));
+    try std.testing.expect(!containsCompletion(items, "set_time_scale"));
 }
 
 test "member completion only includes members of the receiver structure" {

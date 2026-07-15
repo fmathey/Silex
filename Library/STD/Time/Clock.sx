@@ -1,84 +1,66 @@
-native func native_monotonic_microseconds() int
-
-func seconds_between(start:int, end:int) float {
-    let elapsed = end - start
-    let whole_seconds = elapsed / 1_000_000
-    let remaining_microseconds = elapsed % 1_000_000
-    return (whole_seconds as float) + (remaining_microseconds as float) / 1_000_000.0
-}
-
 pub struct Clock {
     last_microseconds:int
-    last_elapsed_seconds:float
+    pending_seconds:float
     total_seconds:float
     time_scale:float = 1.0
-    started:bool
+    initialized:bool
     paused:bool
 
-    func start() {
-        self.last_microseconds = native_monotonic_microseconds()
-        self.last_elapsed_seconds = 0.0
-        self.total_seconds = 0.0
-        self.started = true
-        self.paused = false
+    func tick() float {
+        if (self.paused) {
+            return 0.0
+        }
+        let now = native_monotonic_microseconds()
+        if (!self.initialized) {
+            self.last_microseconds = now
+            self.initialized = true
+            return 0.0
+        }
+        let elapsed = self.pending_seconds + seconds_between(self.last_microseconds, now) * self.time_scale
+        self.pending_seconds = 0.0
+        self.total_seconds += elapsed
+        self.last_microseconds = now
+        return elapsed
     }
 
     func reset() {
-        if (!self.started) {
-            return
-        }
-        let now = native_monotonic_microseconds()
-        if (!self.paused) {
-            self.last_elapsed_seconds = seconds_between(self.last_microseconds, now) * self.time_scale
-            self.total_seconds += self.last_elapsed_seconds
-        } else {
-            self.last_elapsed_seconds = 0.0
-        }
-        self.last_microseconds = now
-    }
-
-    func resume() {
-        if (!self.started || !self.paused) {
-            return
-        }
-        self.last_microseconds = native_monotonic_microseconds()
+        self.last_microseconds = 0
+        self.pending_seconds = 0.0
+        self.total_seconds = 0.0
+        self.initialized = false
         self.paused = false
     }
 
     func pause() {
-        if (!self.started || self.paused) {
+        if (self.paused) {
             return
         }
-        let now = native_monotonic_microseconds()
-        self.last_elapsed_seconds = seconds_between(self.last_microseconds, now) * self.time_scale
-        self.total_seconds += self.last_elapsed_seconds
-        self.last_microseconds = now
+        if (self.initialized) {
+            let now = native_monotonic_microseconds()
+            self.pending_seconds += seconds_between(self.last_microseconds, now) * self.time_scale
+            self.last_microseconds = now
+        }
         self.paused = true
     }
 
-    func stop() {
-        if (!self.started) {
+    func resume() {
+        if (!self.paused) {
             return
         }
-        let now = native_monotonic_microseconds()
-        if (!self.paused) {
-            self.last_elapsed_seconds = seconds_between(self.last_microseconds, now) * self.time_scale
-            self.total_seconds += self.last_elapsed_seconds
+        if (self.initialized) {
+            self.last_microseconds = native_monotonic_microseconds()
         }
-        self.last_microseconds = now
-        self.started = false
         self.paused = false
     }
 
     func is_paused() bool {
-        return self.started && self.paused
+        return self.paused
     }
 
     func set_time_scale(scale:float) {
-        if (self.started && !self.paused) {
+        if (self.initialized && !self.paused) {
             let now = native_monotonic_microseconds()
-            self.last_elapsed_seconds = seconds_between(self.last_microseconds, now) * self.time_scale
-            self.total_seconds += self.last_elapsed_seconds
+            self.pending_seconds += seconds_between(self.last_microseconds, now) * self.time_scale
             self.last_microseconds = now
         }
         self.time_scale = scale
@@ -88,25 +70,12 @@ pub struct Clock {
         return self.time_scale
     }
 
-    func get_elapsed_seconds() float {
-        if (!self.started) {
-            return self.last_elapsed_seconds
-        }
-        if (self.paused) {
-            return 0.0
-        }
-        return seconds_between(self.last_microseconds, native_monotonic_microseconds()) * self.time_scale
-    }
-
-    func get_elapsed_milliseconds() float {
-        return self.get_elapsed_seconds() * 1_000.0
-    }
-
     func get_total_seconds() float {
-        if (!self.started || self.paused) {
-            return self.total_seconds
+        if (!self.initialized || self.paused) {
+            return self.total_seconds + self.pending_seconds
         }
-        return self.total_seconds + self.get_elapsed_seconds()
+        let active = seconds_between(self.last_microseconds, native_monotonic_microseconds()) * self.time_scale
+        return self.total_seconds + self.pending_seconds + active
     }
 
     func get_total_milliseconds() float {
