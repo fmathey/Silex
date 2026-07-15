@@ -24,6 +24,10 @@
 (function_definition
   name: (identifier) @function.definition)
 
+(lambda_expression "func" @keyword)
+(function_type "func" @type.builtin)
+(function_type_parameter mutable_reference: "&" @type)
+
 (native_function_declaration
   name: (identifier) @function.definition)
 

@@ -23,6 +23,14 @@ pub const Type = union(enum) {
     list: *const Type,
     fixed_array: FixedArrayType,
     reference: ReferenceType,
+    function: FunctionType,
+};
+
+pub const FunctionType = struct {
+    parameters: []const Type,
+    parameter_is_mutable_references: []const bool,
+    return_type: *const Type,
+    owner: ?StructureType = null,
 };
 
 pub const StructureType = struct {
@@ -44,6 +52,7 @@ const BindingState = struct {
     immutable_borrows: usize = 0,
     mutable_borrow: bool = false,
     reference: ?Borrow = null,
+    lifetime_depth: usize = 0,
 };
 
 const Borrow = struct {
@@ -54,6 +63,7 @@ const Borrow = struct {
 pub const Expression = struct {
     type: Type,
     position: Source.Position,
+    lifetime_depth: usize = 0,
     borrow: ?Borrow = null,
     owns_borrow: bool = false,
     value: union(enum) {
@@ -69,9 +79,14 @@ pub const Expression = struct {
         variable: []const u8,
         self,
         call: Call,
+        value_call: ValueCall,
+        lambda: Lambda,
+        owner_self,
         method_call: MethodCall,
         structure_initializer: StructureInitializer,
         member_access: MemberAccess,
+        bound_function: MemberAccess,
+        adapt_function: *Expression,
         index_access: IndexAccess,
         slice_access: SliceAccess,
         unary: Unary,
@@ -90,6 +105,20 @@ pub const Expression = struct {
         is_native: bool,
         native_module_name: ?[]const u8,
         native_function_name: ?[]const u8,
+    };
+
+    pub const ValueCall = struct {
+        callee: *Expression,
+        arguments: []const *Expression,
+        owner: ?*Expression = null,
+    };
+
+    pub const Lambda = struct {
+        parameters: []const Parameter,
+        return_type: Type,
+        statements: []const Statement,
+        captures: []const []const u8,
+        captures_self: bool,
     };
 
     pub const MethodCall = struct {
@@ -308,12 +337,23 @@ const Symbol = struct {
     type: Type,
     mutability: Ast.Mutability,
     state: *BindingState,
+    scope_depth: usize,
 };
 
 const Scope = struct {
     parent: ?*const Scope,
+    depth: usize,
     symbols: std.ArrayList(Symbol) = .empty,
     borrows: std.ArrayList(Borrow) = .empty,
+};
+
+const LambdaContext = struct {
+    local_depth: usize,
+    captures: std.ArrayList([]const u8) = .empty,
+    captures_self: bool = false,
+    owner_self: bool = false,
+    lifetime_depth: usize = 0,
+    parent: ?*LambdaContext,
 };
 
 fn releaseBorrow(borrow: Borrow) void {
@@ -331,6 +371,7 @@ const FunctionSymbol = struct {
     return_type: Type,
     parameter_types: []const Type,
     parameter_is_mutable_references: []const bool,
+    parameter_stored: []const bool,
     position: Source.Position,
     is_main: bool,
     is_native: bool,
@@ -352,6 +393,7 @@ const MethodSymbol = struct {
     return_type: Type,
     parameter_types: []const Type,
     parameter_is_mutable_references: []const bool,
+    parameter_stored: []const bool,
     position: Source.Position,
     direct_mutation: bool = false,
     dependencies: []const MethodId = &.{},
@@ -385,6 +427,8 @@ pub const Analyzer = struct {
     current_method_dependencies: std.ArrayList(MethodId) = .empty,
     current_self_state: BindingState = .{},
     loop_depth: usize = 0,
+    function_scope_depth: usize = 0,
+    current_lambda: ?*LambdaContext = null,
     diagnostic: ?Source.Diagnostic = null,
 
     pub fn init(allocator: Allocator) Analyzer {
@@ -454,7 +498,13 @@ pub const Analyzer = struct {
                         return self.fail(field.position, message);
                     }
                 }
-                const field_type = try typeFromAnnotation(self, field.type, field.position);
+                var field_type = try typeFromAnnotation(self, field.type, field.position);
+                if (field_type == .function) {
+                    field_type.function.owner = .{
+                        .source_name = ast_structure.name,
+                        .generated_name = self.structures.items[structure_index].generated_name,
+                    };
+                }
                 if (field_type == .reference) return self.fail(field.position, "a struct field cannot have a reference type");
                 if (field_type == .structure) {
                     const dependency_index = self.findStructureIndex(field_type.structure.source_name).?;
@@ -481,9 +531,11 @@ pub const Analyzer = struct {
             for (ast_structure.methods, 0..) |ast_method, method_index| {
                 var parameter_types: std.ArrayList(Type) = .empty;
                 var parameter_is_mutable_references: std.ArrayList(bool) = .empty;
+                var parameter_stored_values: std.ArrayList(bool) = .empty;
                 for (ast_method.parameters) |parameter| {
                     try parameter_types.append(self.allocator, try typeFromAnnotation(self, parameter.type, parameter.position));
                     try parameter_is_mutable_references.append(self.allocator, parameter.is_mutable_reference);
+                    try parameter_stored_values.append(self.allocator, parameterStored(ast_method.statements, parameter.name));
                 }
                 for (methods.items) |existing| {
                     if (std.mem.eql(u8, existing.source_name, ast_method.name) and sameSignature(
@@ -504,6 +556,7 @@ pub const Analyzer = struct {
                     .return_type = return_type,
                     .parameter_types = try parameter_types.toOwnedSlice(self.allocator),
                     .parameter_is_mutable_references = try parameter_is_mutable_references.toOwnedSlice(self.allocator),
+                    .parameter_stored = try parameter_stored_values.toOwnedSlice(self.allocator),
                     .position = ast_method.name_position,
                 });
             }
@@ -538,9 +591,11 @@ pub const Analyzer = struct {
             }
             var parameter_types: std.ArrayList(Type) = .empty;
             var parameter_is_mutable_references: std.ArrayList(bool) = .empty;
+            var parameter_stored_values: std.ArrayList(bool) = .empty;
             for (ast_function.parameters) |parameter| {
                 try parameter_types.append(self.allocator, try typeFromAnnotation(self, parameter.type, parameter.position));
                 try parameter_is_mutable_references.append(self.allocator, parameter.is_mutable_reference);
+                try parameter_stored_values.append(self.allocator, parameterStored(ast_function.statements, parameter.name));
             }
             for (self.functions.items) |existing| {
                 if (std.mem.eql(u8, existing.source_name, ast_function.name) and sameSignature(
@@ -590,6 +645,7 @@ pub const Analyzer = struct {
                 .return_type = return_type,
                 .parameter_types = try parameter_types.toOwnedSlice(self.allocator),
                 .parameter_is_mutable_references = try parameter_is_mutable_references.toOwnedSlice(self.allocator),
+                .parameter_stored = try parameter_stored_values.toOwnedSlice(self.allocator),
                 .position = ast_function.name_position,
                 .is_main = is_main,
                 .is_native = ast_function.is_native,
@@ -608,7 +664,7 @@ pub const Analyzer = struct {
     fn validateStructureDefaults(self: *Analyzer) AnalyzeError!void {
         self.current_structure_index = null;
         self.current_method_index = null;
-        var empty_scope = Scope{ .parent = null };
+        var empty_scope = Scope{ .parent = null, .depth = 0 };
         for (self.structures.items) |*structure| {
             for (structure.fields) |*field| {
                 const ast_initializer = field.ast_initializer orelse continue;
@@ -636,6 +692,7 @@ pub const Analyzer = struct {
             .str => ast.value == .string,
             .list, .fixed_array => false,
             .reference => false,
+            .function => false,
             .structure => |structure_type| structure_default: {
                 if (ast.value != .structure_initializer) break :structure_default false;
                 const initializer = ast.value.structure_initializer;
@@ -667,7 +724,8 @@ pub const Analyzer = struct {
         self.current_method_index = null;
         self.current_self_state = .{};
         self.loop_depth = 0;
-        var scope = Scope{ .parent = null };
+        var scope = Scope{ .parent = null, .depth = 1 };
+        self.function_scope_depth = scope.depth;
         var parameters: std.ArrayList(Parameter) = .empty;
         for (ast.parameters, symbol.parameter_types, symbol.parameter_is_mutable_references) |parameter, parameter_type, is_mutable_reference| {
             if (findInCurrentScope(&scope, parameter.name) != null) {
@@ -676,7 +734,7 @@ pub const Analyzer = struct {
             }
             const generated_name = try std.fmt.allocPrint(self.allocator, "silexValue{d}", .{self.next_symbol_id});
             self.next_symbol_id += 1;
-            try scope.symbols.append(self.allocator, .{ .source_name = parameter.name, .generated_name = generated_name, .type = parameter_type, .mutability = .mutable, .state = try self.newBindingState(parameter_type) });
+            try scope.symbols.append(self.allocator, .{ .source_name = parameter.name, .generated_name = generated_name, .type = parameter_type, .mutability = .mutable, .state = try self.newBindingState(parameter_type), .scope_depth = scope.depth });
             try parameters.append(self.allocator, .{
                 .generated_name = generated_name,
                 .type = parameter_type,
@@ -716,7 +774,8 @@ pub const Analyzer = struct {
         self.current_self_state = .{};
         self.loop_depth = 0;
 
-        var scope = Scope{ .parent = null };
+        var scope = Scope{ .parent = null, .depth = 1 };
+        self.function_scope_depth = scope.depth;
         var parameters: std.ArrayList(Parameter) = .empty;
         for (ast.parameters, symbol.parameter_types, symbol.parameter_is_mutable_references) |parameter, parameter_type, is_mutable_reference| {
             if (findInCurrentScope(&scope, parameter.name) != null) {
@@ -731,6 +790,7 @@ pub const Analyzer = struct {
                 .type = parameter_type,
                 .mutability = .mutable,
                 .state = try self.newBindingState(parameter_type),
+                .scope_depth = scope.depth,
             });
             try parameters.append(self.allocator, .{
                 .generated_name = generated_name,
@@ -854,6 +914,10 @@ pub const Analyzer = struct {
         const generated_name = try std.fmt.allocPrint(self.allocator, "silexValue{d}", .{self.next_symbol_id});
         self.next_symbol_id += 1;
         const state = try self.newBindingState(declared_type);
+        if (scope.depth < initializer.lifetime_depth) {
+            return self.fail(declaration.name_position, "capturing function value cannot outlive one of its captures");
+        }
+        state.lifetime_depth = initializer.lifetime_depth;
         if (declared_type == .reference) {
             const borrow = initializer.borrow orelse return self.fail(declaration.name_position, "a reference initializer must borrow a place");
             if (initializer.owns_borrow) {
@@ -873,6 +937,7 @@ pub const Analyzer = struct {
             .type = declared_type,
             .mutability = declaration.mutability,
             .state = state,
+            .scope_depth = scope.depth,
         });
 
         return .{ .variable_declaration = .{
@@ -919,7 +984,7 @@ pub const Analyzer = struct {
             if (!reference.mutable) return self.fail(ast.position, "cannot assign through an immutable reference");
             var value: ?*Expression = null;
             if (ast.value) |ast_value| value = try self.expressionForExpected(ast_value, scope, target.type);
-            return self.checkedAssignment(ast, target, value);
+            return self.checkedAssignment(ast, target, value, scope);
         }
 
         const root = assignmentRoot(ast.target) orelse return self.fail(ast.position, "invalid assignment target");
@@ -952,12 +1017,15 @@ pub const Analyzer = struct {
             },
         }
 
-        const target = try self.expression(ast.target, scope);
+        const target = if (ast.target.value == .member_access)
+            try self.memberAccessExpressionRaw(ast.target.value.member_access, scope, false)
+        else
+            try self.expression(ast.target, scope);
 
         var value: ?*Expression = null;
         if (ast.value) |ast_value| value = try self.expressionForExpected(ast_value, scope, target.type);
 
-        return self.checkedAssignment(ast, target, value);
+        return self.checkedAssignment(ast, target, value, scope);
     }
 
     fn checkedAssignment(
@@ -965,6 +1033,7 @@ pub const Analyzer = struct {
         ast: Ast.Statement.Assignment,
         target: *Expression,
         initial_value: ?*Expression,
+        scope: *const Scope,
     ) AnalyzeError!Statement {
         var value = initial_value;
         switch (ast.operator) {
@@ -974,6 +1043,24 @@ pub const Analyzer = struct {
                     const message = try typeMismatchMessage(self.allocator, target.type, value.?.type);
                     return self.fail(ast.value.?.position, message);
                 }
+                if (target.type == .function and target.type.function.owner != null and value.?.type.function.owner == null) {
+                    value = try self.newExpression(.{
+                        .type = target.type,
+                        .position = value.?.position,
+                        .lifetime_depth = value.?.lifetime_depth,
+                        .value = .{ .adapt_function = value.? },
+                    });
+                }
+                const destination_depth = assignmentDestinationDepth(ast.target, self, scope);
+                if (destination_depth < value.?.lifetime_depth) {
+                    return self.fail(ast.value.?.position, "capturing function value cannot be stored in a longer-lived destination");
+                }
+                if (assignmentRoot(ast.target)) |root| switch (root) {
+                    .variable => |name| {
+                        if (findSymbol(scope, name)) |symbol| symbol.state.lifetime_depth = value.?.lifetime_depth;
+                    },
+                    .self => {},
+                };
             },
             .add, .subtract, .multiply, .divide => {
                 value = try self.coerce(value.?, target.type);
@@ -1023,13 +1110,13 @@ pub const Analyzer = struct {
             return self.fail(ast.condition.position, message);
         }
 
-        var body_scope = Scope{ .parent = parent_scope };
+        var body_scope = Scope{ .parent = parent_scope, .depth = parent_scope.depth + 1 };
         const body = try self.statements(ast.body, &body_scope);
         self.releaseScopeBorrows(&body_scope);
 
         var else_body: ?[]const Statement = null;
         if (ast.else_body) |ast_else_body| {
-            var else_scope = Scope{ .parent = parent_scope };
+            var else_scope = Scope{ .parent = parent_scope, .depth = parent_scope.depth + 1 };
             else_body = try self.statements(ast_else_body, &else_scope);
             self.releaseScopeBorrows(&else_scope);
         }
@@ -1052,7 +1139,7 @@ pub const Analyzer = struct {
             return self.fail(ast.condition.position, message);
         }
 
-        var body_scope = Scope{ .parent = parent_scope };
+        var body_scope = Scope{ .parent = parent_scope, .depth = parent_scope.depth + 1 };
         self.loop_depth += 1;
         defer self.loop_depth -= 1;
         const body = try self.statements(ast.body, &body_scope);
@@ -1068,7 +1155,7 @@ pub const Analyzer = struct {
         ast: Ast.Statement.For,
         parent_scope: *const Scope,
     ) AnalyzeError!Statement {
-        var body_scope = Scope{ .parent = parent_scope };
+        var body_scope = Scope{ .parent = parent_scope, .depth = parent_scope.depth + 1 };
         try self.requireAvailableVariableName(&body_scope, ast.name, ast.name_position);
         const mutable = ast.mutability == .mutable;
         const symbol_id = self.next_symbol_id;
@@ -1147,6 +1234,7 @@ pub const Analyzer = struct {
             .type = element_type,
             .mutability = ast.mutability,
             .state = try self.newBindingState(element_type),
+            .scope_depth = body_scope.depth,
         });
 
         self.loop_depth += 1;
@@ -1174,6 +1262,9 @@ pub const Analyzer = struct {
             if (!typeEqual(value.type, self.current_return_type)) {
                 const message = try typeMismatchMessage(self.allocator, self.current_return_type, value.type);
                 return self.fail(ast_value.position, message);
+            }
+            if (value.lifetime_depth != 0) {
+                return self.fail(ast.position, "capturing function value cannot be returned from its lexical scope");
             }
             return .{ .return_statement = value };
         }
@@ -1209,6 +1300,8 @@ pub const Analyzer = struct {
             .identifier => |name| self.variableExpression(ast.position, name, scope),
             .self => self.selfExpression(ast.position),
             .call => |call| self.callExpression(call, scope),
+            .value_call => |call| self.valueCallExpression(call, scope),
+            .lambda => |lambda| self.lambdaExpression(lambda, scope, null),
             .method_call => |call| self.methodCallExpression(call, scope),
             .cascade => |cascade| self.cascadeExpression(cascade, scope, null),
             .structure_initializer => |initializer| self.structureInitializerExpression(initializer, scope),
@@ -1229,6 +1322,7 @@ pub const Analyzer = struct {
     ) AnalyzeError!*Expression {
         if (ast.value == .sequence_literal) return self.sequenceLiteralExpression(ast.value.sequence_literal, ast.position, scope, expected_type);
         if (ast.value == .cascade) return self.cascadeExpression(ast.value.cascade, scope, expected_type);
+        if (ast.value == .lambda) return self.lambdaExpression(ast.value.lambda, scope, expected_type);
         return self.expressionForBorrow(ast, scope);
     }
 
@@ -1306,6 +1400,7 @@ pub const Analyzer = struct {
         }
 
         var values: std.ArrayList(*Expression) = .empty;
+        var lifetime_depth: usize = 0;
         for (ast_values, 0..) |ast_value, index| {
             var value = if (expected_type == null and index == 0)
                 try self.expression(ast_value, scope)
@@ -1317,10 +1412,12 @@ pub const Analyzer = struct {
                 return self.fail(ast_value.position, message);
             }
             try values.append(self.allocator, value);
+            lifetime_depth = @max(lifetime_depth, value.lifetime_depth);
         }
         return self.newExpression(.{
             .type = result_type,
             .position = position,
+            .lifetime_depth = lifetime_depth,
             .value = .{ .sequence_literal = try values.toOwnedSlice(self.allocator) },
         });
     }
@@ -1368,6 +1465,7 @@ pub const Analyzer = struct {
             .str => self.newExpression(.{ .type = .str, .position = position, .value = .{ .string = "" } }),
             .list, .fixed_array => self.newExpression(.{ .type = type_value, .position = position, .value = .{ .sequence_literal = &.{} } }),
             .reference => self.fail(position, "a reference requires an initializer"),
+            .function => self.fail(position, "a function value requires an initializer"),
             .structure => |structure_type| structure_default: {
                 const structure = self.findStructureByGeneratedName(structure_type.generated_name).?;
                 var fields: std.ArrayList(*Expression) = .empty;
@@ -1399,6 +1497,13 @@ pub const Analyzer = struct {
             const message = try std.fmt.allocPrint(self.allocator, "unknown variable '{s}'", .{name});
             return self.fail(position, message);
         };
+        var lambda_context = self.current_lambda;
+        while (lambda_context) |lambda| : (lambda_context = lambda.parent) {
+            if (symbol.scope_depth < lambda.local_depth) {
+                try self.recordLambdaCapture(lambda, symbol.generated_name);
+                lambda.lifetime_depth = @max(lambda.lifetime_depth, symbol.scope_depth);
+            }
+        }
         if (symbol.state.mutable_borrow) {
             const message = try std.fmt.allocPrint(self.allocator, "cannot access variable '{s}' while it is mutably borrowed", .{name});
             return self.fail(position, message);
@@ -1407,6 +1512,7 @@ pub const Analyzer = struct {
             .type = symbol.type,
             .position = position,
             .borrow = symbol.state.reference,
+            .lifetime_depth = symbol.state.lifetime_depth,
             .value = .{ .variable = symbol.generated_name },
         });
     }
@@ -1415,12 +1521,33 @@ pub const Analyzer = struct {
         const structure_index = self.current_structure_index orelse return self.fail(position, "'self' is only available inside a method");
         if (self.current_self_state.mutable_borrow) return self.fail(position, "cannot access 'self' while one of its collections is mutably iterated");
         const structure = self.structures.items[structure_index];
+        if (self.current_lambda) |_| {
+            var owner_context = self.current_lambda;
+            while (owner_context) |lambda| : (owner_context = lambda.parent) {
+                if (!lambda.owner_self) continue;
+                var child_context = self.current_lambda;
+                while (child_context.? != lambda) : (child_context = child_context.?.parent) {
+                    try self.recordLambdaCapture(child_context.?, "silexOwner");
+                }
+                return self.newExpression(.{
+                    .type = .{ .structure = .{ .source_name = structure.source_name, .generated_name = structure.generated_name } },
+                    .position = position,
+                    .value = .owner_self,
+                });
+            }
+            var lambda_context = self.current_lambda;
+            while (lambda_context) |lambda| : (lambda_context = lambda.parent) {
+                lambda.captures_self = true;
+                lambda.lifetime_depth = @max(lambda.lifetime_depth, self.function_scope_depth);
+            }
+        }
         return self.newExpression(.{
             .type = .{ .structure = .{
                 .source_name = structure.source_name,
                 .generated_name = structure.generated_name,
             } },
             .position = position,
+            .lifetime_depth = if (self.current_lambda != null) self.function_scope_depth else 0,
             .value = .self,
         });
     }
@@ -1517,6 +1644,9 @@ pub const Analyzer = struct {
                 .bool,
             ),
             .equal, .not_equal => equality: {
+                if (!self.isEqualityComparable(left.type) or !self.isEqualityComparable(right.type)) {
+                    return self.fail(binary.operator_position, "function values and values containing them are not comparable");
+                }
                 if (isNumeric(left.type) and isNumeric(right.type)) {
                     const common_type = commonNumericType(left.type, right.type) orelse {
                         const message = try std.fmt.allocPrint(self.allocator, "equality operator requires compatible numeric operands, found '{s}' and '{s}'", .{ typeName(left.type), typeName(right.type) });
@@ -1565,6 +1695,14 @@ pub const Analyzer = struct {
     }
 
     fn callExpression(self: *Analyzer, call: Ast.Expression.Call, scope: *const Scope) AnalyzeError!*Expression {
+        if (findSymbol(scope, call.name)) |symbol| {
+            if (symbol.type != .function) {
+                const message = try std.fmt.allocPrint(self.allocator, "value '{s}' is not callable", .{call.name});
+                return self.fail(call.name_position, message);
+            }
+            const callee = try self.variableExpression(call.name_position, call.name, scope);
+            return self.checkedValueCall(callee, call.arguments, call.name_position, scope, null);
+        }
         if (std.mem.eql(u8, call.name, "main")) return self.fail(call.name_position, "'main' cannot be called");
         var candidates: std.ArrayList(FunctionSymbol) = .empty;
         for (self.functions.items) |function_symbol| {
@@ -1580,7 +1718,7 @@ pub const Analyzer = struct {
         }
         const function_symbol = try self.resolveFunctionOverload(call.name, call.name_position, call.arguments, scope, candidates.items);
         var arguments: std.ArrayList(*Expression) = .empty;
-        for (call.arguments, function_symbol.parameter_types, function_symbol.parameter_is_mutable_references, 0..) |argument, expected_type, is_mutable_reference, index| {
+        for (call.arguments, function_symbol.parameter_types, function_symbol.parameter_is_mutable_references, function_symbol.parameter_stored, 0..) |argument, expected_type, is_mutable_reference, is_stored, index| {
             var value = if (is_mutable_reference)
                 try self.mutableReferenceArgument(argument, scope, expected_type)
             else
@@ -1589,6 +1727,9 @@ pub const Analyzer = struct {
             if (!typeEqual(value.type, expected_type)) {
                 const message = try std.fmt.allocPrint(self.allocator, "argument {d} of '{s}' expects '{s}', found '{s}'", .{ index + 1, call.name, typeName(expected_type), typeName(value.type) });
                 return self.fail(argument.position, message);
+            }
+            if (is_stored and value.lifetime_depth != 0) {
+                return self.fail(argument.position, "capturing callback cannot be passed to a parameter whose value escapes the call");
             }
             try arguments.append(self.allocator, value);
             self.releaseTransientBorrow(value);
@@ -1606,12 +1747,157 @@ pub const Analyzer = struct {
         });
     }
 
+    fn valueCallExpression(
+        self: *Analyzer,
+        call: Ast.Expression.ValueCall,
+        scope: *const Scope,
+    ) AnalyzeError!*Expression {
+        const callee = try self.expression(call.callee, scope);
+        return self.checkedValueCall(callee, call.arguments, call.parenthesis_position, scope, null);
+    }
+
+    fn checkedValueCall(
+        self: *Analyzer,
+        callee: *Expression,
+        ast_arguments: []const *Ast.Expression,
+        position: Source.Position,
+        scope: *const Scope,
+        owner: ?*Expression,
+    ) AnalyzeError!*Expression {
+        const function_type = switch (callee.type) {
+            .function => |value| value,
+            else => return self.fail(position, "expression is not callable"),
+        };
+        if (ast_arguments.len != function_type.parameters.len) {
+            const message = try std.fmt.allocPrint(self.allocator, "function value expects {d} arguments, found {d}", .{ function_type.parameters.len, ast_arguments.len });
+            return self.fail(position, message);
+        }
+        var arguments: std.ArrayList(*Expression) = .empty;
+        for (ast_arguments, function_type.parameters, function_type.parameter_is_mutable_references, 0..) |ast_argument, expected_type, is_mutable_reference, index| {
+            var argument = if (is_mutable_reference)
+                try self.mutableReferenceArgument(ast_argument, scope, expected_type)
+            else
+                try self.expressionForExpected(ast_argument, scope, expected_type);
+            argument = try self.coerce(argument, expected_type);
+            if (!typeEqual(argument.type, expected_type)) {
+                const message = try std.fmt.allocPrint(self.allocator, "argument {d} expects '{s}', found '{s}'", .{ index + 1, typeName(expected_type), typeName(argument.type) });
+                return self.fail(ast_argument.position, message);
+            }
+            try arguments.append(self.allocator, argument);
+        }
+        return self.newExpression(.{
+            .type = function_type.return_type.*,
+            .position = position,
+            .lifetime_depth = callee.lifetime_depth,
+            .value = .{ .value_call = .{
+                .callee = callee,
+                .arguments = try arguments.toOwnedSlice(self.allocator),
+                .owner = owner,
+            } },
+        });
+    }
+
+    fn lambdaExpression(
+        self: *Analyzer,
+        lambda: Ast.Expression.Lambda,
+        parent_scope: *const Scope,
+        expected_type: ?Type,
+    ) AnalyzeError!*Expression {
+        var parameter_types: std.ArrayList(Type) = .empty;
+        var parameter_is_mutable_references: std.ArrayList(bool) = .empty;
+        var parameters: std.ArrayList(Parameter) = .empty;
+        var scope = Scope{ .parent = parent_scope, .depth = parent_scope.depth + 1 };
+        for (lambda.parameters) |parameter| {
+            if (findInCurrentScope(&scope, parameter.name) != null) {
+                const message = try std.fmt.allocPrint(self.allocator, "parameter '{s}' is already declared", .{parameter.name});
+                return self.fail(parameter.position, message);
+            }
+            const parameter_type = try typeFromAnnotation(self, parameter.type, parameter.position);
+            const generated_name = try std.fmt.allocPrint(self.allocator, "silexValue{d}", .{self.next_symbol_id});
+            self.next_symbol_id += 1;
+            try parameter_types.append(self.allocator, parameter_type);
+            try parameter_is_mutable_references.append(self.allocator, parameter.is_mutable_reference);
+            try scope.symbols.append(self.allocator, .{
+                .source_name = parameter.name,
+                .generated_name = generated_name,
+                .type = parameter_type,
+                .mutability = .mutable,
+                .state = try self.newBindingState(parameter_type),
+                .scope_depth = scope.depth,
+            });
+            try parameters.append(self.allocator, .{
+                .generated_name = generated_name,
+                .type = parameter_type,
+                .is_mutable_reference = parameter.is_mutable_reference,
+            });
+        }
+        const return_type = try typeFromReturn(self, lambda.return_type, lambda.position);
+        const return_pointer = try self.allocator.create(Type);
+        return_pointer.* = return_type;
+        var lambda_type: Type = .{ .function = .{
+            .parameters = try parameter_types.toOwnedSlice(self.allocator),
+            .parameter_is_mutable_references = try parameter_is_mutable_references.toOwnedSlice(self.allocator),
+            .return_type = return_pointer,
+        } };
+        if (expected_type) |expected| {
+            if (expected != .function or !typeEqual(lambda_type, expected)) {
+                const message = try typeMismatchMessage(self.allocator, expected, lambda_type);
+                return self.fail(lambda.position, message);
+            }
+            lambda_type = expected;
+        }
+
+        var context = LambdaContext{
+            .local_depth = scope.depth,
+            .owner_self = lambda_type.function.owner != null,
+            .parent = self.current_lambda,
+        };
+        const previous_lambda = self.current_lambda;
+        const previous_return_type = self.current_return_type;
+        self.current_lambda = &context;
+        self.current_return_type = return_type;
+        defer {
+            self.current_lambda = previous_lambda;
+            self.current_return_type = previous_return_type;
+        }
+        const body = try self.statements(lambda.statements, &scope);
+        self.releaseScopeBorrows(&scope);
+        if (!typeEqual(return_type, .void) and !blockAlwaysReturns(body)) {
+            return self.fail(lambda.position, "lambda must return a value on every path");
+        }
+        return self.newExpression(.{
+            .type = lambda_type,
+            .position = lambda.position,
+            .lifetime_depth = context.lifetime_depth,
+            .value = .{ .lambda = .{
+                .parameters = try parameters.toOwnedSlice(self.allocator),
+                .return_type = return_type,
+                .statements = body,
+                .captures = try context.captures.toOwnedSlice(self.allocator),
+                .captures_self = context.captures_self,
+            } },
+        });
+    }
+
     fn methodCallExpression(
         self: *Analyzer,
         call: Ast.Expression.MethodCall,
         scope: *const Scope,
     ) AnalyzeError!*Expression {
         const object = try self.expression(call.object, scope);
+        if (object.type == .structure) {
+            const structure = self.findStructureByGeneratedName(object.type.structure.generated_name).?;
+            for (structure.fields) |field| {
+                if (std.mem.eql(u8, field.source_name, call.name) and field.type == .function) {
+                    const callee = try self.newExpression(.{
+                        .type = field.type,
+                        .position = call.name_position,
+                        .value = .{ .member_access = .{ .object = object, .generated_name = field.generated_name } },
+                    });
+                    return self.checkedValueCall(callee, call.arguments, call.name_position, scope, object);
+                }
+            }
+        }
         const receiver = receiverFor(
             call.object,
             scope,
@@ -1654,7 +1940,8 @@ pub const Analyzer = struct {
         const resolved = try self.resolveMethodOverload(call.name, call.name_position, call.arguments, scope, candidates.items);
         const method_symbol = resolved.symbol;
         var arguments: std.ArrayList(*Expression) = .empty;
-        for (call.arguments, method_symbol.parameter_types, method_symbol.parameter_is_mutable_references, 0..) |argument, expected_type, is_mutable_reference, index| {
+        const receiver_depth = expressionScopeDepth(call.object, scope);
+        for (call.arguments, method_symbol.parameter_types, method_symbol.parameter_is_mutable_references, method_symbol.parameter_stored, 0..) |argument, expected_type, is_mutable_reference, is_stored, index| {
             var value = if (is_mutable_reference)
                 try self.mutableReferenceArgument(argument, scope, expected_type)
             else
@@ -1663,6 +1950,9 @@ pub const Analyzer = struct {
             if (!typeEqual(value.type, expected_type)) {
                 const message = try std.fmt.allocPrint(self.allocator, "argument {d} of method '{s}' expects '{s}', found '{s}'", .{ index + 1, call.name, typeName(expected_type), typeName(value.type) });
                 return self.fail(argument.position, message);
+            }
+            if (is_stored and receiver_depth < value.lifetime_depth) {
+                return self.fail(argument.position, "capturing callback cannot be stored in a receiver that outlives one of its captures");
             }
             try arguments.append(self.allocator, value);
             self.releaseTransientBorrow(value);
@@ -1712,6 +2002,7 @@ pub const Analyzer = struct {
             ordinary_receiver;
 
         var operations: std.ArrayList(Expression.Cascade.Operation) = .empty;
+        var cascade_lifetime = object.lifetime_depth;
         for (cascade.operations) |operation| switch (operation) {
             .method_call => |cascade_method| {
                 const call = Ast.Expression.MethodCall{
@@ -1753,6 +2044,11 @@ pub const Analyzer = struct {
                     const message = try typeMismatchMessage(self.allocator, field.type, value.type);
                     return self.fail(field_assignment.value.position, message);
                 }
+                if (expressionScopeDepth(cascade.object, scope) < value.lifetime_depth) {
+                    return self.fail(field_assignment.value.position, "capturing function value cannot be stored in a longer-lived destination");
+                }
+                updateDestinationLifetime(cascade.object, scope, value.lifetime_depth);
+                cascade_lifetime = @max(cascade_lifetime, value.lifetime_depth);
                 try operations.append(self.allocator, .{ .field_assignment = .{
                     .generated_name = field.generated_name,
                     .value = value,
@@ -1763,6 +2059,7 @@ pub const Analyzer = struct {
         return self.newExpression(.{
             .type = object.type,
             .position = cascade.object.position,
+            .lifetime_depth = cascade_lifetime,
             .value = .{ .cascade = .{
                 .object = object,
                 .operations = try operations.toOwnedSlice(self.allocator),
@@ -1902,6 +2199,10 @@ pub const Analyzer = struct {
                                 });
                             }
                             resolved_operation = .append_range;
+                            if (expressionScopeDepth(call.object, scope) < value.lifetime_depth) {
+                                return self.fail(argument.position, "capturing function value cannot be stored in a longer-lived collection");
+                            }
+                            updateDestinationLifetime(call.object, scope, value.lifetime_depth);
                             try arguments.append(self.allocator, value);
                             continue;
                         }
@@ -1913,6 +2214,15 @@ pub const Analyzer = struct {
                 const message = try std.fmt.allocPrint(self.allocator, "argument {d} of method '{s}' expects '{s}', found '{s}'", .{ index + 1, call.name, typeName(expected_type), typeName(value.type) });
                 return self.fail(argument.position, message);
             }
+            const stores_value = switch (operation) {
+                .append, .prepend => true,
+                .insert, .replace => index == 1,
+                else => false,
+            };
+            if (stores_value and expressionScopeDepth(call.object, scope) < value.lifetime_depth) {
+                return self.fail(argument.position, "capturing function value cannot be stored in a longer-lived collection");
+            }
+            if (stores_value) updateDestinationLifetime(call.object, scope, value.lifetime_depth);
             try arguments.append(self.allocator, value);
         }
         const result_type: Type = switch (operation) {
@@ -1927,6 +2237,10 @@ pub const Analyzer = struct {
         return self.newExpression(.{
             .type = result_type,
             .position = call.name_position,
+            .lifetime_depth = switch (operation) {
+                .take, .take_first, .take_last, .replace => object.lifetime_depth,
+                else => 0,
+            },
             .value = .{ .collection_method = .{
                 .object = object,
                 .operation = resolved_operation,
@@ -2160,6 +2474,7 @@ pub const Analyzer = struct {
         }
 
         var values: std.ArrayList(*Expression) = .empty;
+        var lifetime_depth: usize = 0;
         for (structure.fields) |expected_field| {
             var matching: ?Ast.Expression.FieldInitializer = null;
             for (initializer.fields) |field| {
@@ -2178,6 +2493,7 @@ pub const Analyzer = struct {
                 return self.fail(position, message);
             }
             try values.append(self.allocator, value);
+            lifetime_depth = @max(lifetime_depth, value.lifetime_depth);
         }
         return self.newExpression(.{
             .type = .{ .structure = .{
@@ -2185,6 +2501,7 @@ pub const Analyzer = struct {
                 .generated_name = structure.generated_name,
             } },
             .position = initializer.name_position,
+            .lifetime_depth = lifetime_depth,
             .value = .{ .structure_initializer = .{
                 .generated_name = structure.generated_name,
                 .fields = try values.toOwnedSlice(self.allocator),
@@ -2197,6 +2514,15 @@ pub const Analyzer = struct {
         member: Ast.Expression.MemberAccess,
         scope: *const Scope,
     ) AnalyzeError!*Expression {
+        return self.memberAccessExpressionRaw(member, scope, true);
+    }
+
+    fn memberAccessExpressionRaw(
+        self: *Analyzer,
+        member: Ast.Expression.MemberAccess,
+        scope: *const Scope,
+        bind_function: bool,
+    ) AnalyzeError!*Expression {
         const object = try self.expression(member.object, scope);
         const generated_structure_name = switch (object.type) {
             .structure => |structure_type| structure_type.generated_name,
@@ -2205,9 +2531,23 @@ pub const Analyzer = struct {
         const structure = self.findStructureByGeneratedName(generated_structure_name).?;
         for (structure.fields) |field| {
             if (std.mem.eql(u8, field.source_name, member.name)) {
+                if (bind_function and field.type == .function and field.type.function.owner != null) {
+                    var bound_type = field.type;
+                    bound_type.function.owner = null;
+                    return self.newExpression(.{
+                        .type = bound_type,
+                        .position = member.name_position,
+                        .lifetime_depth = expressionScopeDepth(member.object, scope),
+                        .value = .{ .bound_function = .{
+                            .object = object,
+                            .generated_name = field.generated_name,
+                        } },
+                    });
+                }
                 return self.newExpression(.{
                     .type = field.type,
                     .position = member.name_position,
+                    .lifetime_depth = object.lifetime_depth,
                     .value = .{ .member_access = .{
                         .object = object,
                         .generated_name = field.generated_name,
@@ -2239,6 +2579,7 @@ pub const Analyzer = struct {
         return self.newExpression(.{
             .type = element_type,
             .position = access.bracket_position,
+            .lifetime_depth = object.lifetime_depth,
             .value = .{ .index_access = .{
                 .object = object,
                 .index = index,
@@ -2287,6 +2628,20 @@ pub const Analyzer = struct {
             if (std.mem.eql(u8, structure.generated_name, name)) return structure;
         }
         return null;
+    }
+
+    fn isEqualityComparable(self: *const Analyzer, type_value: Type) bool {
+        return switch (type_value) {
+            .function, .reference, .void => false,
+            .list => |element| self.isEqualityComparable(element.*),
+            .fixed_array => |array| self.isEqualityComparable(array.element.*),
+            .structure => |structure_type| comparable: {
+                const structure = self.findStructureByGeneratedName(structure_type.generated_name) orelse break :comparable false;
+                for (structure.fields) |field| if (!self.isEqualityComparable(field.type)) break :comparable false;
+                break :comparable true;
+            },
+            else => true,
+        };
     }
 
     fn inferMethodMutability(self: *Analyzer) void {
@@ -2375,7 +2730,7 @@ pub const Analyzer = struct {
                 const value = std.fmt.parseFloat(f32, lexeme) catch return self.fail(expression_value.position, "float literal is outside the range of 'float'");
                 if (!std.math.isFinite(value)) return self.fail(expression_value.position, "float literal is outside the range of 'float'");
             },
-            .boolean, .string, .variable, .self, .cascade_target => {},
+            .boolean, .string, .variable, .self, .owner_self, .cascade_target => {},
             .string_length => |argument| try self.validateExpression(argument),
             .sequence_literal => |values| for (values) |value| try self.validateExpression(value),
             .collection_method => |collection_method| {
@@ -2383,6 +2738,12 @@ pub const Analyzer = struct {
                 for (collection_method.arguments) |argument| try self.validateExpression(argument);
             },
             .call => |call| for (call.arguments) |argument| try self.validateExpression(argument),
+            .value_call => |call| {
+                try self.validateExpression(call.callee);
+                if (call.owner) |owner| try self.validateExpression(owner);
+                for (call.arguments) |argument| try self.validateExpression(argument);
+            },
+            .lambda => |lambda| try self.validateStatements(lambda.statements),
             .method_call => |call| {
                 try self.validateExpression(call.object);
                 for (call.arguments) |argument| try self.validateExpression(argument);
@@ -2413,6 +2774,8 @@ pub const Analyzer = struct {
             },
             .structure_initializer => |initializer| for (initializer.fields) |field| try self.validateExpression(field),
             .member_access => |member| try self.validateExpression(member.object),
+            .bound_function => |member| try self.validateExpression(member.object),
+            .adapt_function => |value| try self.validateExpression(value),
             .index_access => |access| {
                 try self.validateExpression(access.object);
                 try self.validateExpression(access.index);
@@ -2656,6 +3019,13 @@ pub const Analyzer = struct {
         return result;
     }
 
+    fn recordLambdaCapture(self: *Analyzer, lambda: *LambdaContext, generated_name: []const u8) !void {
+        for (lambda.captures.items) |capture| {
+            if (std.mem.eql(u8, capture, generated_name)) return;
+        }
+        try lambda.captures.append(self.allocator, generated_name);
+    }
+
     fn newBindingState(self: *Analyzer, type_value: Type) !*BindingState {
         const state = try self.allocator.create(BindingState);
         state.* = .{};
@@ -2758,6 +3128,7 @@ fn typeFromAnnotation(
             break :fixed_array_type .{ .fixed_array = .{ .element = element, .length = length } };
         },
         .reference => |reference| try typeFromReference(self, reference, position),
+        .function => |function| try typeFromFunction(self, function, position),
         .structure => |name| structure_type: {
             const structure = self.findStructure(name) orelse {
                 const message = try std.fmt.allocPrint(self.allocator, "unknown type '{s}'", .{name});
@@ -2797,7 +3168,35 @@ fn typeFromReturn(
         .fixed_array => |array| typeFromAnnotation(self, .{ .fixed_array = array }, position),
         .structure => |name| typeFromAnnotation(self, .{ .structure = name }, position),
         .reference => |reference| typeFromReference(self, reference, position),
+        .function => |function| typeFromFunction(self, function, position),
     };
+}
+
+fn typeFromFunction(
+    self: *Analyzer,
+    function: Ast.TypeName.FunctionType,
+    position: Source.Position,
+) AnalyzeError!Type {
+    var parameters: std.ArrayList(Type) = .empty;
+    for (function.parameters, function.parameter_is_mutable_references) |parameter, is_mutable_reference| {
+        const parameter_type = try typeFromAnnotation(self, parameter, position);
+        if (parameter_type == .void or parameter_type == .reference) {
+            return self.fail(position, "a function value parameter cannot have this type");
+        }
+        _ = is_mutable_reference;
+        try parameters.append(self.allocator, parameter_type);
+    }
+    const return_type = try self.allocator.create(Type);
+    return_type.* = if (function.return_type) |return_annotation|
+        try typeFromAnnotation(self, return_annotation.*, position)
+    else
+        .void;
+    if (return_type.* == .reference) return self.fail(position, "a function value cannot return a reference");
+    return .{ .function = .{
+        .parameters = try parameters.toOwnedSlice(self.allocator),
+        .parameter_is_mutable_references = try self.allocator.dupe(bool, function.parameter_is_mutable_references),
+        .return_type = return_type,
+    } };
 }
 
 fn typeFromReference(
@@ -2836,6 +3235,83 @@ fn blockAlwaysReturns(statements: []const Statement) bool {
         }
     }
     return false;
+}
+
+fn parameterStored(statements: []const Ast.Statement, name: []const u8) bool {
+    for (statements) |statement_value| switch (statement_value) {
+        .assignment => |assignment_value| {
+            if (assignment_value.value) |value| {
+                if (assignmentRoot(assignment_value.target)) |root| switch (root) {
+                    .self => if (astExpressionUsesIdentifier(value, name)) return true,
+                    .variable => {},
+                };
+            }
+        },
+        .return_statement => |return_value| {
+            if (return_value.value) |value| if (astExpressionUsesIdentifier(value, name)) return true;
+        },
+        .if_statement => |if_value| {
+            if (parameterStored(if_value.body, name)) return true;
+            if (if_value.else_body) |else_body| if (parameterStored(else_body, name)) return true;
+        },
+        .while_statement => |while_value| if (parameterStored(while_value.body, name)) return true,
+        .for_statement => |for_value| if (parameterStored(for_value.body, name)) return true,
+        .expression_statement => |expression_value| if (astCollectionCallStoresIdentifier(expression_value, name)) return true,
+        else => {},
+    };
+    return false;
+}
+
+fn astCollectionCallStoresIdentifier(expression_value: *const Ast.Expression, name: []const u8) bool {
+    if (expression_value.value != .method_call) return false;
+    const call = expression_value.value.method_call;
+    const root = assignmentRoot(call.object) orelse return false;
+    if (root != .self) return false;
+    const argument_index: usize = if (std.mem.eql(u8, call.name, "append") or std.mem.eql(u8, call.name, "prepend"))
+        0
+    else if (std.mem.eql(u8, call.name, "insert") or std.mem.eql(u8, call.name, "replace"))
+        1
+    else
+        return false;
+    if (argument_index >= call.arguments.len) return false;
+    return astExpressionUsesIdentifier(call.arguments[argument_index], name);
+}
+
+fn astExpressionUsesIdentifier(expression_value: *const Ast.Expression, name: []const u8) bool {
+    return switch (expression_value.value) {
+        .identifier => |candidate| std.mem.eql(u8, candidate, name),
+        .sequence_literal => |values| uses: {
+            for (values) |value| if (astExpressionUsesIdentifier(value, name)) break :uses true;
+            break :uses false;
+        },
+        .value_call => |call| uses: {
+            if (astExpressionUsesIdentifier(call.callee, name)) break :uses true;
+            for (call.arguments) |argument| if (astExpressionUsesIdentifier(argument, name)) break :uses true;
+            break :uses false;
+        },
+        .call => |call| uses: {
+            for (call.arguments) |argument| if (astExpressionUsesIdentifier(argument, name)) break :uses true;
+            break :uses false;
+        },
+        .method_call => |call| uses: {
+            if (astExpressionUsesIdentifier(call.object, name)) break :uses true;
+            for (call.arguments) |argument| if (astExpressionUsesIdentifier(argument, name)) break :uses true;
+            break :uses false;
+        },
+        .member_access => |member| astExpressionUsesIdentifier(member.object, name),
+        .index_access => |access| astExpressionUsesIdentifier(access.object, name) or astExpressionUsesIdentifier(access.index, name),
+        .slice_access => |access| astExpressionUsesIdentifier(access.object, name) or astExpressionUsesIdentifier(access.start, name) or astExpressionUsesIdentifier(access.end, name),
+        .unary => |unary| astExpressionUsesIdentifier(unary.operand, name),
+        .conversion => |conversion| astExpressionUsesIdentifier(conversion.operand, name),
+        .binary => |binary| astExpressionUsesIdentifier(binary.left, name) or astExpressionUsesIdentifier(binary.right, name),
+        .structure_initializer => |initializer| uses: {
+            for (initializer.fields) |field| if (astExpressionUsesIdentifier(field.value, name)) break :uses true;
+            break :uses false;
+        },
+        .cascade => |cascade| astExpressionUsesIdentifier(cascade.object, name),
+        .lambda => false,
+        else => false,
+    };
 }
 
 fn typeMismatchMessage(allocator: Allocator, expected: Type, found: Type) ![]const u8 {
@@ -2911,6 +3387,17 @@ fn typeEqual(left: Type, right: Type) bool {
         },
         .reference => |left_reference| switch (right) {
             .reference => |right_reference| left_reference.mutable == right_reference.mutable and typeEqual(left_reference.target.*, right_reference.target.*),
+            else => false,
+        },
+        .function => |left_function| switch (right) {
+            .function => |right_function| function_type: {
+                if (left_function.parameters.len != right_function.parameters.len) break :function_type false;
+                if (!typeEqual(left_function.return_type.*, right_function.return_type.*)) break :function_type false;
+                for (left_function.parameters, left_function.parameter_is_mutable_references, right_function.parameters, right_function.parameter_is_mutable_references) |left_parameter, left_mutable, right_parameter, right_mutable| {
+                    if (left_mutable != right_mutable or !typeEqual(left_parameter, right_parameter)) break :function_type false;
+                }
+                break :function_type true;
+            },
             else => false,
         },
         .structure => |left_structure| switch (right) {
@@ -3005,7 +3492,7 @@ fn methodSignatures(allocator: Allocator, candidates: []const MethodCandidate) !
 fn isNativeReturnType(value: Type) bool {
     return switch (value) {
         .void, .int, .int8, .int16, .int32, .uint8, .uint16, .uint32, .uint64, .float, .float64, .bool => true,
-        .str, .structure, .list, .fixed_array, .reference => false,
+        .str, .structure, .list, .fixed_array, .reference, .function => false,
     };
 }
 
@@ -3050,6 +3537,7 @@ fn typeName(value: Type) []const u8 {
         .list => "list",
         .fixed_array => "array",
         .reference => |reference| if (reference.mutable) "reference&" else "reference@",
+        .function => "func",
         .structure => |structure_type| structure_type.source_name,
     };
 }
@@ -3175,6 +3663,34 @@ fn assignmentRoot(expression: *const Ast.Expression) ?AssignmentRoot {
         .index_access => |access| assignmentRoot(access.object),
         else => null,
     };
+}
+
+fn expressionScopeDepth(expression: *const Ast.Expression, scope: *const Scope) usize {
+    return switch (assignmentRoot(expression) orelse return scope.depth) {
+        .self => 1,
+        .variable => |name| if (findSymbol(scope, name)) |symbol| symbol.scope_depth else scope.depth,
+    };
+}
+
+fn assignmentDestinationDepth(
+    expression: *const Ast.Expression,
+    self: *const Analyzer,
+    scope: *const Scope,
+) usize {
+    return switch (assignmentRoot(expression) orelse return scope.depth) {
+        .self => self.function_scope_depth,
+        .variable => |name| if (findSymbol(scope, name)) |symbol| symbol.scope_depth else scope.depth,
+    };
+}
+
+fn updateDestinationLifetime(expression: *const Ast.Expression, scope: *const Scope, lifetime_depth: usize) void {
+    const root = assignmentRoot(expression) orelse return;
+    switch (root) {
+        .variable => |name| if (findSymbol(scope, name)) |symbol| {
+            symbol.state.lifetime_depth = @max(symbol.state.lifetime_depth, lifetime_depth);
+        },
+        .self => {},
+    }
 }
 
 fn receiverFor(expression: *const Ast.Expression, scope: *const Scope, self_borrowed: bool) Receiver {
@@ -3388,10 +3904,10 @@ test "analyze negative collection indexes and slices" {
     var analyzer = Analyzer.init(allocator);
     const program = try analyzer.analyze(try parser.parse());
 
-    const last = program.functions[0].statements[1].variable_declaration.initializer.?;
+    const last = program.functions[0].statements[1].variable_declaration.initializer;
     try std.testing.expectEqual(Type.int, last.type);
     try std.testing.expect(last.value == .index_access);
-    const middle = program.functions[0].statements[2].variable_declaration.initializer.?;
+    const middle = program.functions[0].statements[2].variable_declaration.initializer;
     try std.testing.expect(middle.type == .list);
     try std.testing.expectEqual(Type.int, middle.type.list.*);
     try std.testing.expect(middle.value == .slice_access);
@@ -3469,7 +3985,7 @@ test "resolve string escapes concatenation and length" {
     const value = program.functions[0].statements[0].variable_declaration.initializer;
     try std.testing.expectEqual(Type.str, value.type);
     try std.testing.expectEqualSlices(u8, &.{ 'A', 0xC3, 0xA9, 0 }, value.value.string);
-    try std.testing.expectEqual(Type.str, program.functions[0].statements[1].assignment.value.type);
+    try std.testing.expectEqual(Type.str, program.functions[0].statements[1].assignment.value.?.type);
     try std.testing.expectEqual(Type.int, program.functions[0].statements[2].variable_declaration.initializer.type);
 }
 
@@ -3567,8 +4083,8 @@ test "resolve structural equality recursively" {
     const allocator = arena.allocator();
 
     var parser = Parser.init(allocator,
-        \\struct Position { x:int y:int }
-        \\struct Player { name:str position:Position }
+        \\struct Position { x:int; y:int }
+        \\struct Player { name:str; position:Position }
         \\func main() void {
         \\    let first = Player { name:"Ada", position:Position { x:10, y:20 } }
         \\    let copy = Player { name:"Ada", position:Position { x:10, y:20 } }
@@ -3642,4 +4158,101 @@ test "resolve forward and recursive function calls" {
     const program = try analyzer.analyze(try parser.parse());
     try std.testing.expectEqual(@as(usize, 2), program.functions.len);
     try std.testing.expectEqual(Type.int, program.functions[1].return_type);
+}
+
+test "reject mutation of a let captured by a lambda" {
+    try expectSemanticError(
+        "func main() { let count = 1; let callback = func() { count += 1; }; callback(); }",
+        "cannot assign to immutable variable 'count'",
+    );
+}
+
+test "reject returning a capturing lambda" {
+    try expectSemanticError(
+        "func invalid() func() { var count = 1; return func() { count += 1; }; } func main() {}",
+        "capturing function value cannot be returned from its lexical scope",
+    );
+}
+
+test "reject storing a callback beyond a captured block" {
+    try expectSemanticError(
+        \\struct Foo {
+        \\    callback:func()
+        \\    func set_callback(callback:func()) { self.callback = callback }
+        \\}
+        \\func main() {
+        \\    var foo = Foo { callback:func() {} }
+        \\    if (true) {
+        \\        var count = 1
+        \\        foo.set_callback(func() { count += 1 })
+        \\    }
+        \\}
+    ,
+        "capturing callback cannot be stored in a receiver that outlives one of its captures",
+    );
+}
+
+test "reject incompatible lambda signature" {
+    try expectSemanticError(
+        "func main() { let callback:func(int) int = func(value:str) int { return 1; }; }",
+        "expected 'func', found 'func'",
+    );
+}
+
+test "reject missing default function value" {
+    try expectSemanticError(
+        "func main() { let callback:func(); }",
+        "a function value requires an initializer",
+    );
+}
+
+test "reject equality of function values" {
+    try expectSemanticError(
+        "func main() { let callback = func() {}; let same = callback == callback; }",
+        "function values and values containing them are not comparable",
+    );
+}
+
+test "reject extracting an owner callback beyond its owner" {
+    try expectSemanticError(
+        \\struct Foo { callback:func() }
+        \\func invalid(foo:Foo) func() { return foo.callback }
+        \\func main() {}
+    ,
+        "capturing function value cannot be returned from its lexical scope",
+    );
+}
+
+test "reject function values at the native boundary" {
+    const Parser = @import("Parser.zig").Parser;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var parser = Parser.init(allocator, "native func native_hook(callback:func()) void; func main() {}");
+    const parsed = try parser.parse();
+    const functions = try allocator.dupe(Ast.Function, parsed.functions);
+    functions[0].name = "Test.native_hook";
+    var program = parsed;
+    program.functions = functions;
+    var analyzer = Analyzer.init(allocator);
+    analyzer.native_module_names = &.{"Test"};
+    try std.testing.expectError(error.InvalidSource, analyzer.analyze(program));
+    try std.testing.expectEqualStrings(
+        "native parameter 'callback' cannot use 'func'",
+        analyzer.diagnostic.?.message,
+    );
+}
+
+test "reject storing a capturing lambda in a longer-lived collection" {
+    try expectSemanticError(
+        \\func main() {
+        \\    var callbacks:func()[] = []
+        \\    if (true) {
+        \\        var count = 1
+        \\        callbacks.append(func() { count += 1 })
+        \\    }
+        \\}
+    ,
+        "capturing function value cannot be stored in a longer-lived collection",
+    );
 }

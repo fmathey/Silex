@@ -494,6 +494,19 @@ fn appendAstTypeName(allocator: Allocator, output: *std.ArrayList(u8), type_name
             try output.append(allocator, if (reference.mutable) '&' else '@');
             try appendAstTypeName(allocator, output, reference.target.*);
         },
+        .function => |function| {
+            try output.appendSlice(allocator, "func(");
+            for (function.parameters, function.parameter_is_mutable_references, 0..) |parameter, is_mutable_reference, index| {
+                if (index != 0) try output.appendSlice(allocator, ", ");
+                if (is_mutable_reference) try output.append(allocator, '&');
+                try appendAstTypeName(allocator, output, parameter);
+            }
+            try output.append(allocator, ')');
+            if (function.return_type) |return_type| {
+                try output.append(allocator, ' ');
+                try appendAstTypeName(allocator, output, return_type.*);
+            }
+        },
     }
 }
 
@@ -1267,6 +1280,7 @@ fn astTypeName(type_name: Ast.TypeName) []const u8 {
         .list => |element| astTypeName(element.*),
         .fixed_array => |array| astTypeName(array.element.*),
         .reference => |reference| astTypeName(reference.target.*),
+        .function => "func",
     };
 }
 

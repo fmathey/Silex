@@ -67,6 +67,7 @@ pub const Resolver = struct {
     declarations: std.ArrayList(Declaration) = .empty,
     exports: std.ArrayList(Export) = .empty,
     file_infos: []FileInfo = &.{},
+    local_scopes: std.ArrayList(std.ArrayList([]const u8)) = .empty,
     diagnostic: ?Source.Diagnostic = null,
 
     pub fn init(allocator: Allocator, project: ProjectModule.Project, files: []const File) Resolver {
@@ -413,32 +414,58 @@ pub const Resolver = struct {
     }
 
     fn transformFunctionBody(self: *Resolver, function: Ast.Function, name: []const u8) !Ast.Function {
+        try self.pushLocalScope();
+        defer self.popLocalScope();
         var parameters: std.ArrayList(Ast.Parameter) = .empty;
         for (function.parameters) |parameter| {
             var copy = parameter;
             copy.type = try self.transformType(parameter.type, parameter.position);
             try parameters.append(self.allocator, copy);
+            try self.declareLocal(parameter.name);
         }
-        var statements: std.ArrayList(Ast.Statement) = .empty;
-        for (function.statements) |statement| try statements.append(self.allocator, try self.transformStatement(statement));
         var result = function;
         result.name = name;
         result.return_type = try self.transformReturnType(function.return_type, function.position);
         result.parameters = try parameters.toOwnedSlice(self.allocator);
-        result.statements = try statements.toOwnedSlice(self.allocator);
+        result.statements = try self.transformStatementsInCurrentScope(function.statements);
         return result;
     }
 
-    fn transformType(self: *Resolver, value: Ast.TypeName, position: Source.Position) !Ast.TypeName {
+    fn transformType(self: *Resolver, value: Ast.TypeName, position: Source.Position) anyerror!Ast.TypeName {
         return switch (value) {
             .structure => |name| .{ .structure = (try self.resolveName(position.file, name, .structure, position)).canonical_name },
+            .list => |element| .{ .list = try self.transformTypePointer(element.*, position) },
+            .fixed_array => |array| .{ .fixed_array = .{
+                .element = try self.transformTypePointer(array.element.*, position),
+                .length = array.length,
+            } },
+            .reference => |reference| .{ .reference = .{
+                .target = try self.transformTypePointer(reference.target.*, position),
+                .mutable = reference.mutable,
+            } },
+            .function => |function| function_type: {
+                var parameters: std.ArrayList(Ast.TypeName) = .empty;
+                for (function.parameters) |parameter| try parameters.append(self.allocator, try self.transformType(parameter, position));
+                break :function_type .{ .function = .{
+                    .parameters = try parameters.toOwnedSlice(self.allocator),
+                    .parameter_is_mutable_references = try self.allocator.dupe(bool, function.parameter_is_mutable_references),
+                    .return_type = if (function.return_type) |return_type| try self.transformTypePointer(return_type.*, position) else null,
+                } };
+            },
             else => value,
         };
+    }
+
+    fn transformTypePointer(self: *Resolver, value: Ast.TypeName, position: Source.Position) anyerror!*Ast.TypeName {
+        const result = try self.allocator.create(Ast.TypeName);
+        result.* = try self.transformType(value, position);
+        return result;
     }
 
     fn transformReturnType(self: *Resolver, value: Ast.ReturnType, position: Source.Position) !Ast.ReturnType {
         return switch (value) {
             .structure => |name| .{ .structure = (try self.resolveName(position.file, name, .structure, position)).canonical_name },
+            .function => |function| .{ .function = (try self.transformType(.{ .function = function }, position)).function },
             else => value,
         };
     }
@@ -459,6 +486,7 @@ pub const Resolver = struct {
                 var copy = value;
                 if (value.annotation) |annotation| copy.annotation = try self.transformType(annotation, value.name_position);
                 if (value.initializer) |initializer| copy.initializer = try self.transformExpression(initializer);
+                try self.declareLocal(value.name);
                 break :declaration .{ .variable_declaration = copy };
             },
             .assignment => |value| .{ .assignment = .{
@@ -490,7 +518,7 @@ pub const Resolver = struct {
                         .end = try self.transformExpression(range.end),
                     } },
                 },
-                .body = try self.transformStatements(value.body),
+                .body = try self.transformForBody(value.body, value.name),
             } },
             .break_statement => |position| .{ .break_statement = position },
             .continue_statement => |position| .{ .continue_statement = position },
@@ -503,9 +531,22 @@ pub const Resolver = struct {
     }
 
     fn transformStatements(self: *Resolver, statements: []const Ast.Statement) anyerror![]const Ast.Statement {
+        try self.pushLocalScope();
+        defer self.popLocalScope();
+        return self.transformStatementsInCurrentScope(statements);
+    }
+
+    fn transformStatementsInCurrentScope(self: *Resolver, statements: []const Ast.Statement) anyerror![]const Ast.Statement {
         var result: std.ArrayList(Ast.Statement) = .empty;
         for (statements) |statement| try result.append(self.allocator, try self.transformStatement(statement));
         return result.toOwnedSlice(self.allocator);
+    }
+
+    fn transformForBody(self: *Resolver, statements: []const Ast.Statement, name: []const u8) anyerror![]const Ast.Statement {
+        try self.pushLocalScope();
+        defer self.popLocalScope();
+        try self.declareLocal(name);
+        return self.transformStatementsInCurrentScope(statements);
     }
 
     fn transformExpression(self: *Resolver, expression: *const Ast.Expression) anyerror!*Ast.Expression {
@@ -513,14 +554,46 @@ pub const Resolver = struct {
         result.position = expression.position;
         result.value = switch (expression.value) {
             .call => |call| call: {
+                const arguments = try self.transformExpressions(call.arguments);
+                if (self.findLocal(call.name)) {
+                    break :call .{ .call = .{
+                        .name = call.name,
+                        .name_position = call.name_position,
+                        .arguments = arguments,
+                        .visible_declarations = null,
+                    } };
+                }
                 const declarations = try self.visibleFunctionDeclarations(expression.position.file, call.name, call.name_position);
                 break :call .{ .call = .{
                     .name = declarations[0].canonical_name,
                     .name_position = call.name_position,
-                    .arguments = try self.transformExpressions(call.arguments),
+                    .arguments = arguments,
                     .visible_declarations = try declarationPositions(self.allocator, declarations),
                 } };
             },
+            .value_call => |call| .{ .value_call = .{
+                .callee = try self.transformExpression(call.callee),
+                .parenthesis_position = call.parenthesis_position,
+                .arguments = try self.transformExpressions(call.arguments),
+            } },
+            .lambda => |lambda| lambda_expression: {
+                try self.pushLocalScope();
+                defer self.popLocalScope();
+                var parameters: std.ArrayList(Ast.Parameter) = .empty;
+                for (lambda.parameters) |parameter| {
+                    var copy = parameter;
+                    copy.type = try self.transformType(parameter.type, parameter.position);
+                    try parameters.append(self.allocator, copy);
+                    try self.declareLocal(parameter.name);
+                }
+                break :lambda_expression .{ .lambda = .{
+                    .position = lambda.position,
+                    .parameters = try parameters.toOwnedSlice(self.allocator),
+                    .return_type = try self.transformReturnType(lambda.return_type, lambda.position),
+                    .statements = try self.transformStatementsInCurrentScope(lambda.statements),
+                } };
+            },
+            .sequence_literal => |values| .{ .sequence_literal = try self.transformExpressions(values) },
             .structure_initializer => |initializer| .{ .structure_initializer = .{
                 .name = (try self.resolveName(expression.position.file, initializer.name, .structure, initializer.name_position)).canonical_name,
                 .name_position = initializer.name_position,
@@ -851,6 +924,29 @@ pub const Resolver = struct {
                 std.mem.eql(u8, export_value.public_name, name)) return export_value;
         }
         return null;
+    }
+
+    fn pushLocalScope(self: *Resolver) !void {
+        try self.local_scopes.append(self.allocator, .empty);
+    }
+
+    fn popLocalScope(self: *Resolver) void {
+        _ = self.local_scopes.pop();
+    }
+
+    fn declareLocal(self: *Resolver, name: []const u8) !void {
+        try self.local_scopes.items[self.local_scopes.items.len - 1].append(self.allocator, name);
+    }
+
+    fn findLocal(self: *const Resolver, name: []const u8) bool {
+        var scope_index = self.local_scopes.items.len;
+        while (scope_index != 0) {
+            scope_index -= 1;
+            for (self.local_scopes.items[scope_index].items) |local| {
+                if (std.mem.eql(u8, local, name)) return true;
+            }
+        }
+        return false;
     }
 
     fn fail(self: *Resolver, position: Source.Position, message: []const u8) Source.Error {

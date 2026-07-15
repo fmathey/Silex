@@ -4,6 +4,12 @@ Primitive values, strings, fixed arrays, lists, and structures have value
 semantics. Assignment, an ordinary function argument, a return value, a field,
 and an indexed element never create observable shared mutable state.
 
+Function values are copied as values too, but a capturing lambda contains
+lexical borrows of the bindings it uses. Copying it copies those borrows, not
+the captured values. The compiler therefore prevents the lambda, or any
+structure or collection containing it, from surviving the shortest captured
+scope.
+
 ```sx
 var first:int[] = [1]
 var second = first
@@ -68,3 +74,7 @@ normal execution order.
 reference type: references cannot be declared locally, stored, returned, or
 dereferenced. There are no `copy` or `move` expressions; ordinary assignment
 is the value-copy operation exposed by the language.
+
+The lexical borrows held by a lambda are distinct from the explicit `&`
+argument marker: they are detected automatically, may last for several calls
+inside their valid scope, and can never escape that scope.

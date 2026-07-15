@@ -24,6 +24,7 @@ pub fn generateWithSources(
         \\#include <cstdint>
         \\#include <cstdlib>
         \\#include <exception>
+        \\#include <functional>
         \\#include <array>
         \\#include <bit>
         \\#include <climits>
@@ -753,6 +754,7 @@ fn generateStructureFieldEquality(
     field: Semantic.StructureField,
 ) !void {
     switch (field.type) {
+        .function => try output.appendSlice(allocator, "false"),
         .structure => |structure_type| {
             try generateStructureEqualityName(allocator, output, structure_type.generated_name);
             try output.appendSlice(allocator, "(left.");
@@ -1166,6 +1168,7 @@ fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expressi
         },
         .variable => |generated_name| try output.appendSlice(allocator, generated_name),
         .self => try output.appendSlice(allocator, "*this"),
+        .owner_self => try output.appendSlice(allocator, "silexOwner"),
         .call => |call| {
             if (call.is_native) {
                 try generateNativeFunctionCall(allocator, output, call);
@@ -1178,6 +1181,48 @@ fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expressi
                 }
                 try output.append(allocator, ')');
             }
+        },
+        .value_call => |call| {
+            try generateExpression(allocator, output, call.callee);
+            try output.append(allocator, '(');
+            if (call.owner) |owner| try generateExpression(allocator, output, owner);
+            for (call.arguments, 0..) |argument, index| {
+                if (index != 0 or call.owner != null) try output.appendSlice(allocator, ", ");
+                try generateExpression(allocator, output, argument);
+            }
+            try output.append(allocator, ')');
+        },
+        .lambda => |lambda| {
+            try output.append(allocator, '[');
+            var capture_index: usize = 0;
+            if (lambda.captures_self) {
+                try output.appendSlice(allocator, "this");
+                capture_index += 1;
+            }
+            for (lambda.captures) |capture| {
+                if (capture_index != 0) try output.appendSlice(allocator, ", ");
+                try output.append(allocator, '&');
+                try output.appendSlice(allocator, capture);
+                capture_index += 1;
+            }
+            try output.appendSlice(allocator, "](");
+            var parameter_index: usize = 0;
+            if (expression.type.function.owner) |owner| {
+                try output.appendSlice(allocator, owner.generated_name);
+                try output.appendSlice(allocator, "& silexOwner");
+                parameter_index += 1;
+            }
+            for (lambda.parameters) |parameter| {
+                if (parameter_index != 0) try output.appendSlice(allocator, ", ");
+                try appendCppType(allocator, output, parameter.type);
+                if (parameter.is_mutable_reference) try output.append(allocator, '&');
+                try output.append(allocator, ' ');
+                try output.appendSlice(allocator, parameter.generated_name);
+                parameter_index += 1;
+            }
+            try output.appendSlice(allocator, ") {\n");
+            try generateStatements(allocator, output, lambda.statements, 1, false);
+            try output.append(allocator, '}');
         },
         .method_call => |call| {
             if (call.object.value != .self) {
@@ -1207,6 +1252,44 @@ fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expressi
                 try output.append(allocator, '.');
             }
             try output.appendSlice(allocator, member.generated_name);
+        },
+        .bound_function => |member| {
+            try output.appendSlice(allocator, "[&silexBoundOwner = ");
+            try generateExpression(allocator, output, member.object);
+            try output.appendSlice(allocator, "](");
+            for (expression.type.function.parameters, expression.type.function.parameter_is_mutable_references, 0..) |parameter_type, is_mutable_reference, index| {
+                if (index != 0) try output.appendSlice(allocator, ", ");
+                try appendCppType(allocator, output, parameter_type);
+                if (is_mutable_reference) try output.append(allocator, '&');
+                try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, " silexBoundArgument{d}", .{index}));
+            }
+            try output.appendSlice(allocator, ") { return silexBoundOwner.");
+            try output.appendSlice(allocator, member.generated_name);
+            try output.appendSlice(allocator, "(silexBoundOwner");
+            for (expression.type.function.parameters, 0..) |_, index| {
+                try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, ", silexBoundArgument{d}", .{index}));
+            }
+            try output.appendSlice(allocator, "); }");
+        },
+        .adapt_function => |value| {
+            try output.appendSlice(allocator, "[silexCallback = ");
+            try generateExpression(allocator, output, value);
+            try output.appendSlice(allocator, "](");
+            const function = expression.type.function;
+            try output.appendSlice(allocator, function.owner.?.generated_name);
+            try output.appendSlice(allocator, "&");
+            for (function.parameters, function.parameter_is_mutable_references, 0..) |parameter_type, is_mutable_reference, index| {
+                try output.appendSlice(allocator, ", ");
+                try appendCppType(allocator, output, parameter_type);
+                if (is_mutable_reference) try output.append(allocator, '&');
+                try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, " silexAdaptedArgument{d}", .{index}));
+            }
+            try output.appendSlice(allocator, ") { return silexCallback(");
+            for (function.parameters, 0..) |_, index| {
+                if (index != 0) try output.appendSlice(allocator, ", ");
+                try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "silexAdaptedArgument{d}", .{index}));
+            }
+            try output.appendSlice(allocator, "); }");
         },
         .unary => |unary| {
             if (unary.operator == .numeric_negate and isInteger(expression.type) and unary.operand.value == .integer) {
@@ -1377,6 +1460,7 @@ fn cppType(type_name: Semantic.Type) []const u8 {
         .float64 => "double",
         .bool => "bool",
         .str => "std::string",
+        .function => unreachable,
         .list, .fixed_array => unreachable,
         .structure => |structure_type| structure_type.generated_name,
         .reference => unreachable,
@@ -1399,6 +1483,24 @@ fn appendCppType(allocator: Allocator, output: *std.ArrayList(u8), type_name: Se
             try output.appendSlice(allocator, "std::array<");
             try appendCppType(allocator, output, array.element.*);
             try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, ", {d}>", .{array.length}));
+        },
+        .function => |function| {
+            try output.appendSlice(allocator, "std::function<");
+            try appendCppType(allocator, output, function.return_type.*);
+            try output.append(allocator, '(');
+            var index: usize = 0;
+            if (function.owner) |owner| {
+                try output.appendSlice(allocator, owner.generated_name);
+                try output.append(allocator, '&');
+                index += 1;
+            }
+            for (function.parameters, function.parameter_is_mutable_references) |parameter, is_mutable_reference| {
+                if (index != 0) try output.appendSlice(allocator, ", ");
+                try appendCppType(allocator, output, parameter);
+                if (is_mutable_reference) try output.append(allocator, '&');
+                index += 1;
+            }
+            try output.appendSlice(allocator, ")>");
         },
         else => try output.appendSlice(allocator, cppType(type_name)),
     }
@@ -1423,6 +1525,7 @@ fn silexTypeName(type_name: Semantic.Type) []const u8 {
         .fixed_array => "array",
         .structure => |structure_type| structure_type.source_name,
         .reference => |reference| if (reference.mutable) "reference&" else "reference@",
+        .function => "func",
     };
 }
 

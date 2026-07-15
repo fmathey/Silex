@@ -95,3 +95,36 @@ may use `return` without a value.
 
 Methods are functions declared inside a structure. Their receiver is the
 explicit `self` value; see [Structures](Structures.md).
+
+## Function values and lambdas
+
+`func(parameter types) return_type` is a value type. An omitted return type is
+the canonical spelling of `void`; `func(int) void` is also accepted. Function
+values may be assigned, passed, stored in fields or collections, and called
+with the same argument conversions as a named function.
+
+```sx
+func apply(value:int, callback:func(int) int) int {
+    return callback(value)
+}
+
+let doubled = apply(4, func(value:int) int {
+    return value * 2
+})
+```
+
+A lambda begins with `func` but has no name. Every parameter is named and
+annotated, and every non-`void` return type and path is explicit. The compiler
+captures only the outer bindings actually used. A captured `var` may be read
+and changed; a captured `let` remains immutable. Copies of a lambda refer to
+the same captured bindings.
+
+A lambda without captures is an unrestricted value. A capturing lambda borrows
+its outer bindings and cannot be returned or stored in a variable, field,
+structure, or collection that outlives any capture. The same check is applied
+when a callback parameter is stored by the called function or method. This is a
+lexical check: captures do not allocate shared cells or extend a scope.
+
+Function values and values that contain them are not printable or comparable.
+They have no intrinsic default and remain forbidden in `native func`
+parameters and returns.

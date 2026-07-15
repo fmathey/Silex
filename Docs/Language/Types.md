@@ -40,3 +40,14 @@ are not part of the language yet.
 Permitted escapes are `\\`, `\"`, `\n`, `\r`, `\t`, `\0`, and
 `\u{H...}` for a valid Unicode scalar. A raw newline or an invalid escape is a
 compile-time error.
+
+## Function types
+
+`func(int, str) bool` accepts an `int` and a `str` and returns `bool`.
+`func(int)` returns `void`; the explicit spelling `func(int) void` is accepted
+but is not canonical. Function types may be nested in collection and structure
+types. A lambda supplies a function value; named overloaded declarations do not
+implicitly convert to one.
+
+`func(&int)` has a mutable-reference parameter. Its calls use `&place`, exactly
+like calls to a named function whose parameter is written `value:&int`.

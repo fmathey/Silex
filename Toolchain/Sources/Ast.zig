@@ -47,6 +47,7 @@ pub const TypeName = union(enum) {
     list: *TypeName,
     fixed_array: FixedArray,
     reference: Reference,
+    function: FunctionType,
 
     pub const FixedArray = struct {
         element: *TypeName,
@@ -56,6 +57,12 @@ pub const TypeName = union(enum) {
     pub const Reference = struct {
         target: *TypeName,
         mutable: bool,
+    };
+
+    pub const FunctionType = struct {
+        parameters: []const TypeName,
+        parameter_is_mutable_references: []const bool,
+        return_type: ?*TypeName,
     };
 };
 
@@ -80,6 +87,7 @@ pub const ReturnType = union(enum) {
     list: *TypeName,
     fixed_array: TypeName.FixedArray,
     reference: TypeName.Reference,
+    function: TypeName.FunctionType,
 };
 
 pub const Mutability = enum {
@@ -108,6 +116,8 @@ pub const Expression = struct {
         identifier: []const u8,
         self,
         call: Call,
+        value_call: ValueCall,
+        lambda: Lambda,
         method_call: MethodCall,
         cascade: Cascade,
         structure_initializer: StructureInitializer,
@@ -130,6 +140,19 @@ pub const Expression = struct {
         name_position: Source.Position,
         arguments: []const *Expression,
         visible_declarations: ?[]const Source.Position = null,
+    };
+
+    pub const ValueCall = struct {
+        callee: *Expression,
+        parenthesis_position: Source.Position,
+        arguments: []const *Expression,
+    };
+
+    pub const Lambda = struct {
+        position: Source.Position,
+        parameters: []const Parameter,
+        return_type: ReturnType,
+        statements: []const Statement,
     };
 
     pub const MethodCall = struct {

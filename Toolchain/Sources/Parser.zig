@@ -226,6 +226,7 @@ pub const Parser = struct {
             .list => |element| .{ .list = element },
             .fixed_array => |array| .{ .fixed_array = array },
             .reference => |reference| .{ .reference = reference },
+            .function => |function| .{ .function = function },
         };
     }
 
@@ -351,7 +352,9 @@ pub const Parser = struct {
     }
 
     fn parseTypeNameAfter(self: *Parser, message: []const u8) ParseError!Ast.TypeName {
-        const type_name: Ast.TypeName = if (self.current.tag == .identifier)
+        const type_name: Ast.TypeName = if (self.current.tag == .keyword_func)
+            try self.parseFunctionType()
+        else if (self.current.tag == .identifier)
             .{ .structure = try self.parseQualifiedName(message) }
         else switch (self.current.tag) {
             .keyword_int => .int,
@@ -371,7 +374,7 @@ pub const Parser = struct {
             .keyword_str => .str,
             else => return self.fail(message),
         };
-        if (type_name != .structure) try self.advance();
+        if (type_name != .structure and type_name != .function) try self.advance();
         var result = type_name;
         while (self.current.tag == .left_bracket) {
             try self.advance();
@@ -391,6 +394,41 @@ pub const Parser = struct {
         return result;
     }
 
+    fn parseFunctionType(self: *Parser) ParseError!Ast.TypeName {
+        try self.expect(.keyword_func, "expected 'func'");
+        try self.expect(.left_parenthesis, "expected '(' after 'func'");
+        var parameters: std.ArrayList(Ast.TypeName) = .empty;
+        var parameter_is_mutable_references: std.ArrayList(bool) = .empty;
+        while (self.current.tag != .right_parenthesis) {
+            const is_mutable_reference = self.current.tag == .amp;
+            if (is_mutable_reference) try self.advance();
+            try parameters.append(self.allocator, try self.parseTypeNameAfter("expected function parameter type"));
+            try parameter_is_mutable_references.append(self.allocator, is_mutable_reference);
+            if (self.current.tag != .comma) break;
+            try self.advance();
+        }
+        try self.expect(.right_parenthesis, "expected ')' after function parameter types");
+        var return_type: ?*Ast.TypeName = null;
+        const return_on_same_line = self.current.position.line == self.previous.position.line;
+        if (return_on_same_line and self.current.tag == .keyword_void) {
+            try self.advance();
+        } else if (return_on_same_line and self.isTypeStart()) {
+            return_type = try self.newTypeName(try self.parseTypeNameAfter("expected function return type"));
+        }
+        return .{ .function = .{
+            .parameters = try parameters.toOwnedSlice(self.allocator),
+            .parameter_is_mutable_references = try parameter_is_mutable_references.toOwnedSlice(self.allocator),
+            .return_type = return_type,
+        } };
+    }
+
+    fn isTypeStart(self: *const Parser) bool {
+        return switch (self.current.tag) {
+            .keyword_func, .keyword_int, .keyword_int8, .keyword_int16, .keyword_int32, .keyword_int64, .keyword_uint, .keyword_uint8, .keyword_uint16, .keyword_uint32, .keyword_uint64, .keyword_float, .keyword_float32, .keyword_float64, .keyword_bool, .keyword_str, .identifier => true,
+            else => false,
+        };
+    }
+
     fn parseIdentifierStatement(self: *Parser) ParseError!Ast.Statement {
         const position = self.current.position;
         const target = try self.parseExpression(false);
@@ -408,7 +446,7 @@ pub const Parser = struct {
                 .value = value,
             } };
         }
-        if (target.value == .call or target.value == .method_call or target.value == .cascade) {
+        if (target.value == .call or target.value == .value_call or target.value == .method_call or target.value == .cascade) {
             try self.expectStatementTerminator();
             return .{ .expression_statement = target };
         }
@@ -734,6 +772,7 @@ pub const Parser = struct {
                 return self.parsePostfix(try self.newExpression(.{ .position = token.position, .value = .{ .string = token.lexeme } }));
             },
             .left_bracket => return self.parsePostfix(try self.parseSequenceLiteral()),
+            .keyword_func => return self.parsePostfix(try self.parseLambda()),
             .identifier, .keyword_self => {
                 return self.parseIdentifierExpression();
             },
@@ -745,6 +784,25 @@ pub const Parser = struct {
             },
             else => return self.fail("expected expression"),
         }
+    }
+
+    fn parseLambda(self: *Parser) ParseError!*Ast.Expression {
+        const position = self.current.position;
+        try self.expect(.keyword_func, "expected 'func'");
+        const parameters = try self.parseParameters();
+        const return_type: Ast.ReturnType = if (self.current.tag == .left_brace)
+            .void
+        else
+            try self.parseReturnType();
+        return self.newExpression(.{
+            .position = position,
+            .value = .{ .lambda = .{
+                .position = position,
+                .parameters = parameters,
+                .return_type = return_type,
+                .statements = try self.parseBlock(),
+            } },
+        });
     }
 
     fn parseSequenceLiteral(self: *Parser) ParseError!*Ast.Expression {
@@ -787,7 +845,20 @@ pub const Parser = struct {
 
     fn parsePostfix(self: *Parser, initial: *Ast.Expression) ParseError!*Ast.Expression {
         var expression = initial;
-        while (self.current.tag == .dot or self.current.tag == .left_bracket) {
+        while (self.current.tag == .dot or self.current.tag == .left_bracket or self.current.tag == .left_parenthesis) {
+            if (self.current.tag == .left_parenthesis) {
+                const position = self.current.position;
+                const arguments = try self.parseCallArguments();
+                expression = try self.newExpression(.{
+                    .position = expression.position,
+                    .value = .{ .value_call = .{
+                        .callee = expression,
+                        .parenthesis_position = position,
+                        .arguments = arguments,
+                    } },
+                });
+                continue;
+            }
             if (self.current.tag == .left_bracket) {
                 const bracket_position = self.current.position;
                 try self.advance();
@@ -887,6 +958,18 @@ pub const Parser = struct {
         name: []const u8,
         position: Source.Position,
     ) ParseError!*Ast.Expression {
+        const arguments = try self.parseCallArguments();
+        return self.newExpression(.{
+            .position = position,
+            .value = .{ .call = .{
+                .name = name,
+                .name_position = position,
+                .arguments = arguments,
+            } },
+        });
+    }
+
+    fn parseCallArguments(self: *Parser) ParseError![]const *Ast.Expression {
         try self.expect(.left_parenthesis, "expected '('");
         var arguments: std.ArrayList(*Ast.Expression) = .empty;
         while (self.current.tag != .right_parenthesis) {
@@ -895,14 +978,7 @@ pub const Parser = struct {
             try self.advance();
         }
         try self.expect(.right_parenthesis, "expected ')'");
-        return self.newExpression(.{
-            .position = position,
-            .value = .{ .call = .{
-                .name = name,
-                .name_position = position,
-                .arguments = try arguments.toOwnedSlice(self.allocator),
-            } },
-        });
+        return arguments.toOwnedSlice(self.allocator);
     }
 
     fn parseMethodCall(

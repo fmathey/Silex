@@ -1,0 +1,105 @@
+import STD.Random as Random
+
+func apply(value:int, callback:func(int) int) int {
+    return callback(value)
+}
+
+func visit(values:int[], callback:func(int)) {
+    for (let value in values) {
+        callback(value)
+    }
+}
+
+func make_incrementer() func(int) int {
+    return func(value:int) int {
+        return value + 1
+    }
+}
+
+func mutate(callback:func(&int)) {
+    var value = 1
+    callback(&value)
+    print(value)
+}
+
+struct Counter {
+    count:int
+    callback:func()
+
+    func bind() {
+        self.callback = func() {
+            self.increment()
+        }
+    }
+
+    func increment() {
+        self.count += 1
+    }
+}
+
+struct Damage {
+    callback:func(int)
+
+    func set_callback(callback:func(int)) {
+        self.callback = callback
+    }
+}
+
+func main() {
+    let doubled = apply(4, func(value:int) int {
+        return value * 2
+    })
+    print(doubled)
+
+    mutate(func(value:&int) {
+        value += 1
+    })
+
+    var health:int = 100
+    let divisor:int = 2
+    let take_damage = func(amount:int) {
+        health -= amount
+        health -= amount / divisor
+    }
+    take_damage(10)
+    print(health)
+
+    let increment = make_incrementer()
+    print(increment(5))
+
+    var callbacks:func()[] = []
+    callbacks.append(func() {
+        health -= 1
+    })
+    callbacks[0]()
+    print(health)
+
+    let nested = func(amount:int) {
+        let inner = func() {
+            health -= amount
+        }
+        inner()
+    }
+    nested(2)
+    print(health)
+
+    visit([1, -2, 3], func(value:int) {
+        if (value > 0) {
+            print(value)
+        }
+    })
+
+    var damage = Damage { callback:func(amount:int) {} }
+    damage.set_callback(func(amount:int) {
+        health -= amount
+    })
+    damage.callback(5)
+    print(health)
+
+    var first = Counter { count:0, callback:func() {} }
+    first.bind()
+    var second = first
+    second.callback()
+    print(first.count)
+    print(second.count)
+}

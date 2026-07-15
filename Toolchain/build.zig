@@ -1,5 +1,5 @@
 const std = @import("std");
-const silex_version = "0.14.0";
+const silex_version = "0.15.0";
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
@@ -83,6 +83,15 @@ pub fn build(b: *std.Build) void {
         .root_module = module,
     });
     const test_command = b.addRunArtifact(tests);
+
+    const semantic_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("Sources/Semantic.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const semantic_test_command = b.addRunArtifact(semantic_tests);
 
     const lsp_test_module = b.createModule(.{
         .root_source_file = b.path("Sources/Lsp.zig"),
@@ -862,6 +871,7 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run the toolchain tests");
     test_step.dependOn(b.getInstallStep());
     test_step.dependOn(&test_command.step);
+    test_step.dependOn(&semantic_test_command.step);
     test_step.dependOn(&lsp_test_command.step);
     test_step.dependOn(&invalid_command.step);
     test_step.dependOn(&missing_module_subcommand_command.step);
@@ -976,8 +986,13 @@ pub fn build(b: *std.Build) void {
     smoke_command.addArgs(&.{ "run", "Smokes/Main.sx" });
     smoke_command.expectStdOutEqual(hostText(b, "Hello from Silex smoke test\n50\nlogic works\ntrue\nfalse\n2\n1\n"));
 
+    const functions_command = b.addRunArtifact(executable);
+    functions_command.step.dependOn(&smoke_command.step);
+    functions_command.addArgs(&.{ "run", "Smokes/Functions.sx" });
+    functions_command.expectStdOutEqual(hostText(b, "8\n2\n85\n6\n84\n82\n1\n3\n77\n0\n1\n"));
+
     const references_command = b.addRunArtifact(executable);
-    references_command.step.dependOn(&smoke_command.step);
+    references_command.step.dependOn(&functions_command.step);
     references_command.addArgs(&.{ "run", "Smokes/References.sx" });
     references_command.expectStdOutEqual(hostText(b, "1\n2\n4\n11\n21\n13\n11\n10\n"));
 
@@ -1290,7 +1305,7 @@ pub fn build(b: *std.Build) void {
     standard_library_manifest_command.addArgs(&.{ "run", "Smokes/StandardLibrary/silex.json" });
     standard_library_manifest_command.expectStdOutEqual(hostText(
         b,
-        standard_library_output,
+        standard_library_output ++ "true\n",
     ));
 
     const distributed_native_runtime_command = b.addRunArtifact(executable);
@@ -1578,7 +1593,7 @@ pub fn build(b: *std.Build) void {
     const verify_distribution = b.addSystemCommand(&.{ installed_silex, "run", "Main.sx" });
     verify_distribution.setCwd(distribution_check_files.getDirectory());
     verify_distribution.setEnvironmentVariable("PATH", "");
-    verify_distribution.expectStdOutEqual(hostText(b, standard_library_output));
+    verify_distribution.expectStdOutEqual(hostText(b, standard_library_output ++ "true\n"));
     verify_distribution.step.dependOn(distribution_step);
 
     const distribution_check_step = b.step("dist-check", "Build and verify the self-contained host distribution");

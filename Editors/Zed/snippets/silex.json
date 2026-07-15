@@ -153,6 +153,22 @@
     ],
     "description": "Declare a function with an explicit return type"
   },
+  "Lambda": {
+    "prefix": "lambda",
+    "body": [
+      "func(${1:value}:${2:int}) {",
+      "    $0",
+      "}"
+    ],
+    "description": "Create an anonymous function value"
+  },
+  "Function type": {
+    "prefix": "functype",
+    "body": [
+      "func(${1:int})${2: int}"
+    ],
+    "description": "Write a function value type"
+  },
   "Method": {
     "prefix": "method",
     "body": [
