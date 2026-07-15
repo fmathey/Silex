@@ -1015,31 +1015,31 @@ fn collectSemanticInfo(
                     .collection = collectionKind(tokens, index + 3),
                     .offset = tokenOffset(source, tokens[index + 1]),
                 });
-            } else if (tokens[index + 2].tag == .equal and tokens[index + 3].tag == .identifier and
-                index + 4 < tokens.len and tokens[index + 4].tag == .left_brace)
-            {
-                try info.variables.append(allocator, .{
-                    .name = tokens[index + 1].lexeme,
-                    .type_name = tokens[index + 3].lexeme,
-                    .offset = tokenOffset(source, tokens[index + 1]),
-                });
-            } else if (tokens[index + 2].tag == .equal and index + 6 < tokens.len and
-                tokens[index + 3].tag == .identifier and tokens[index + 4].tag == .dot and
-                tokens[index + 5].tag == .identifier and tokens[index + 6].tag == .left_parenthesis)
-            {
-                const qualifier = tokens[index + 3].lexeme;
-                const module_path = try importedModulePath(allocator, source, qualifier) orelse continue;
-                const type_name = standardFunctionReturnStructure(
-                    allocator,
-                    io,
-                    module_path,
-                    tokens[index + 5].lexeme,
-                ) catch null orelse continue;
-                try info.variables.append(allocator, .{
-                    .name = tokens[index + 1].lexeme,
-                    .type_name = type_name,
-                    .offset = tokenOffset(source, tokens[index + 1]),
-                });
+            } else if (tokens[index + 2].tag == .equal) {
+                if (structureInitializerType(tokens, index + 3)) |type_name| {
+                    try info.variables.append(allocator, .{
+                        .name = tokens[index + 1].lexeme,
+                        .type_name = type_name,
+                        .offset = tokenOffset(source, tokens[index + 1]),
+                    });
+                } else if (index + 6 < tokens.len and tokens[index + 3].tag == .identifier and
+                    tokens[index + 4].tag == .dot and tokens[index + 5].tag == .identifier and
+                    tokens[index + 6].tag == .left_parenthesis)
+                {
+                    const qualifier = tokens[index + 3].lexeme;
+                    const module_path = try importedModulePath(allocator, source, qualifier) orelse continue;
+                    const type_name = standardFunctionReturnStructure(
+                        allocator,
+                        io,
+                        module_path,
+                        tokens[index + 5].lexeme,
+                    ) catch null orelse continue;
+                    try info.variables.append(allocator, .{
+                        .name = tokens[index + 1].lexeme,
+                        .type_name = type_name,
+                        .offset = tokenOffset(source, tokens[index + 1]),
+                    });
+                }
             }
         }
 
@@ -1048,6 +1048,17 @@ fn collectSemanticInfo(
         }
     }
     try collectImportedStandardStructures(allocator, io, source, info);
+}
+
+fn structureInitializerType(tokens: []const LexerModule.Token, start: usize) ?[]const u8 {
+    if (start >= tokens.len or tokens[start].tag != .identifier) return null;
+    var type_name = tokens[start].lexeme;
+    var index = start + 1;
+    while (index + 1 < tokens.len and tokens[index].tag == .dot and tokens[index + 1].tag == .identifier) {
+        type_name = tokens[index + 1].lexeme;
+        index += 2;
+    }
+    return if (index < tokens.len and tokens[index].tag == .left_brace) type_name else null;
 }
 
 fn collectImportedStandardStructures(
@@ -1545,6 +1556,43 @@ test "member completion infers an imported standard-library factory result" {
     try std.testing.expect(containsCompletion(items, "get_float"));
     try std.testing.expect(containsCompletion(items, "get_bool"));
     try std.testing.expect(!containsCompletion(items, "next"));
+}
+
+test "member completion infers qualified standard-library structure initializers" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const aliased_source =
+        \\import STD.Random as Random
+        \\func main() void {
+        \\    var generator = Random.Generator { state:1 }
+        \\    generator.
+        \\}
+    ;
+    const aliased_items = try completionItems(
+        allocator,
+        std.testing.io,
+        aliased_source,
+        .{ .line = 3, .character = 14 },
+    );
+    try std.testing.expect(containsCompletion(aliased_items, "get_int"));
+    try std.testing.expect(containsCompletion(aliased_items, "get_float"));
+
+    const canonical_source =
+        \\import STD.Random
+        \\func main() void {
+        \\    var generator = STD.Random.Generator { state:1 }
+        \\    generator.
+        \\}
+    ;
+    const canonical_items = try completionItems(
+        allocator,
+        std.testing.io,
+        canonical_source,
+        .{ .line = 3, .character = 14 },
+    );
+    try std.testing.expect(containsCompletion(canonical_items, "get_int"));
+    try std.testing.expect(containsCompletion(canonical_items, "get_float"));
 }
 
 test "member completion only includes members of the receiver structure" {
