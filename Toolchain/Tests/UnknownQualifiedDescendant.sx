@@ -1,0 +1,5 @@
+import STD
+
+func main() {
+    var value = STD.Unknown.Value {}
+}

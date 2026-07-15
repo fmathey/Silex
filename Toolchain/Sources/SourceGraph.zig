@@ -1,5 +1,6 @@
 const std = @import("std");
 const Ast = @import("Ast.zig");
+const LexerModule = @import("Lexer.zig");
 const Modules = @import("Modules.zig");
 const ParserModule = @import("Parser.zig");
 const ProjectModule = @import("Project.zig");
@@ -101,6 +102,12 @@ pub const Loader = struct {
                     });
                 }
             }
+            try self.loadQualifiedDependencies(
+                &modules,
+                project_root,
+                file_index,
+                loads_local_modules,
+            );
         }
 
         var project_modules: std.ArrayList(ProjectModule.Module) = .empty;
@@ -131,6 +138,76 @@ pub const Loader = struct {
         const module_name = moduleNameFromUse(canonical_path) orelse return null;
         try self.loadNamedModule(modules, project_root, module_name, position, loads_local_modules);
         return null;
+    }
+
+    fn loadQualifiedDependencies(
+        self: *Loader,
+        modules: *std.ArrayList(ModuleBuilder),
+        project_root: []const u8,
+        file_index: usize,
+        loads_local_modules: bool,
+    ) !void {
+        const file = self.files.items[file_index];
+        var lexer = LexerModule.Lexer.initFile(self.source_contents.items[file_index], file_index);
+        var tokens: std.ArrayList(LexerModule.Token) = .empty;
+        while (true) {
+            const token = try lexer.next();
+            if (token.tag == .end) break;
+            try tokens.append(self.allocator, token);
+        }
+
+        var index: usize = 0;
+        while (index + 2 < tokens.items.len) {
+            if (tokens.items[index].tag != .identifier or
+                tokens.items[index + 1].tag != .dot or
+                tokens.items[index + 2].tag != .identifier)
+            {
+                index += 1;
+                continue;
+            }
+
+            var path: std.ArrayList(u8) = .empty;
+            try path.appendSlice(self.allocator, tokens.items[index].lexeme);
+            var end = index;
+            while (end + 2 < tokens.items.len and
+                tokens.items[end + 1].tag == .dot and
+                tokens.items[end + 2].tag == .identifier)
+            {
+                try path.append(self.allocator, '.');
+                try path.appendSlice(self.allocator, tokens.items[end + 2].lexeme);
+                end += 2;
+            }
+
+            if (try canonicalImportedPath(self.allocator, file.program.imports, path.items)) |canonical| {
+                try self.loadLongestQualifiedModule(
+                    modules,
+                    project_root,
+                    canonical,
+                    tokens.items[index].position,
+                    loads_local_modules,
+                );
+            }
+            index = end + 1;
+        }
+    }
+
+    fn loadLongestQualifiedModule(
+        self: *Loader,
+        modules: *std.ArrayList(ModuleBuilder),
+        project_root: []const u8,
+        canonical_path: []const u8,
+        position: Source.Position,
+        loads_local_modules: bool,
+    ) !void {
+        var candidate = canonical_path;
+        while (true) {
+            if (try self.moduleExists(modules.items, project_root, candidate, loads_local_modules)) {
+                try self.loadNamedModule(modules, project_root, candidate, position, loads_local_modules);
+                return;
+            }
+            const separator = std.mem.lastIndexOfScalar(u8, candidate, '.') orelse return;
+            candidate = candidate[0..separator];
+        }
     }
 
     fn moduleExists(
@@ -377,6 +454,31 @@ fn canonicalUsePath(
     });
 }
 
+fn canonicalImportedPath(
+    allocator: Allocator,
+    imports: []const Ast.Import,
+    path: []const u8,
+) !?[]const u8 {
+    var matched: ?Ast.Import = null;
+    for (imports) |import_value| {
+        const qualifier = import_value.alias orelse import_value.path;
+        if (!pathHasQualifier(path, qualifier)) continue;
+        if (matched == null) {
+            matched = import_value;
+            continue;
+        }
+        const matched_qualifier = matched.?.alias orelse matched.?.path;
+        if (qualifier.len > matched_qualifier.len) matched = import_value;
+    }
+    const import_value = matched orelse return null;
+    const qualifier = import_value.alias orelse import_value.path;
+    const canonical: []const u8 = try std.fmt.allocPrint(allocator, "{s}.{s}", .{
+        import_value.path,
+        path[qualifier.len + 1 ..],
+    });
+    return canonical;
+}
+
 fn pathHasQualifier(path: []const u8, qualifier: []const u8) bool {
     return std.mem.startsWith(u8, path, qualifier) and
         path.len > qualifier.len and path[qualifier.len] == '.';
@@ -496,4 +598,21 @@ test "use paths expand import and module aliases" {
     const expanded = try canonicalUsePath(std.testing.allocator, imports, aliases, "Random.Generator");
     defer std.testing.allocator.free(expanded);
     try std.testing.expectEqualStrings("STD.Random.Generator", expanded);
+}
+
+test "qualified paths expand parent import aliases" {
+    const imports = &[_]Ast.Import{.{
+        .path = "STD",
+        .alias = "Standard",
+        .position = .{ .line = 1, .column = 1 },
+    }};
+
+    const canonical = (try canonicalImportedPath(
+        std.testing.allocator,
+        imports,
+        "Standard.Time.Stopwatch",
+    )).?;
+    defer std.testing.allocator.free(canonical);
+    try std.testing.expectEqualStrings("STD.Time.Stopwatch", canonical);
+    try std.testing.expect(try canonicalImportedPath(std.testing.allocator, imports, "stopwatch.start") == null);
 }

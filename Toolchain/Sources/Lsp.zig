@@ -1047,7 +1047,7 @@ fn collectSemanticInfo(
             try collectParameters(allocator, source, tokens, index, &info.variables);
         }
     }
-    try collectImportedStandardStructures(allocator, io, source, info);
+    try collectImportedStandardStructures(allocator, io, source, tokens, info);
 }
 
 fn structureInitializerType(tokens: []const LexerModule.Token, start: usize) ?[]const u8 {
@@ -1061,10 +1061,31 @@ fn structureInitializerType(tokens: []const LexerModule.Token, start: usize) ?[]
     return if (index < tokens.len and tokens[index].tag == .left_brace) type_name else null;
 }
 
+fn structureInitializerPath(
+    allocator: Allocator,
+    tokens: []const LexerModule.Token,
+    start: usize,
+) !?[]const u8 {
+    if (start >= tokens.len or tokens[start].tag != .identifier) return null;
+    var path: std.ArrayList(u8) = .empty;
+    defer path.deinit(allocator);
+    try path.appendSlice(allocator, tokens[start].lexeme);
+    var index = start + 1;
+    while (index + 1 < tokens.len and tokens[index].tag == .dot and tokens[index + 1].tag == .identifier) {
+        try path.append(allocator, '.');
+        try path.appendSlice(allocator, tokens[index + 1].lexeme);
+        index += 2;
+    }
+    if (index >= tokens.len or tokens[index].tag != .left_brace) return null;
+    const result: []const u8 = try path.toOwnedSlice(allocator);
+    return result;
+}
+
 fn collectImportedStandardStructures(
     allocator: Allocator,
     io: Io,
     source: []const u8,
+    tokens: []const LexerModule.Token,
     info: *SemanticInfo,
 ) !void {
     var lines = std.mem.splitScalar(u8, source, '\n');
@@ -1096,6 +1117,43 @@ fn collectImportedStandardStructures(
             collectStandardStructureMethods,
             info,
         );
+    }
+
+    for (tokens, 0..) |token, index| {
+        if (token.tag != .identifier) continue;
+        const path = try structureInitializerPath(allocator, tokens, index) orelse continue;
+        defer allocator.free(path);
+        const module_path = try standardModulePathFromQualifiedReference(
+            allocator,
+            io,
+            source,
+            path,
+        ) orelse continue;
+        try visitStandardModuleSources(
+            allocator,
+            io,
+            module_path,
+            collectStandardStructureMethods,
+            info,
+        );
+    }
+}
+
+fn standardModulePathFromQualifiedReference(
+    allocator: Allocator,
+    io: Io,
+    source: []const u8,
+    path: []const u8,
+) !?[]const u8 {
+    const expanded = try importedModulePath(allocator, source, path) orelse return null;
+    if (!StandardLibrary.isStandardPath(expanded)) return null;
+    const standard_library_root = StandardLibrary.root(allocator, io) catch return null;
+    var candidate = expanded;
+    while (true) {
+        const directory = try moduleDirectoryPath(allocator, standard_library_root, candidate);
+        if (try lspDirectoryExists(io, directory)) return candidate;
+        const separator = std.mem.lastIndexOfScalar(u8, candidate, '.') orelse return null;
+        candidate = candidate[0..separator];
     }
 }
 
@@ -1634,9 +1692,9 @@ test "member completion exposes STD Time stopwatch methods" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const source =
-        \\import STD.Time as Time
+        \\import STD
         \\func main() void {
-        \\    var stopwatch = Time.Stopwatch {}
+        \\    var stopwatch = STD.Time.Stopwatch {}
         \\    stopwatch.
         \\}
     ;

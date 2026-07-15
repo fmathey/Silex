@@ -1,0 +1,8 @@
+import STD as Standard
+
+func main() {
+    var stopwatch = Standard.Time.Stopwatch {}
+    stopwatch.start()
+    stopwatch.stop()
+    print(stopwatch.get_elapsed_seconds() >= 0.0)
+}

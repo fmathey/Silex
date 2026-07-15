@@ -668,6 +668,13 @@ pub fn build(b: *std.Build) void {
         "Tests/Modules/UnknownPath/Main.sx:4:9: error: module 'Lib' has no public declaration 'Missing'\n",
     );
 
+    const unknown_qualified_descendant_command = b.addRunArtifact(executable);
+    unknown_qualified_descendant_command.addArgs(&.{ "compile", "Tests/UnknownQualifiedDescendant.sx" });
+    unknown_qualified_descendant_command.expectExitCode(1);
+    unknown_qualified_descendant_command.expectStdErrEqual(
+        "Tests/UnknownQualifiedDescendant.sx:4:17: error: unknown struct 'STD.Unknown.Value'\n",
+    );
+
     const public_module_use_command = b.addRunArtifact(executable);
     public_module_use_command.addArgs(&.{ "compile", "Tests/Modules/PublicModuleUse/project.json" });
     public_module_use_command.expectExitCode(1);
@@ -773,6 +780,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&module_alias_collision_command.step);
     test_step.dependOn(&multiple_module_providers_command.step);
     test_step.dependOn(&unknown_module_path_command.step);
+    test_step.dependOn(&unknown_qualified_descendant_command.step);
     test_step.dependOn(&public_module_use_command.step);
     test_step.dependOn(&missing_local_import_command.step);
     test_step.dependOn(&parent_only_import_command.step);
@@ -1047,6 +1055,11 @@ pub fn build(b: *std.Build) void {
         "1065361344\n1152851127339773951\n508277857751731680\n6637030065269067181\n7345633470618427510\n8792660973527785782\n1082269761\n1152992998833853505\n1954144627577988649\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n1301891922867780472\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n",
     ));
 
+    const qualified_parent_alias_command = b.addRunArtifact(executable);
+    qualified_parent_alias_command.step.dependOn(&standard_library_command.step);
+    qualified_parent_alias_command.addArgs(&.{ "run", "Smokes/QualifiedImports/ParentAlias.sx" });
+    qualified_parent_alias_command.expectStdOutEqual(hostText(b, "true\n"));
+
     const random_generator_source = b.getInstallPath(.prefix, "lib/silex/STD/Random/Generator.sx");
     const random_error_cases = [_]struct {
         source: []const u8,
@@ -1058,7 +1071,7 @@ pub fn build(b: *std.Build) void {
         .{ .source = "Smokes/RandomErrors/FloatFinite.sx", .message = "56:13: runtime error: get_float(minimum, maximum) requires finite bounds" },
         .{ .source = "Smokes/RandomErrors/FloatResolution.sx", .message = "66:13: runtime error: get_float(minimum, maximum) requires a representable value below maximum" },
     };
-    var previous_random_error_step: *std.Build.Step = &standard_library_command.step;
+    var previous_random_error_step: *std.Build.Step = &qualified_parent_alias_command.step;
     for (random_error_cases) |case| {
         const command = b.addRunArtifact(executable);
         command.step.dependOn(previous_random_error_step);

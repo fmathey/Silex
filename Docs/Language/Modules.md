@@ -36,13 +36,18 @@ func create() NK.Window.Session {
 ```
 
 `import` names a module and makes it available through its full name or alias.
-It does not recursively load every submodule. A non-public `use` can name
-either one declaration or one submodule and introduce its name or alias into
-the current file. It can establish that exact dependency without a preceding
-`import`; the longest loaded prefix that names a module is selected. Thus
-`use STD.Random as Random` introduces a module, while
-`use STD.Random.Generator as Generator` introduces a structure. An import alias
-can also qualify a submodule, as in `import STD as Standard` followed by
+It does not recursively load every submodule. A fully qualified reference under
+that import loads only its longest prefix that names an existing module. Thus
+`import STD` permits `STD.Time.Stopwatch {}` and loads `STD.Time` on demand.
+The same rule applies through an import alias such as `Standard.Time.Stopwatch`
+after `import STD as Standard`.
+
+A non-public `use` can name either one declaration or one submodule and
+introduce its name or alias into the current file. It can establish that exact
+dependency without a preceding `import`; the longest loaded prefix that names
+a module is selected. Thus `use STD.Random as Random` introduces a module,
+while `use STD.Random.Generator as Generator` introduces a structure. An import
+alias can also qualify a `use`, as in `import STD as Standard` followed by
 `use Standard.Random as Random`.
 
 Declarations are private by default. `pub` exposes a structure or function,

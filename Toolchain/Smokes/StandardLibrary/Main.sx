@@ -2,7 +2,6 @@ import STD
 
 use STD.Random as Random
 use STD.Random.Generator as Generator
-use STD.Time as Time
 
 func main() {
     var negative:Generator = STD.Random.create(-1)
@@ -38,7 +37,7 @@ func main() {
     print(rejected.get_int(0, 4611686018427387904))
     print(random.get_int() > 0)
 
-    var stopwatch = Time.Stopwatch {}
+    var stopwatch = STD.Time.Stopwatch {}
     print(!stopwatch.is_running())
     print(stopwatch.get_elapsed_seconds() == 0.0)
     stopwatch.start()
@@ -48,7 +47,7 @@ func main() {
     let first_measurement = stopwatch.get_elapsed_seconds()
     print(!stopwatch.is_running() && first_measurement > 0.0)
 
-    var wait = Time.Stopwatch {}
+    var wait = STD.Time.Stopwatch {}
     wait.start()
     while (wait.get_elapsed_seconds() <= 0.001) {}
     wait.stop()
@@ -70,7 +69,7 @@ func main() {
     let restarted_milliseconds = stopwatch.get_elapsed_milliseconds()
     print(restarted_measurement > 0.0 && restarted_milliseconds == restarted_measurement * 1_000.0)
 
-    var clock = Time.Clock {}
+    var clock = STD.Time.Clock {}
     let clock_is_initial = clock.get_total_seconds() == 0.0 && !clock.is_paused()
     print(clock_is_initial && clock.get_time_scale() == 1.0)
     print(clock.tick() == 0.0)
