@@ -19,6 +19,7 @@ module.exports = grammar({
   extras: ($) => [/\s/, $.comment],
   word: ($) => $.identifier,
   externals: ($) => [$._automatic_semicolon],
+  conflicts: ($) => [[$.array_type, $.type]],
 
   rules: {
     source_file: ($) =>
@@ -116,12 +117,24 @@ module.exports = grammar({
         "str",
       ),
     named_type: ($) => alias(choice($.identifier, $.qualified_name), $.type_identifier),
-    array_type: ($) =>
+    function_type: ($) =>
       seq(
-        field("element", choice($.builtin_type, $.named_type)),
-        repeat1(choice(seq("[", "]"), seq("[", field("length", $.integer_literal), "]"))),
+        "func",
+        "(",
+        optional(seq($.function_type_parameter, repeat(seq(",", $.function_type_parameter)))),
+        ")",
+        optional(choice($.void_type, $.type)),
       ),
-    type: ($) => choice($.array_type, $.builtin_type, $.named_type),
+    function_type_parameter: ($) =>
+      seq(optional(field("mutable_reference", "&")), field("type", $.type)),
+    array_type: ($) =>
+      prec.left(
+        seq(
+          field("element", choice($.builtin_type, $.named_type, $.function_type)),
+          repeat1(choice(seq("[", "]"), seq("[", field("length", $.integer_literal), "]"))),
+        ),
+      ),
+    type: ($) => choice($.array_type, $.function_type, $.builtin_type, $.named_type),
     parameter_list: ($) =>
       seq("(", optional(seq($.parameter, repeat(seq(",", $.parameter)))), ")"),
 
@@ -271,6 +284,7 @@ module.exports = grammar({
         $.unary_expression,
         $.borrow_expression,
         $.conversion_expression,
+        $.lambda_expression,
         $.call_expression,
         $.method_call_expression,
         $.cascade_expression,
@@ -286,6 +300,14 @@ module.exports = grammar({
         $.boolean_literal,
         $.self_expression,
         $.identifier,
+      ),
+
+    lambda_expression: ($) =>
+      seq(
+        "func",
+        $.parameter_list,
+        optional(field("return_type", choice($.void_type, $.type))),
+        field("body", $.block),
       ),
 
     cascade_expression: ($) =>
@@ -320,6 +342,7 @@ module.exports = grammar({
         $.integer_literal,
         $.boolean_literal,
         $.parenthesized_expression,
+        $.lambda_expression,
       ),
 
     cascade_operation: ($) =>
@@ -521,7 +544,7 @@ module.exports = grammar({
 
     call_expression: ($) =>
       seq(
-        field("function", choice($.identifier, $.qualified_name)),
+        field("function", choice($.identifier, $.qualified_name, $.parenthesized_expression, $.lambda_expression)),
         "(",
         optional(seq($.expression, repeat(seq(",", $.expression)))),
         ")",
