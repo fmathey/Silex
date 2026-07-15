@@ -1,0 +1,93 @@
+==================
+Collection cascade
+==================
+
+func main() {
+    var values:int[] = []..append(10)..reverse()
+    print(values..append(20).count())
+}
+
+---
+
+(source_file
+  (function_definition
+    name: (identifier)
+    (parameter_list)
+    body: (block
+      (statement
+        (variable_declaration
+          name: (identifier)
+          (type_annotation
+            type: (type
+              (array_type
+                element: (builtin_type))))
+          initializer: (expression
+            (cascade_expression
+              receiver: (sequence_literal)
+              (cascade_operation
+                (cascade_method_call
+                  method: (identifier)
+                  (expression
+                    (integer_literal))))
+              (cascade_operation
+                (cascade_method_call
+                  method: (identifier)))))))
+      (statement
+        (print_statement
+          function: (identifier)
+          argument: (expression
+            (cascade_expression
+              receiver: (identifier)
+              (cascade_operation
+                (cascade_method_call
+                  method: (identifier)
+                  (expression
+                    (integer_literal))))
+              (cascade_terminal_operation
+                method: (identifier)))))))))
+
+==================
+Struct configuration cascade
+==================
+
+func make() Point {
+    return Point { x:0, y:0 }
+        ..x = 10
+        ..move(1, 2)
+}
+
+---
+
+(source_file
+  (function_definition
+    name: (identifier)
+    (parameter_list)
+    return_type: (type
+      (named_type
+        (type_identifier)))
+    body: (block
+      (statement
+        (return_statement
+          value: (expression
+            (cascade_expression
+              receiver: (structure_initializer
+                type: (identifier)
+                (field_initializer
+                  name: (identifier)
+                  value: (expression
+                    (integer_literal)))
+                (field_initializer
+                  name: (identifier)
+                  value: (expression
+                    (integer_literal))))
+              (cascade_operation
+                (cascade_field_assignment
+                  field: (identifier)
+                  value: (integer_literal)))
+              (cascade_operation
+                (cascade_method_call
+                  method: (identifier)
+                  (expression
+                    (integer_literal))
+                  (expression
+                    (integer_literal)))))))))))
