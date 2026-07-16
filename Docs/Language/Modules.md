@@ -1,8 +1,8 @@
 # Modules
 
 A module is a logical node in a hierarchy. Files assigned to the same module
-share their structures and functions, and directories below it provide its
-submodules. A file does not contain a `module` declaration.
+share their structures, classes, and functions, and directories below it
+provide its submodules. A file does not contain a `module` declaration.
 
 When compiling an entry file without a manifest, a directory defines a local
 module by the same path rule as the installed standard library: `STD/` provides
@@ -50,9 +50,9 @@ while `use STD.Random.Generator as Generator` introduces a structure. An import
 alias can also qualify a `use`, as in `import STD as Standard` followed by
 `use Standard.Random as Random`.
 
-Declarations are private by default. `pub` exposes a structure or function,
-while `pub use` re-exports an existing declaration under the current module
-name. Modules cannot currently be re-exported with `pub use`.
+Declarations are private by default. `pub` exposes a structure, class, or
+function, while `pub use` re-exports an existing declaration under the current
+module name. Modules cannot currently be re-exported with `pub use`.
 
 Duplicate providers, missing modules, dependency cycles, ambiguous aliases, and
 access to private declarations are compile-time errors. Dependencies are never

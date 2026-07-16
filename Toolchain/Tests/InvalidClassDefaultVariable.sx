@@ -1,0 +1,5 @@
+class Player {}
+
+func main() {
+    var player:Player
+}

@@ -368,6 +368,7 @@ pub const Use = struct {
 
 pub const Structure = struct {
     is_public: bool = false,
+    is_class: bool = false,
     position: Source.Position,
     name: []const u8,
     name_position: Source.Position,

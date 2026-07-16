@@ -93,8 +93,9 @@ All arguments, return values, and return paths are checked statically. A
 non-void function must return a compatible value on every path. A void function
 may use `return` without a value.
 
-Methods are functions declared inside a structure. Their receiver is the
-explicit `self` value; see [Structures](Structures.md).
+Methods are functions declared inside a structure or class. Their receiver is
+the explicit `self` value; see [Structures](Structures.md) and
+[Classes](Classes.md).
 
 ## Function values and lambdas
 

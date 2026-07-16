@@ -35,7 +35,9 @@ pub fn generateWithSources(
         \\#include <memory>
         \\#include <optional>
         \\#include <string>
+        \\#include <tuple>
         \\#include <type_traits>
+        \\#include <unordered_map>
         \\#include <utility>
         \\#include <vector>
         \\
@@ -200,6 +202,187 @@ pub fn generateWithSources(
         \\    return static_cast<std::int64_t>(value);
         \\}
         \\
+        \\struct SilexObject;
+        \\using SilexTraceVisitor = std::function<void(SilexObject*)>;
+        \\template <typename T> void silexTraceValue(const T& value, const SilexTraceVisitor& visit);
+        \\template <typename T> void silexClearValue(T& value);
+        \\
+        \\inline bool silexCollectingCycles = false;
+        \\inline std::size_t silexLiveObjects = 0;
+        \\
+        \\struct SilexObject {
+        \\    std::size_t references = 0;
+        \\    bool collecting = false;
+        \\    virtual void silexTrace(const SilexTraceVisitor& visit) const = 0;
+        \\    virtual void silexClear() = 0;
+        \\    virtual ~SilexObject() { --silexLiveObjects; }
+        \\};
+        \\
+        \\void silexCollectCycles(SilexObject* candidate);
+        \\
+        \\void silexRelease(SilexObject* object) {
+        \\    if (object == nullptr) return;
+        \\    --object->references;
+        \\    if (object->collecting) return;
+        \\    if (object->references == 0) {
+        \\        object->collecting = true;
+        \\        object->silexClear();
+        \\        delete object;
+        \\    } else if (!silexCollectingCycles) {
+        \\        silexCollectCycles(object);
+        \\    }
+        \\}
+        \\
+        \\template <typename T>
+        \\class SilexRef {
+        \\public:
+        \\    SilexRef() = default;
+        \\    SilexRef(const SilexRef& other) : object_(other.object_) { retain(); }
+        \\    SilexRef(SilexRef&& other) noexcept : object_(std::exchange(other.object_, nullptr)) {}
+        \\    ~SilexRef() { reset(); }
+        \\
+        \\    SilexRef& operator=(const SilexRef& other) {
+        \\        if (this == &other) return *this;
+        \\        reset();
+        \\        object_ = other.object_;
+        \\        retain();
+        \\        return *this;
+        \\    }
+        \\    SilexRef& operator=(SilexRef&& other) noexcept {
+        \\        if (this == &other) return *this;
+        \\        reset();
+        \\        object_ = std::exchange(other.object_, nullptr);
+        \\        return *this;
+        \\    }
+        \\
+        \\    T* operator->() const { return static_cast<T*>(object_); }
+        \\    T& operator*() const { return *static_cast<T*>(object_); }
+        \\    explicit operator bool() const { return object_ != nullptr; }
+        \\    bool operator==(const SilexRef& other) const { return object_ == other.object_; }
+        \\    bool operator!=(const SilexRef& other) const { return object_ != other.object_; }
+        \\    SilexObject* base() const { return object_; }
+        \\    void reset() {
+        \\        SilexObject* previous = std::exchange(object_, nullptr);
+        \\        silexRelease(previous);
+        \\    }
+        \\    static SilexRef adopt(T* object) {
+        \\        SilexRef result;
+        \\        result.object_ = object;
+        \\        return result;
+        \\    }
+        \\
+        \\private:
+        \\    void retain() { if (object_ != nullptr) ++object_->references; }
+        \\    SilexObject* object_ = nullptr;
+        \\};
+        \\
+        \\template <typename T, typename... Arguments>
+        \\SilexRef<T> silexMake(Arguments&&... arguments) {
+        \\    T* object = new T(std::forward<Arguments>(arguments)...);
+        \\    object->references = 1;
+        \\    ++silexLiveObjects;
+        \\    return SilexRef<T>::adopt(object);
+        \\}
+        \\
+        \\template <typename T>
+        \\struct SilexBinding final : SilexObject {
+        \\    explicit SilexBinding(T initial) : value(std::move(initial)) {}
+        \\    void silexTrace(const SilexTraceVisitor& visit) const override { silexTraceValue(value, visit); }
+        \\    void silexClear() override { silexClearValue(value); }
+        \\    T value;
+        \\};
+        \\
+        \\template <typename T>
+        \\void silexTraceValue(const SilexRef<T>& value, const SilexTraceVisitor& visit) {
+        \\    if (value.base() != nullptr) visit(value.base());
+        \\}
+        \\template <typename T>
+        \\void silexClearValue(SilexRef<T>& value) { value.reset(); }
+        \\template <typename T>
+        \\void silexTraceValue(const std::optional<T>& value, const SilexTraceVisitor& visit) {
+        \\    if (value.has_value()) silexTraceValue(*value, visit);
+        \\}
+        \\template <typename T>
+        \\void silexClearValue(std::optional<T>& value) {
+        \\    if (value.has_value()) silexClearValue(*value);
+        \\    value.reset();
+        \\}
+        \\template <typename T, std::size_t Count>
+        \\void silexTraceValue(const std::array<T, Count>& value, const SilexTraceVisitor& visit) {
+        \\    for (const auto& element : value) silexTraceValue(element, visit);
+        \\}
+        \\template <typename T, std::size_t Count>
+        \\void silexClearValue(std::array<T, Count>& value) {
+        \\    for (auto& element : value) silexClearValue(element);
+        \\}
+        \\
+        \\struct SilexCapturedValuesBase {
+        \\    virtual void trace(const SilexTraceVisitor& visit) const = 0;
+        \\    virtual void clear() = 0;
+        \\    virtual std::unique_ptr<SilexCapturedValuesBase> clone() const = 0;
+        \\    virtual ~SilexCapturedValuesBase() = default;
+        \\};
+        \\
+        \\template <typename... Values>
+        \\struct SilexCapturedValues final : SilexCapturedValuesBase {
+        \\    explicit SilexCapturedValues(Values... captured) : values(std::move(captured)...) {}
+        \\    void trace(const SilexTraceVisitor& visit) const override {
+        \\        std::apply([&](const auto&... value) { ((silexTraceValue(value, visit), silexTraceValue(value, visit)), ...); }, values);
+        \\    }
+        \\    void clear() override {
+        \\        std::apply([&](auto&... value) { (silexClearValue(value), ...); }, values);
+        \\    }
+        \\    std::unique_ptr<SilexCapturedValuesBase> clone() const override {
+        \\        return std::make_unique<SilexCapturedValues>(*this);
+        \\    }
+        \\    std::tuple<Values...> values;
+        \\};
+        \\
+        \\template <typename Signature>
+        \\class SilexFunction;
+        \\
+        \\template <typename Return, typename... Arguments>
+        \\class SilexFunction<Return(Arguments...)> {
+        \\public:
+        \\    SilexFunction() = default;
+        \\    SilexFunction(std::function<Return(Arguments...)> callable, std::unique_ptr<SilexCapturedValuesBase> captures)
+        \\        : callable_(std::move(callable)), captures_(std::move(captures)) {}
+        \\    SilexFunction(const SilexFunction& other)
+        \\        : callable_(other.callable_), captures_(other.captures_ ? other.captures_->clone() : nullptr) {}
+        \\    SilexFunction(SilexFunction&&) noexcept = default;
+        \\    SilexFunction& operator=(const SilexFunction& other) {
+        \\        if (this == &other) return *this;
+        \\        callable_ = other.callable_;
+        \\        captures_ = other.captures_ ? other.captures_->clone() : nullptr;
+        \\        return *this;
+        \\    }
+        \\    SilexFunction& operator=(SilexFunction&&) noexcept = default;
+        \\    Return operator()(Arguments... arguments) const {
+        \\        return callable_(std::forward<Arguments>(arguments)...);
+        \\    }
+        \\    void silexTrace(const SilexTraceVisitor& visit) const {
+        \\        if (captures_) captures_->trace(visit);
+        \\    }
+        \\    void silexClear() {
+        \\        callable_ = {};
+        \\        if (captures_) captures_->clear();
+        \\        captures_.reset();
+        \\    }
+        \\
+        \\private:
+        \\    std::function<Return(Arguments...)> callable_;
+        \\    std::unique_ptr<SilexCapturedValuesBase> captures_;
+        \\};
+        \\
+        \\template <typename Function, typename Callable, typename... Captures>
+        \\Function silexMakeFunction(Callable&& callable, Captures&&... captures) {
+        \\    using State = SilexCapturedValues<std::decay_t<Captures>...>;
+        \\    return Function(
+        \\        std::forward<Callable>(callable),
+        \\        std::make_unique<State>(std::forward<Captures>(captures)...)
+        \\    );
+        \\}
+        \\
         \\template <typename T>
         \\class SilexList {
         \\public:
@@ -207,38 +390,96 @@ pub fn generateWithSources(
         \\    using iterator = typename std::vector<T>::iterator;
         \\    using const_iterator = typename std::vector<T>::const_iterator;
         \\
-        \\    SilexList() : values_(std::make_shared<std::vector<T>>()) {}
-        \\    SilexList(std::initializer_list<T> values) : values_(std::make_shared<std::vector<T>>(values)) {}
+        \\    SilexList() = default;
+        \\    SilexList(std::initializer_list<T> values) : values_(values) {}
         \\
-        \\    std::size_t size() const { return values_->size(); }
-        \\    bool empty() const { return values_->empty(); }
-        \\    bool operator==(const SilexList& other) const { return *values_ == *other.values_; }
+        \\    std::size_t size() const { return values_.size(); }
+        \\    bool empty() const { return values_.empty(); }
+        \\    bool operator==(const SilexList& other) const { return values_ == other.values_; }
         \\    bool operator!=(const SilexList& other) const { return !(*this == other); }
-        \\    const_iterator begin() const { return values_->begin(); }
-        \\    const_iterator end() const { return values_->end(); }
-        \\    iterator begin() { ensureUnique(); return values_->begin(); }
-        \\    iterator end() { ensureUnique(); return values_->end(); }
-        \\    const T& operator[](std::size_t index) const { return (*values_)[index]; }
-        \\    T& operator[](std::size_t index) { ensureUnique(); return (*values_)[index]; }
-        \\    void reserve(std::size_t count) { ensureUnique(); values_->reserve(count); }
-        \\    void push_back(T value) { ensureUnique(); values_->push_back(std::move(value)); }
-        \\    iterator insert(iterator position, T value) { ensureUnique(); return values_->insert(position, std::move(value)); }
+        \\    const_iterator begin() const { return values_.begin(); }
+        \\    const_iterator end() const { return values_.end(); }
+        \\    iterator begin() { return values_.begin(); }
+        \\    iterator end() { return values_.end(); }
+        \\    const T& operator[](std::size_t index) const { return values_[index]; }
+        \\    T& operator[](std::size_t index) { return values_[index]; }
+        \\    void reserve(std::size_t count) { values_.reserve(count); }
+        \\    void push_back(T value) { values_.push_back(std::move(value)); }
+        \\    iterator insert(iterator position, T value) { return values_.insert(position, std::move(value)); }
         \\    template <typename Iterator>
         \\    iterator insert(iterator position, Iterator first, Iterator last) {
-        \\        ensureUnique();
-        \\        return values_->insert(position, first, last);
+        \\        return values_.insert(position, first, last);
         \\    }
-        \\    iterator erase(iterator position) { ensureUnique(); return values_->erase(position); }
-        \\    void pop_back() { ensureUnique(); values_->pop_back(); }
-        \\    void clear() { ensureUnique(); values_->clear(); }
+        \\    iterator erase(iterator position) { return values_.erase(position); }
+        \\    void pop_back() { values_.pop_back(); }
+        \\    void clear() { values_.clear(); }
+        \\    void silexTrace(const SilexTraceVisitor& visit) const {
+        \\        for (const auto& value : values_) silexTraceValue(value, visit);
+        \\    }
+        \\    void silexClear() {
+        \\        for (auto& value : values_) silexClearValue(value);
+        \\        values_.clear();
+        \\    }
         \\
         \\private:
-        \\    void ensureUnique() {
-        \\        if (values_.use_count() != 1) values_ = std::make_shared<std::vector<T>>(*values_);
-        \\    }
-        \\
-        \\    std::shared_ptr<std::vector<T>> values_;
+        \\    std::vector<T> values_;
         \\};
+        \\
+        \\template <typename T>
+        \\void silexTraceValue(const T& value, const SilexTraceVisitor& visit) {
+        \\    if constexpr (requires { value.silexTrace(visit); }) value.silexTrace(visit);
+        \\}
+        \\template <typename T>
+        \\void silexClearValue(T& value) {
+        \\    if constexpr (requires { value.silexClear(); }) value.silexClear();
+        \\}
+        \\
+        \\void silexCollectCycles(SilexObject* candidate) {
+        \\    std::vector<SilexObject*> graph;
+        \\    std::unordered_map<SilexObject*, std::size_t> indexes;
+        \\    graph.push_back(candidate);
+        \\    indexes.emplace(candidate, 0);
+        \\    for (std::size_t cursor = 0; cursor < graph.size(); ++cursor) {
+        \\        graph[cursor]->silexTrace([&](SilexObject* edge) {
+        \\            if (edge == nullptr || indexes.contains(edge)) return;
+        \\            indexes.emplace(edge, graph.size());
+        \\            graph.push_back(edge);
+        \\        });
+        \\    }
+        \\    std::vector<std::size_t> internal(graph.size(), 0);
+        \\    for (SilexObject* object : graph) {
+        \\        object->silexTrace([&](SilexObject* edge) {
+        \\            const auto found = indexes.find(edge);
+        \\            if (found != indexes.end()) ++internal[found->second];
+        \\        });
+        \\    }
+        \\    std::vector<bool> live(graph.size(), false);
+        \\    std::vector<std::size_t> pending;
+        \\    for (std::size_t index = 0; index < graph.size(); ++index) {
+        \\        if (graph[index]->references > internal[index]) {
+        \\            live[index] = true;
+        \\            pending.push_back(index);
+        \\        }
+        \\    }
+        \\    for (std::size_t cursor = 0; cursor < pending.size(); ++cursor) {
+        \\        graph[pending[cursor]]->silexTrace([&](SilexObject* edge) {
+        \\            const auto found = indexes.find(edge);
+        \\            if (found == indexes.end() || live[found->second]) return;
+        \\            live[found->second] = true;
+        \\            pending.push_back(found->second);
+        \\        });
+        \\    }
+        \\    std::vector<SilexObject*> garbage;
+        \\    for (std::size_t index = 0; index < graph.size(); ++index) {
+        \\        if (!live[index]) garbage.push_back(graph[index]);
+        \\    }
+        \\    if (garbage.empty()) return;
+        \\    silexCollectingCycles = true;
+        \\    for (SilexObject* object : garbage) object->collecting = true;
+        \\    for (SilexObject* object : garbage) object->silexClear();
+        \\    for (SilexObject* object : garbage) delete object;
+        \\    silexCollectingCycles = false;
+        \\}
         \\
         \\template <typename T, typename Operation>
         \\decltype(auto) silexCascade(T&& value, Operation&& operation) {
@@ -527,6 +768,7 @@ pub fn generateWithSources(
     for (program.structures) |structure| {
         try output.appendSlice(allocator, "struct ");
         try output.appendSlice(allocator, structure.generated_name);
+        if (structure.is_class) try output.appendSlice(allocator, " final : SilexObject");
         try output.appendSlice(allocator, " {\n");
         for (structure.fields) |field| {
             try output.appendSlice(allocator, "    ");
@@ -535,21 +777,62 @@ pub fn generateWithSources(
             try output.appendSlice(allocator, field.generated_name);
             try output.appendSlice(allocator, ";\n");
         }
+        if (structure.is_class) {
+            try output.appendSlice(allocator, "\n    ");
+            try output.appendSlice(allocator, structure.generated_name);
+            try output.append(allocator, '(');
+            for (structure.fields, 0..) |field, index| {
+                if (index != 0) try output.appendSlice(allocator, ", ");
+                try appendCppType(allocator, &output, field.type);
+                try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, " silexField{d}", .{index}));
+            }
+            try output.append(allocator, ')');
+            if (structure.fields.len == 0) {
+                try output.appendSlice(allocator, " = default;\n");
+            } else {
+                try output.appendSlice(allocator, " : ");
+                for (structure.fields, 0..) |field, index| {
+                    if (index != 0) try output.appendSlice(allocator, ", ");
+                    try output.appendSlice(allocator, field.generated_name);
+                    try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "(std::move(silexField{d}))", .{index}));
+                }
+                try output.appendSlice(allocator, " {}\n");
+            }
+        }
         if (structure.fields.len > 0 and structure.methods.len > 0) try output.append(allocator, '\n');
         for (structure.methods) |method| {
             try output.appendSlice(allocator, "    ");
             try generateMethodSignature(allocator, &output, method, null, false);
             try output.appendSlice(allocator, ";\n");
         }
+        try output.appendSlice(allocator, "\n    void silexTrace(const SilexTraceVisitor& visit) const");
+        if (structure.is_class) try output.appendSlice(allocator, " override");
+        try output.appendSlice(allocator, " {\n");
+        for (structure.fields) |field| {
+            try output.appendSlice(allocator, "        silexTraceValue(");
+            try output.appendSlice(allocator, field.generated_name);
+            try output.appendSlice(allocator, ", visit);\n");
+        }
+        try output.appendSlice(allocator, "    }\n    void silexClear()");
+        if (structure.is_class) try output.appendSlice(allocator, " override");
+        try output.appendSlice(allocator, " {\n");
+        for (structure.fields) |field| {
+            try output.appendSlice(allocator, "        silexClearValue(");
+            try output.appendSlice(allocator, field.generated_name);
+            try output.appendSlice(allocator, ");\n");
+        }
+        try output.appendSlice(allocator, "    }\n");
         try output.appendSlice(allocator, "};\n\n");
     }
     if (program.structures.len > 0) {
         for (program.structures) |structure| {
+            if (structure.is_class) continue;
             try generateStructureEqualitySignature(allocator, &output, structure, false);
             try output.appendSlice(allocator, ";\n");
         }
         try output.append(allocator, '\n');
         for (program.structures) |structure| {
+            if (structure.is_class) continue;
             try generateStructureEqualitySignature(allocator, &output, structure, true);
             try output.appendSlice(allocator, " {\n    return ");
             if (structure.fields.len == 0) {
@@ -573,6 +856,7 @@ pub fn generateWithSources(
         for (structure.methods) |method| {
             try generateMethodSignature(allocator, &output, method, structure.generated_name, true);
             try output.appendSlice(allocator, " {\n");
+            try generateCapturedParameterBindings(allocator, &output, method.parameters, 1);
             try generateStatements(allocator, &output, method.statements, 1, false);
             try output.appendSlice(allocator, "}\n\n");
         }
@@ -581,6 +865,7 @@ pub fn generateWithSources(
         if (function.is_native) continue;
         try generateFunctionSignature(allocator, &output, function, true);
         try output.appendSlice(allocator, " {\n");
+        try generateCapturedParameterBindings(allocator, &output, function.parameters, 1);
         try generateStatements(allocator, &output, function.statements, 1, function.is_main);
         if (function.is_main) try output.appendSlice(allocator, "    return 0;\n");
         try output.appendSlice(allocator, "}\n\n");
@@ -591,7 +876,12 @@ pub fn generateWithSources(
         \\} // namespace SilexGenerated
         \\
         \\int main() {
-        \\    return SilexGenerated::silexMain();
+        \\    const int result = SilexGenerated::silexMain();
+        \\    if (SilexGenerated::silexLiveObjects != 0) {
+        \\        std::cerr << "silex: runtime error: unreachable class graph was not collected\n";
+        \\        return 1;
+        \\    }
+        \\    return result;
         \\}
         \\
     );
@@ -620,6 +910,7 @@ fn generateMethodSignature(
         if (include_names) {
             try output.append(allocator, ' ');
             try output.appendSlice(allocator, parameter.generated_name);
+            if (parameter.capture_box.*) try output.appendSlice(allocator, "Input");
         }
     }
     try output.append(allocator, ')');
@@ -642,9 +933,29 @@ fn generateFunctionSignature(allocator: Allocator, output: *std.ArrayList(u8), f
         if (include_names) {
             try output.append(allocator, ' ');
             try output.appendSlice(allocator, parameter.generated_name);
+            if (parameter.capture_box.*) try output.appendSlice(allocator, "Input");
         }
     }
     try output.append(allocator, ')');
+}
+
+fn generateCapturedParameterBindings(
+    allocator: Allocator,
+    output: *std.ArrayList(u8),
+    parameters: []const Semantic.Parameter,
+    indentation: usize,
+) !void {
+    for (parameters) |parameter| {
+        if (!parameter.capture_box.*) continue;
+        try indent(allocator, output, indentation);
+        try output.appendSlice(allocator, "auto ");
+        try output.appendSlice(allocator, parameter.generated_name);
+        try output.appendSlice(allocator, " = silexMake<SilexBinding<");
+        try appendCppType(allocator, output, parameter.type);
+        try output.appendSlice(allocator, ">>(");
+        try output.appendSlice(allocator, parameter.generated_name);
+        try output.appendSlice(allocator, "Input);\n");
+    }
 }
 
 fn generateNativeFunctionSignature(
@@ -757,14 +1068,21 @@ fn generateStructureFieldEquality(
     switch (field.type) {
         .function => try output.appendSlice(allocator, "false"),
         .structure => |structure_type| {
-            try generateStructureEqualityName(allocator, output, structure_type.generated_name);
-            try output.appendSlice(allocator, "(left.");
-            try output.appendSlice(allocator, field.generated_name);
-            try output.appendSlice(allocator, ", right.");
-            try output.appendSlice(allocator, field.generated_name);
-            try output.append(allocator, ')');
+            if (structure_type.is_class) {
+                try output.appendSlice(allocator, "left.");
+                try output.appendSlice(allocator, field.generated_name);
+                try output.appendSlice(allocator, " == right.");
+                try output.appendSlice(allocator, field.generated_name);
+            } else {
+                try generateStructureEqualityName(allocator, output, structure_type.generated_name);
+                try output.appendSlice(allocator, "(left.");
+                try output.appendSlice(allocator, field.generated_name);
+                try output.appendSlice(allocator, ", right.");
+                try output.appendSlice(allocator, field.generated_name);
+                try output.append(allocator, ')');
+            }
         },
-        .optional => |contained| if (contained.* == .structure) {
+        .optional => |contained| if (contained.* == .structure and !contained.*.structure.is_class) {
             try output.appendSlice(allocator, "((!left.");
             try output.appendSlice(allocator, field.generated_name);
             try output.appendSlice(allocator, ".has_value() && !right.");
@@ -845,12 +1163,22 @@ fn generateStatement(
         },
         .variable_declaration => |declaration| {
             try indent(allocator, output, indentation);
-            if (declaration.mutability == .immutable and declaration.type != .reference) try output.appendSlice(allocator, "const ");
-            try appendCppType(allocator, output, declaration.type);
-            try output.append(allocator, ' ');
-            try output.appendSlice(allocator, declaration.generated_name);
-            try output.appendSlice(allocator, " = ");
-            try generateExpression(allocator, output, declaration.initializer);
+            if (declaration.capture_box.*) {
+                try output.appendSlice(allocator, "auto ");
+                try output.appendSlice(allocator, declaration.generated_name);
+                try output.appendSlice(allocator, " = silexMake<SilexBinding<");
+                try appendCppType(allocator, output, declaration.type);
+                try output.appendSlice(allocator, ">>(");
+                try generateExpression(allocator, output, declaration.initializer);
+                try output.append(allocator, ')');
+            } else {
+                if (declaration.mutability == .immutable and declaration.type != .reference) try output.appendSlice(allocator, "const ");
+                try appendCppType(allocator, output, declaration.type);
+                try output.append(allocator, ' ');
+                try output.appendSlice(allocator, declaration.generated_name);
+                try output.appendSlice(allocator, " = ");
+                try generateExpression(allocator, output, declaration.initializer);
+            }
             try output.appendSlice(allocator, ";\n");
         },
         .assignment => |assignment| {
@@ -940,9 +1268,20 @@ fn generateStatement(
                     if (for_statement.mutability == .immutable) try output.appendSlice(allocator, "const ");
                     try output.appendSlice(allocator, "auto& ");
                     try output.appendSlice(allocator, for_statement.generated_name);
+                    if (for_statement.capture_box.*) try output.appendSlice(allocator, "Input");
                     try output.appendSlice(allocator, " : ");
                     try generateExpression(allocator, output, collection);
                     try output.appendSlice(allocator, ") {\n");
+                    if (for_statement.capture_box.*) {
+                        try indent(allocator, output, indentation + 1);
+                        try output.appendSlice(allocator, "auto ");
+                        try output.appendSlice(allocator, for_statement.generated_name);
+                        try output.appendSlice(allocator, " = silexMake<SilexBinding<");
+                        try appendCppType(allocator, output, for_statement.element_type);
+                        try output.appendSlice(allocator, ">>(");
+                        try output.appendSlice(allocator, for_statement.generated_name);
+                        try output.appendSlice(allocator, "Input);\n");
+                    }
                     try generateStatements(allocator, output, for_statement.body, indentation + 1, is_main);
                     try indent(allocator, output, indentation);
                     try output.appendSlice(allocator, "}\n");
@@ -991,6 +1330,7 @@ fn generateIntegerRangeStatement(
     indentation: usize,
     is_main: bool,
 ) GenerateError!void {
+    std.debug.assert(!for_statement.capture_box.*);
     try indent(allocator, output, indentation);
     try output.appendSlice(allocator, "const std::int64_t ");
     try output.appendSlice(allocator, range.generated_start_name);
@@ -1069,12 +1409,22 @@ fn generateConditionalBindingDeclaration(
     if (condition != .binding) return;
     const binding = condition.binding;
     try indent(allocator, output, indentation);
-    if (binding.mutability == .immutable) try output.appendSlice(allocator, "const ");
-    try appendCppType(allocator, output, binding.type);
-    try output.append(allocator, ' ');
-    try output.appendSlice(allocator, binding.generated_name);
-    try output.appendSlice(allocator, " = *");
-    try output.appendSlice(allocator, binding.temporary_name);
+    if (binding.capture_box.*) {
+        try output.appendSlice(allocator, "auto ");
+        try output.appendSlice(allocator, binding.generated_name);
+        try output.appendSlice(allocator, " = silexMake<SilexBinding<");
+        try appendCppType(allocator, output, binding.type);
+        try output.appendSlice(allocator, ">>(*");
+        try output.appendSlice(allocator, binding.temporary_name);
+        try output.append(allocator, ')');
+    } else {
+        if (binding.mutability == .immutable) try output.appendSlice(allocator, "const ");
+        try appendCppType(allocator, output, binding.type);
+        try output.append(allocator, ' ');
+        try output.appendSlice(allocator, binding.generated_name);
+        try output.appendSlice(allocator, " = *");
+        try output.appendSlice(allocator, binding.temporary_name);
+    }
     try output.appendSlice(allocator, ";\n");
 }
 
@@ -1249,7 +1599,10 @@ fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expressi
             try generateExpression(allocator, output, access.end);
             try output.appendSlice(allocator, "; return silexCollectionSlice(silexSliceValues, silexSliceStart, silexSliceEnd); }())");
         },
-        .variable => |generated_name| try output.appendSlice(allocator, generated_name),
+        .variable => |variable| {
+            try output.appendSlice(allocator, variable.generated_name);
+            if (variable.capture_box.*) try output.appendSlice(allocator, "->value");
+        },
         .self => try output.appendSlice(allocator, "*this"),
         .owner_self => try output.appendSlice(allocator, "silexOwner"),
         .call => |call| {
@@ -1276,6 +1629,9 @@ fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expressi
             try output.append(allocator, ')');
         },
         .lambda => |lambda| {
+            try output.appendSlice(allocator, "silexMakeFunction<");
+            try appendCppType(allocator, output, expression.type);
+            try output.appendSlice(allocator, ">(");
             try output.append(allocator, '[');
             var capture_index: usize = 0;
             if (lambda.captures_self) {
@@ -1284,8 +1640,8 @@ fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expressi
             }
             for (lambda.captures) |capture| {
                 if (capture_index != 0) try output.appendSlice(allocator, ", ");
-                try output.append(allocator, '&');
-                try output.appendSlice(allocator, capture);
+                if (!capture.by_value) try output.append(allocator, '&');
+                try output.appendSlice(allocator, capture.generated_name);
                 capture_index += 1;
             }
             try output.appendSlice(allocator, "](");
@@ -1301,16 +1657,24 @@ fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expressi
                 if (parameter.is_mutable_reference) try output.append(allocator, '&');
                 try output.append(allocator, ' ');
                 try output.appendSlice(allocator, parameter.generated_name);
+                if (parameter.capture_box.*) try output.appendSlice(allocator, "Input");
                 parameter_index += 1;
             }
             try output.appendSlice(allocator, ") {\n");
+            try generateCapturedParameterBindings(allocator, output, lambda.parameters, 1);
             try generateStatements(allocator, output, lambda.statements, 1, false);
             try output.append(allocator, '}');
+            for (lambda.captures) |capture| {
+                if (!capture.by_value) continue;
+                try output.appendSlice(allocator, ", ");
+                try output.appendSlice(allocator, capture.generated_name);
+            }
+            try output.append(allocator, ')');
         },
         .method_call => |call| {
             if (call.object.value != .self) {
                 try generateExpression(allocator, output, call.object);
-                try output.append(allocator, '.');
+                try output.appendSlice(allocator, if (isClassType(call.object.type)) "->" else ".");
             }
             try output.appendSlice(allocator, call.generated_name);
             try output.append(allocator, '(');
@@ -1321,23 +1685,35 @@ fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expressi
             try output.append(allocator, ')');
         },
         .structure_initializer => |initializer| {
-            try output.appendSlice(allocator, initializer.generated_name);
-            try output.append(allocator, '{');
+            if (isClassType(expression.type)) {
+                try output.appendSlice(allocator, "silexMake<");
+                try output.appendSlice(allocator, initializer.generated_name);
+                try output.appendSlice(allocator, ">(");
+            } else {
+                try output.appendSlice(allocator, initializer.generated_name);
+                try output.append(allocator, '{');
+            }
             for (initializer.fields, 0..) |field, index| {
                 if (index != 0) try output.appendSlice(allocator, ", ");
                 try generateExpression(allocator, output, field);
             }
-            try output.append(allocator, '}');
+            try output.append(allocator, if (isClassType(expression.type)) ')' else '}');
         },
         .member_access => |member| {
             if (member.object.value != .self) {
                 try generateExpression(allocator, output, member.object);
-                try output.append(allocator, '.');
+                try output.appendSlice(allocator, if (isClassType(member.object.type)) "->" else ".");
             }
             try output.appendSlice(allocator, member.generated_name);
         },
         .bound_function => |member| {
-            try output.appendSlice(allocator, "[&silexBoundOwner = ");
+            try output.appendSlice(allocator, "silexMakeFunction<");
+            try appendCppType(allocator, output, expression.type);
+            try output.appendSlice(allocator, ">(");
+            try output.appendSlice(allocator, if (isClassType(member.object.type))
+                "[silexBoundOwner = "
+            else
+                "[&silexBoundOwner = ");
             try generateExpression(allocator, output, member.object);
             try output.appendSlice(allocator, "](");
             for (expression.type.function.parameters, expression.type.function.parameter_is_mutable_references, 0..) |parameter_type, is_mutable_reference, index| {
@@ -1346,15 +1722,29 @@ fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expressi
                 if (is_mutable_reference) try output.append(allocator, '&');
                 try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, " silexBoundArgument{d}", .{index}));
             }
-            try output.appendSlice(allocator, ") { return silexBoundOwner.");
+            try output.appendSlice(allocator, if (isClassType(member.object.type))
+                ") { return silexBoundOwner->"
+            else
+                ") { return silexBoundOwner.");
             try output.appendSlice(allocator, member.generated_name);
-            try output.appendSlice(allocator, "(silexBoundOwner");
+            try output.appendSlice(allocator, if (isClassType(member.object.type))
+                "(*silexBoundOwner"
+            else
+                "(silexBoundOwner");
             for (expression.type.function.parameters, 0..) |_, index| {
                 try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, ", silexBoundArgument{d}", .{index}));
             }
             try output.appendSlice(allocator, "); }");
+            if (isClassType(member.object.type)) {
+                try output.appendSlice(allocator, ", ");
+                try generateExpression(allocator, output, member.object);
+            }
+            try output.append(allocator, ')');
         },
         .adapt_function => |value| {
+            try output.appendSlice(allocator, "silexMakeFunction<");
+            try appendCppType(allocator, output, expression.type);
+            try output.appendSlice(allocator, ">(");
             try output.appendSlice(allocator, "[silexCallback = ");
             try generateExpression(allocator, output, value);
             try output.appendSlice(allocator, "](");
@@ -1372,7 +1762,9 @@ fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expressi
                 if (index != 0) try output.appendSlice(allocator, ", ");
                 try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "silexAdaptedArgument{d}", .{index}));
             }
-            try output.appendSlice(allocator, "); }");
+            try output.appendSlice(allocator, "); }, ");
+            try generateExpression(allocator, output, value);
+            try output.append(allocator, ')');
         },
         .optional_wrap => |value| {
             try appendCppType(allocator, output, expression.type);
@@ -1380,9 +1772,10 @@ fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expressi
             try generateExpression(allocator, output, value);
             try output.append(allocator, '}');
         },
-        .optional_unwrap => |name| {
+        .optional_unwrap => |variable| {
             try output.appendSlice(allocator, "(*");
-            try output.appendSlice(allocator, name);
+            try output.appendSlice(allocator, variable.generated_name);
+            if (variable.capture_box.*) try output.appendSlice(allocator, "->value");
             try output.append(allocator, ')');
         },
         .safe_access => |access| {
@@ -1451,7 +1844,7 @@ fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expressi
                 try output.append(allocator, ')');
             } else if ((binary.operator == .equal or binary.operator == .not_equal) and binary.left.type == .optional and
                 binary.right.type == .optional and binary.left.value != .null and binary.right.value != .null and
-                binary.left.type.optional.* == .structure)
+                binary.left.type.optional.* == .structure and !binary.left.type.optional.*.structure.is_class)
             {
                 try output.append(allocator, '(');
                 if (binary.operator == .not_equal) try output.append(allocator, '!');
@@ -1462,7 +1855,9 @@ fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expressi
                 try output.appendSlice(allocator, "; return (!silexOptionalLeft.has_value() && !silexOptionalRight.has_value()) || (silexOptionalLeft.has_value() && silexOptionalRight.has_value() && ");
                 try generateStructureEqualityName(allocator, output, binary.left.type.optional.*.structure.generated_name);
                 try output.appendSlice(allocator, "(*silexOptionalLeft, *silexOptionalRight)); }())");
-            } else if ((binary.operator == .equal or binary.operator == .not_equal) and binary.left.type == .structure) {
+            } else if ((binary.operator == .equal or binary.operator == .not_equal) and binary.left.type == .structure and
+                !binary.left.type.structure.is_class)
+            {
                 const structure_type = binary.left.type.structure;
                 try output.append(allocator, '(');
                 if (binary.operator == .not_equal) try output.append(allocator, '!');
@@ -1588,7 +1983,7 @@ fn cppType(type_name: Semantic.Type) []const u8 {
         .str => "std::string",
         .function => unreachable,
         .list, .fixed_array => unreachable,
-        .structure => |structure_type| structure_type.generated_name,
+        .structure => |structure_type| if (structure_type.is_class) unreachable else structure_type.generated_name,
         .reference => unreachable,
         .optional, .null => unreachable,
     };
@@ -1612,7 +2007,7 @@ fn appendCppType(allocator: Allocator, output: *std.ArrayList(u8), type_name: Se
             try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, ", {d}>", .{array.length}));
         },
         .function => |function| {
-            try output.appendSlice(allocator, "std::function<");
+            try output.appendSlice(allocator, "SilexFunction<");
             try appendCppType(allocator, output, function.return_type.*);
             try output.append(allocator, '(');
             var index: usize = 0;
@@ -1634,9 +2029,22 @@ fn appendCppType(allocator: Allocator, output: *std.ArrayList(u8), type_name: Se
             try appendCppType(allocator, output, contained.*);
             try output.append(allocator, '>');
         },
+        .structure => |structure_type| {
+            if (structure_type.is_class) {
+                try output.appendSlice(allocator, "SilexRef<");
+                try output.appendSlice(allocator, structure_type.generated_name);
+                try output.append(allocator, '>');
+            } else {
+                try output.appendSlice(allocator, structure_type.generated_name);
+            }
+        },
         .null => unreachable,
         else => try output.appendSlice(allocator, cppType(type_name)),
     }
+}
+
+fn isClassType(type_name: Semantic.Type) bool {
+    return type_name == .structure and type_name.structure.is_class;
 }
 
 fn silexTypeName(type_name: Semantic.Type) []const u8 {
@@ -2055,7 +2463,28 @@ test "generate value structs and member access" {
     try std.testing.expect(std.mem.indexOf(u8, cpp, "silexValue0.field0 = std::int64_t{12};") != null);
     try std.testing.expect(std.mem.indexOf(u8, cpp, "namespace SilexGenerated {") != null);
     try std.testing.expect(std.mem.indexOf(u8, cpp, "int silexMain()") != null);
-    try std.testing.expect(std.mem.indexOf(u8, cpp, "return SilexGenerated::silexMain();") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "const int result = SilexGenerated::silexMain();") != null);
+}
+
+test "generate class references identity access and cycle tracing" {
+    const Parser = @import("Parser.zig").Parser;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var parser = Parser.init(allocator,
+        \\class Node { next:Node? = null; func clear() { self.next = null } }
+        \\func main() { var first = Node(); var alias = first; alias.clear(); assert(first == alias) }
+    );
+    var analyzer = Semantic.Analyzer.init(allocator);
+    const cpp = try generate(allocator, try analyzer.analyze(try resolveSingleTestProgram(allocator, try parser.parse())));
+
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "struct SilexClass0 final : SilexObject") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "SilexRef<SilexClass0>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "silexMake<SilexClass0>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "silexValue1->method0()") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "(silexValue0 == silexValue1)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "unreachable class graph was not collected") != null);
 }
 
 test "generate inferred const and mutating methods" {

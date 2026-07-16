@@ -62,7 +62,7 @@ module.exports = grammar({
 
     structure_definition: ($) =>
       seq(
-        "struct",
+        choice("struct", "class"),
         field("name", $.identifier),
         "{",
         repeat(choice($.structure_field, $.function_definition)),

@@ -1,0 +1,6 @@
+class Player {}
+
+func main() {
+    var players = [Player()]
+    for player in players {}
+}

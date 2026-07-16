@@ -20,8 +20,8 @@ var callbacks:func()[] = [callback]
 ```
 
 A structure, array, list, or optional qualifies for `let` only when its
-contained types recursively preserve the independent value behaviour. Future
-class references do not qualify, including when reached through one of these
+contained types recursively preserve the independent value behaviour. Class
+references do not qualify, including when reached through one of these
 containers.
 
 ```sx
@@ -33,10 +33,10 @@ print(first[0])  // 1
 print(second[0]) // 2
 ```
 
-Lists use copy-on-write internally: an assignment or an ordinary function call
-may initially share storage, then separate it when one value is written. This
-is an implementation detail; the value behaviour above is guaranteed,
-including for nested lists and structures that contain lists.
+The compiler may optimize list copies internally, but the value behaviour above
+is guaranteed, including for nested lists and structures that contain lists.
+Copying a list of classes copies its class references: the list remains an
+distinct container value, while its elements retain their shared identities.
 
 An ordinary parameter is a local value. A function may change it without
 changing its caller.
@@ -88,6 +88,11 @@ normal execution order.
 reference type: references cannot be declared locally, stored, returned, or
 dereferenced. There are no `copy` or `move` expressions; ordinary assignment
 is the value-copy operation exposed by the language.
+
+A class reference already has shared identity and cannot be declared as an
+`&ClassName` parameter. `&ClassName?` remains valid because it aliases the
+caller's optional place so the function can replace that place; it does not add
+a second reference layer around the class instance. See [Classes](Classes.md).
 
 The lexical borrows held by a lambda are distinct from the explicit `&`
 argument marker: they are detected automatically, may last for several calls

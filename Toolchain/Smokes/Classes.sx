@@ -1,0 +1,136 @@
+class Player {
+    health:int = 100
+
+    func take_damage(amount:int) {
+        self.health -= amount
+    }
+}
+
+class Node {
+    next:Node? = null
+    links:Node[] = []
+}
+
+class CallbackNode {
+    value:int
+    callback:func()
+}
+
+struct NodeSlot {
+    node:WrappedNode?
+}
+
+class WrappedNode {
+    slot:NodeSlot = NodeSlot(node:null)
+}
+
+struct Holder {
+    player:Player
+}
+
+func damage(player:Player, amount:int) Player {
+    player.take_damage(amount)
+    return player
+}
+
+func clear_player(player:&Player?) {
+    player = null
+}
+
+func make_cycle() {
+    var first = Node()
+    var second = Node()
+    first.next = second
+    second.next = first
+}
+
+func make_list_cycle() {
+    var first = Node()
+    var second = Node()
+    first.links = [second]
+    second.links = [first]
+}
+
+func make_callback_cycle() {
+    var first = CallbackNode(value:1, callback:func() {})
+    var second = CallbackNode(value:2, callback:func() {})
+    first.callback = func() { print(second.value) }
+    second.callback = func() { print(first.value) }
+}
+
+func make_struct_cycle() {
+    var first = WrappedNode()
+    var second = WrappedNode()
+    first.slot.node = second
+    second.slot.node = first
+}
+
+func verify_capture_binding() {
+    var player = Player()
+    var callback = func() {
+        player = Player()
+        player.take_damage(10)
+    }
+    callback()
+    assert(player.health == 90, "class captures retain the outer binding")
+}
+
+func verify_parameter_capture(player:Player) {
+    var callback = func() { player.take_damage(1) }
+    callback()
+}
+
+func main() {
+    var first = Player()
+    var alias = first
+    alias.take_damage(10)
+    assert(first.health == 90, "aliases share mutations")
+    assert(first == alias, "aliases share identity")
+
+    var other = Player()
+    assert(first != other, "different instances have different identities")
+
+    var returned = damage(first, 5)
+    assert(returned == first && first.health == 85, "arguments and returns preserve identity")
+
+    var holder = Holder(player:first)
+    holder.player.take_damage(5)
+    assert(first.health == 80, "struct fields retain class identity")
+    var holder_copy = holder
+    var other_holder = Holder(player:other)
+    assert(holder == holder_copy && holder != other_holder, "struct equality compares nested class identity")
+
+    var players = [first]
+    for var player in players {
+        var callback = func() { player.take_damage(5) }
+        callback()
+    }
+    assert(first.health == 75 && players[0] == first, "collections retain class identity")
+
+    var optional:Player? = first
+    optional?.take_damage(5)
+    if optional != null {
+        assert(optional == first && first.health == 70, "optional reduction preserves identity")
+    }
+    if var found = optional {
+        var callback = func() { found.take_damage(5) }
+        callback()
+        assert(found == first, "conditional extraction preserves identity")
+    }
+    clear_player(&optional)
+    assert(optional == null && first.health == 65, "optional places can be replaced")
+
+    verify_capture_binding()
+    var captured_parameter = Player()
+    verify_parameter_capture(captured_parameter)
+    assert(captured_parameter.health == 99, "class parameters keep captured identity")
+
+    for i in 0...1_000 {
+        make_cycle()
+        make_list_cycle()
+        make_callback_cycle()
+        make_struct_cycle()
+    }
+
+    print("classes")
+}

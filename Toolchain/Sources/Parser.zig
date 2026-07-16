@@ -39,14 +39,14 @@ pub const Parser = struct {
                 try self.advance();
                 if (self.current.tag == .keyword_use) {
                     try uses.append(self.allocator, try self.parseUse(true));
-                } else if (self.current.tag == .keyword_struct) {
+                } else if (self.current.tag == .keyword_struct or self.current.tag == .keyword_class) {
                     try structures.append(self.allocator, try self.parseStructure(true));
                 } else if (self.current.tag == .keyword_func) {
                     try functions.append(self.allocator, try self.parseFunction(true));
                 } else if (self.current.tag == .identifier and std.mem.eql(u8, self.current.lexeme, "native")) {
                     return self.fail("native functions cannot be public");
-                } else return self.fail("expected 'struct', 'func', or 'use' after 'pub'");
-            } else if (self.current.tag == .keyword_struct) {
+                } else return self.fail("expected 'struct', 'class', 'func', or 'use' after 'pub'");
+            } else if (self.current.tag == .keyword_struct or self.current.tag == .keyword_class) {
                 try structures.append(self.allocator, try self.parseStructure(false));
             } else if (self.current.tag == .keyword_func) {
                 try functions.append(self.allocator, try self.parseFunction(false));
@@ -55,7 +55,7 @@ pub const Parser = struct {
             } else if (self.current.tag == .keyword_elif) {
                 return self.fail("'elif' must directly continue an if chain");
             } else {
-                return self.fail("expected import, use, struct, func, or native func declaration");
+                return self.fail("expected import, use, struct, class, func, or native func declaration");
             }
         }
         return .{
@@ -108,8 +108,9 @@ pub const Parser = struct {
 
     fn parseStructure(self: *Parser, is_public: bool) ParseError!Ast.Structure {
         const position = self.current.position;
+        const is_class = self.current.tag == .keyword_class;
         try self.advance();
-        if (self.current.tag != .identifier) return self.fail("expected struct name");
+        if (self.current.tag != .identifier) return self.fail(if (is_class) "expected class name" else "expected struct name");
         const name = self.current.lexeme;
         const name_position = self.current.position;
         try self.advance();
@@ -146,6 +147,7 @@ pub const Parser = struct {
         try self.expect(.right_brace, "expected '}'");
         return .{
             .is_public = is_public,
+            .is_class = is_class,
             .position = position,
             .name = name,
             .name_position = name_position,
@@ -1619,6 +1621,25 @@ test "parse inferred and annotated declarations" {
         "count",
         program.functions[0].statements[2].if_statement.body[0].print.argument.value.identifier,
     );
+}
+
+test "parse class declarations with the structure member grammar" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var parser = Parser.init(arena.allocator(),
+        \\pub class Player {
+        \\    health:int = 100
+        \\    func damage(amount:int) { self.health -= amount }
+        \\}
+        \\func main() {}
+    );
+    const program = try parser.parse();
+    try std.testing.expectEqual(@as(usize, 1), program.structures.len);
+    try std.testing.expect(program.structures[0].is_public);
+    try std.testing.expect(program.structures[0].is_class);
+    try std.testing.expectEqualStrings("Player", program.structures[0].name);
+    try std.testing.expectEqual(@as(usize, 1), program.structures[0].fields.len);
+    try std.testing.expectEqual(@as(usize, 1), program.structures[0].methods.len);
 }
 
 test "logical operators follow comparison precedence" {

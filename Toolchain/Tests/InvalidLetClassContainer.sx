@@ -1,0 +1,9 @@
+class Player {}
+
+struct Team {
+    players:Player[]
+}
+
+func main() {
+    let team = Team(players:[Player()])
+}

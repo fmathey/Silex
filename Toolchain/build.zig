@@ -340,6 +340,41 @@ pub fn build(b: *std.Build) void {
     invalid_implicit_function_iteration_command.expectExitCode(1);
     invalid_implicit_function_iteration_command.expectStdErrEqual("Tests/InvalidImplicitFunctionIteration.sx:3:9: error: type 'func' is not an independent value and cannot be bound with 'let'; use 'var'\n");
 
+    const invalid_let_class_command = b.addRunArtifact(executable);
+    invalid_let_class_command.addArgs(&.{ "compile", "Tests/InvalidLetClass.sx" });
+    invalid_let_class_command.expectExitCode(1);
+    invalid_let_class_command.expectStdErrEqual("Tests/InvalidLetClass.sx:4:9: error: type 'Player' is not an independent value and cannot be bound with 'let'; use 'var'\n");
+
+    const invalid_let_class_container_command = b.addRunArtifact(executable);
+    invalid_let_class_container_command.addArgs(&.{ "compile", "Tests/InvalidLetClassContainer.sx" });
+    invalid_let_class_container_command.expectExitCode(1);
+    invalid_let_class_container_command.expectStdErrEqual("Tests/InvalidLetClassContainer.sx:8:9: error: type 'Team' is not an independent value because field 'players' reaches 'Player'; use 'var'\n");
+
+    const invalid_class_reference_command = b.addRunArtifact(executable);
+    invalid_class_reference_command.addArgs(&.{ "compile", "Tests/InvalidClassReference.sx" });
+    invalid_class_reference_command.expectExitCode(1);
+    invalid_class_reference_command.expectStdErrEqual("Tests/InvalidClassReference.sx:3:14: error: class 'Player' already has reference semantics; '&Player' is invalid\n");
+
+    const invalid_implicit_class_conditional_command = b.addRunArtifact(executable);
+    invalid_implicit_class_conditional_command.addArgs(&.{ "compile", "Tests/InvalidImplicitClassConditional.sx" });
+    invalid_implicit_class_conditional_command.expectExitCode(1);
+    invalid_implicit_class_conditional_command.expectStdErrEqual("Tests/InvalidImplicitClassConditional.sx:8:8: error: type 'Player' is not an independent value and cannot be bound with 'let'; use 'var'\n");
+
+    const invalid_implicit_class_iteration_command = b.addRunArtifact(executable);
+    invalid_implicit_class_iteration_command.addArgs(&.{ "compile", "Tests/InvalidImplicitClassIteration.sx" });
+    invalid_implicit_class_iteration_command.expectExitCode(1);
+    invalid_implicit_class_iteration_command.expectStdErrEqual("Tests/InvalidImplicitClassIteration.sx:5:9: error: type 'Player' is not an independent value and cannot be bound with 'let'; use 'var'\n");
+
+    const invalid_class_missing_field_command = b.addRunArtifact(executable);
+    invalid_class_missing_field_command.addArgs(&.{ "compile", "Tests/InvalidClassMissingField.sx" });
+    invalid_class_missing_field_command.expectExitCode(1);
+    invalid_class_missing_field_command.expectStdErrEqual("Tests/InvalidClassMissingField.sx:7:17: error: class 'WindowState' requires field 'title'\n");
+
+    const invalid_class_default_variable_command = b.addRunArtifact(executable);
+    invalid_class_default_variable_command.addArgs(&.{ "compile", "Tests/InvalidClassDefaultVariable.sx" });
+    invalid_class_default_variable_command.expectExitCode(1);
+    invalid_class_default_variable_command.expectStdErrEqual("Tests/InvalidClassDefaultVariable.sx:4:9: error: class 'Player' requires an initializer\n");
+
     const invalid_assertion_condition_command = b.addRunArtifact(executable);
     invalid_assertion_condition_command.addArgs(&.{ "compile", "Tests/InvalidAssertionCondition.sx" });
     invalid_assertion_condition_command.expectExitCode(1);
@@ -540,7 +575,7 @@ pub fn build(b: *std.Build) void {
     invalid_field_default_command.addArgs(&.{ "compile", "Tests/InvalidFieldDefault.sx" });
     invalid_field_default_command.expectExitCode(1);
     invalid_field_default_command.expectStdErrEqual(
-        "Tests/InvalidFieldDefault.sx:2:18: error: default field value must be a literal or struct initializer of type 'int'\n",
+        "Tests/InvalidFieldDefault.sx:2:18: error: default field value must be a literal or named initializer of type 'int'\n",
     );
 
     const invalid_compound_assignment_command = b.addRunArtifact(executable);
@@ -652,7 +687,7 @@ pub fn build(b: *std.Build) void {
     invalid_string_length_command.addArgs(&.{ "compile", "Tests/InvalidStringLength.sx" });
     invalid_string_length_command.expectExitCode(1);
     invalid_string_length_command.expectStdErrEqual(
-        "Tests/InvalidStringLength.sx:2:13: error: method call requires a struct or collection value\n",
+        "Tests/InvalidStringLength.sx:2:13: error: method call requires a struct, class, or collection value\n",
     );
 
     const reserved_length_function_command = b.addRunArtifact(executable);
@@ -1057,6 +1092,13 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&invalid_let_function_field_command.step);
     test_step.dependOn(&invalid_implicit_conditional_function_command.step);
     test_step.dependOn(&invalid_implicit_function_iteration_command.step);
+    test_step.dependOn(&invalid_let_class_command.step);
+    test_step.dependOn(&invalid_let_class_container_command.step);
+    test_step.dependOn(&invalid_class_reference_command.step);
+    test_step.dependOn(&invalid_implicit_class_conditional_command.step);
+    test_step.dependOn(&invalid_implicit_class_iteration_command.step);
+    test_step.dependOn(&invalid_class_missing_field_command.step);
+    test_step.dependOn(&invalid_class_default_variable_command.step);
     test_step.dependOn(&invalid_assertion_condition_command.step);
     test_step.dependOn(&invalid_assertion_message_command.step);
     test_step.dependOn(&assertion_failure_command.step);
@@ -1179,8 +1221,13 @@ pub fn build(b: *std.Build) void {
     independent_let_values_command.addArgs(&.{ "run", "Smokes/IndependentLetValues.sx" });
     independent_let_values_command.expectStdOutEqual(hostText(b, "independent let\n"));
 
+    const classes_command = b.addRunArtifact(executable);
+    classes_command.step.dependOn(&independent_let_values_command.step);
+    classes_command.addArgs(&.{ "run", "Smokes/Classes.sx" });
+    classes_command.expectStdOutEqual(hostText(b, "classes\n"));
+
     const functions_command = b.addRunArtifact(executable);
-    functions_command.step.dependOn(&independent_let_values_command.step);
+    functions_command.step.dependOn(&classes_command.step);
     functions_command.addArgs(&.{ "run", "Smokes/Functions.sx" });
     functions_command.expectStdOutEqual(hostText(b, "8\n2\n85\n6\n84\n82\n1\n3\n77\n0\n1\n"));
 

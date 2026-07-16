@@ -1,0 +1,9 @@
+class Player {}
+
+func find_player() Player? {
+    return null
+}
+
+func main() {
+    if player = find_player() {}
+}

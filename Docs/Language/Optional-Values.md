@@ -46,9 +46,8 @@ subsequent uses again have type `T?`.
 contains exactly one unannotated name. Without a marker it is an implicit
 `let`, hence an immutable local copy. An explicit `let` remains accepted;
 `var` creates a mutable local copy. The implicit form and `let` are available
-only when the extracted type is an independent value; an optional function
-and, in the future, an optional class use `var`. The binding is visible only
-in the associated body.
+only when the extracted type is an independent value; an optional function or
+class uses `var`. The binding is visible only in the associated body.
 
 ```sx
 if position = find_position() {

@@ -34,8 +34,8 @@ initializer.
 
 Fields of a `var` structure may be changed, including through nested paths. A
 `let` structure is fully immutable and is accepted only when all its fields are
-recursively independent values. A structure containing a function value must
-therefore use `var`; the same rule will apply to future class references.
+recursively independent values. A structure containing a function value or a
+class reference must therefore use `var`.
 Structures compare by value when they have the same declared type, except when
 they contain a function value directly or recursively; such values are not
 comparable. A function field has no intrinsic default and must be supplied by
@@ -57,9 +57,10 @@ struct Counter {
 }
 ```
 
-Static methods, custom constructors, classes, inheritance, extensions, and
-partial declarations are not part of the current prototype. Methods can be
-overloaded by parameter count, type, or `&` passing; see [Functions](Functions.md).
+Static methods, custom constructors, inheritance, extensions, and partial
+declarations are not part of the current prototype. Shared-identity types are
+declared with `class`; see [Classes](Classes.md). Methods can be overloaded by
+parameter count, type, or `&` passing; see [Functions](Functions.md).
 
 When a method stores a lambda that uses `self` in a function field of that same
 structure, `self` means the owner of the field at call time. Copying the

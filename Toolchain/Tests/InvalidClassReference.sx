@@ -1,0 +1,5 @@
+class Player {}
+
+func replace(player:&Player) {}
+
+func main() {}

@@ -24,7 +24,7 @@ when the local copy must be mutable. The source is evaluated once per reached
 complete binding; the unparenthesized form is canonical.
 
 `let` requires the extracted type to be an independent value. Function values
-and future class references, including values that contain them, use `var`.
+and class references, including values that contain them, use `var`.
 
 ```sx
 if position = find_position() {
@@ -81,7 +81,7 @@ initial condition. `elif` is reserved and cannot be used as an identifier.
 Without a marker, its iteration binding is an implicit `let`: it is immutable
 and requires an independent element type. An explicit `let` expresses the same
 guarantee. `var` creates a mutable binding and is required for non-independent
-element types such as callbacks.
+element types such as callbacks or classes.
 
 ```sx
 for value in values {

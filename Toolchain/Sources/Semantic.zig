@@ -4,6 +4,7 @@ const Source = @import("Source.zig");
 
 const Allocator = std.mem.Allocator;
 const AnalyzeError = Source.Error || Allocator.Error;
+const never_capture_box = false;
 
 pub const Type = union(enum) {
     void,
@@ -38,6 +39,7 @@ pub const FunctionType = struct {
 pub const StructureType = struct {
     source_name: []const u8,
     generated_name: []const u8,
+    is_class: bool,
 };
 
 pub const ReferenceType = struct {
@@ -56,6 +58,7 @@ const BindingState = struct {
     reference: ?Borrow = null,
     lifetime_depth: usize = 0,
     narrowed_valid: bool = true,
+    capture_box: bool = false,
 };
 
 const Borrow = struct {
@@ -80,7 +83,7 @@ pub const Expression = struct {
         collection_method: CollectionMethod,
         cascade_target,
         cascade: Cascade,
-        variable: []const u8,
+        variable: Variable,
         self,
         call: Call,
         value_call: ValueCall,
@@ -92,7 +95,7 @@ pub const Expression = struct {
         bound_function: MemberAccess,
         adapt_function: *Expression,
         optional_wrap: *Expression,
-        optional_unwrap: []const u8,
+        optional_unwrap: Variable,
         safe_access: SafeAccess,
         index_access: IndexAccess,
         slice_access: SliceAccess,
@@ -104,6 +107,11 @@ pub const Expression = struct {
     pub const Unary = struct {
         operator: Ast.UnaryOperator,
         operand: *Expression,
+    };
+
+    pub const Variable = struct {
+        generated_name: []const u8,
+        capture_box: *const bool,
     };
 
     pub const Call = struct {
@@ -121,10 +129,15 @@ pub const Expression = struct {
     };
 
     pub const Lambda = struct {
+        pub const Capture = struct {
+            generated_name: []const u8,
+            by_value: bool,
+        };
+
         parameters: []const Parameter,
         return_type: Type,
         statements: []const Statement,
-        captures: []const []const u8,
+        captures: []const Capture,
         captures_self: bool,
     };
 
@@ -244,6 +257,7 @@ pub const Statement = union(enum) {
         type: Type,
         mutability: Ast.Mutability,
         initializer: *Expression,
+        capture_box: *const bool,
     };
 
     pub const Assignment = struct {
@@ -281,6 +295,7 @@ pub const Statement = union(enum) {
         generated_name: []const u8,
         type: Type,
         mutability: Ast.Mutability,
+        capture_box: *const bool,
     };
 
     pub const For = struct {
@@ -289,6 +304,7 @@ pub const Statement = union(enum) {
         mutability: Ast.Mutability,
         source: IterationSource,
         body: []const Statement,
+        capture_box: *const bool,
 
         pub const IterationSource = union(enum) {
             collection: *Expression,
@@ -313,6 +329,7 @@ pub const Program = struct {
 
 pub const Structure = struct {
     generated_name: []const u8,
+    is_class: bool,
     fields: []const StructureField,
     methods: []Method,
 };
@@ -326,6 +343,7 @@ pub const Parameter = struct {
     generated_name: []const u8,
     type: Type,
     is_mutable_reference: bool,
+    capture_box: *const bool,
 };
 
 pub const Function = struct {
@@ -386,7 +404,7 @@ const Scope = struct {
 
 const LambdaContext = struct {
     local_depth: usize,
-    captures: std.ArrayList([]const u8) = .empty,
+    captures: std.ArrayList(Expression.Lambda.Capture) = .empty,
     captures_self: bool = false,
     owner_self: bool = false,
     lifetime_depth: usize = 0,
@@ -419,6 +437,7 @@ const FunctionSymbol = struct {
 const StructureSymbol = struct {
     source_name: []const u8,
     generated_name: []const u8,
+    is_class: bool,
     fields: []StructureFieldSymbol,
     methods: []MethodSymbol,
     position: Source.Position,
@@ -489,6 +508,7 @@ pub const Analyzer = struct {
             }
             try structures.append(self.allocator, .{
                 .generated_name = symbol.generated_name,
+                .is_class = symbol.is_class,
                 .fields = try fields.toOwnedSlice(self.allocator),
                 .methods = try methods.toOwnedSlice(self.allocator),
             });
@@ -514,12 +534,16 @@ pub const Analyzer = struct {
     fn collectStructures(self: *Analyzer, ast_structures: []const Ast.Structure) AnalyzeError!void {
         for (ast_structures, 0..) |ast_structure, structure_index| {
             if (self.findStructure(ast_structure.name) != null) {
-                const message = try std.fmt.allocPrint(self.allocator, "struct '{s}' is already declared", .{ast_structure.name});
+                const message = try std.fmt.allocPrint(self.allocator, "type '{s}' is already declared", .{ast_structure.name});
                 return self.fail(ast_structure.name_position, message);
             }
             try self.structures.append(self.allocator, .{
                 .source_name = ast_structure.name,
-                .generated_name = try std.fmt.allocPrint(self.allocator, "SilexStruct{d}", .{structure_index}),
+                .generated_name = if (ast_structure.is_class)
+                    try std.fmt.allocPrint(self.allocator, "SilexClass{d}", .{structure_index})
+                else
+                    try std.fmt.allocPrint(self.allocator, "SilexStruct{d}", .{structure_index}),
+                .is_class = ast_structure.is_class,
                 .fields = &.{},
                 .methods = &.{},
                 .position = ast_structure.name_position,
@@ -531,7 +555,7 @@ pub const Analyzer = struct {
             for (ast_structure.fields, 0..) |field, field_index| {
                 for (fields.items) |existing| {
                     if (std.mem.eql(u8, existing.source_name, field.name)) {
-                        const message = try std.fmt.allocPrint(self.allocator, "field '{s}' is already declared in struct '{s}'", .{ field.name, ast_structure.name });
+                        const message = try std.fmt.allocPrint(self.allocator, "field '{s}' is already declared in {s} '{s}'", .{ field.name, if (ast_structure.is_class) "class" else "struct", ast_structure.name });
                         return self.fail(field.position, message);
                     }
                 }
@@ -540,10 +564,14 @@ pub const Analyzer = struct {
                     field_type.function.owner = .{
                         .source_name = ast_structure.name,
                         .generated_name = self.structures.items[structure_index].generated_name,
+                        .is_class = ast_structure.is_class,
                     };
                 }
-                if (field_type == .reference) return self.fail(field.position, "a struct field cannot have a reference type");
-                if (field_type == .structure) {
+                if (field_type == .reference) return self.fail(field.position, if (ast_structure.is_class)
+                    "a class field cannot have a reference type"
+                else
+                    "a struct field cannot have a reference type");
+                if (field_type == .structure and !field_type.structure.is_class) {
                     const dependency_index = self.findStructureIndex(field_type.structure.source_name).?;
                     if (dependency_index >= structure_index) {
                         const message = try std.fmt.allocPrint(
@@ -570,7 +598,9 @@ pub const Analyzer = struct {
                 var parameter_is_mutable_references: std.ArrayList(bool) = .empty;
                 var parameter_stored_values: std.ArrayList(bool) = .empty;
                 for (ast_method.parameters) |parameter| {
-                    try parameter_types.append(self.allocator, try typeFromAnnotation(self, parameter.type, parameter.position));
+                    const parameter_type = try typeFromAnnotation(self, parameter.type, parameter.position);
+                    try self.rejectClassMutableReference(parameter_type, parameter.is_mutable_reference, parameter.position);
+                    try parameter_types.append(self.allocator, parameter_type);
                     try parameter_is_mutable_references.append(self.allocator, parameter.is_mutable_reference);
                     try parameter_stored_values.append(self.allocator, parameterStored(ast_method.statements, parameter.name));
                 }
@@ -581,7 +611,7 @@ pub const Analyzer = struct {
                         parameter_types.items,
                         parameter_is_mutable_references.items,
                     )) {
-                        const message = try std.fmt.allocPrint(self.allocator, "method '{s}' with this signature is already declared in struct '{s}'", .{ ast_method.name, ast_structure.name });
+                        const message = try std.fmt.allocPrint(self.allocator, "method '{s}' with this signature is already declared in {s} '{s}'", .{ ast_method.name, if (ast_structure.is_class) "class" else "struct", ast_structure.name });
                         return self.fail(ast_method.name_position, message);
                     }
                 }
@@ -630,7 +660,9 @@ pub const Analyzer = struct {
             var parameter_is_mutable_references: std.ArrayList(bool) = .empty;
             var parameter_stored_values: std.ArrayList(bool) = .empty;
             for (ast_function.parameters) |parameter| {
-                try parameter_types.append(self.allocator, try typeFromAnnotation(self, parameter.type, parameter.position));
+                const parameter_type = try typeFromAnnotation(self, parameter.type, parameter.position);
+                try self.rejectClassMutableReference(parameter_type, parameter.is_mutable_reference, parameter.position);
+                try parameter_types.append(self.allocator, parameter_type);
                 try parameter_is_mutable_references.append(self.allocator, parameter.is_mutable_reference);
                 try parameter_stored_values.append(self.allocator, parameterStored(ast_function.statements, parameter.name));
             }
@@ -729,7 +761,8 @@ pub const Analyzer = struct {
             .float, .float64 => ast.value == .integer or ast.value == .floating,
             .bool => ast.value == .boolean,
             .str => ast.value == .string,
-            .list, .fixed_array => false,
+            .list => ast.value == .sequence_literal and ast.value.sequence_literal.len == 0,
+            .fixed_array => false,
             .reference => false,
             .function => false,
             .optional => ast.value == .null,
@@ -753,7 +786,7 @@ pub const Analyzer = struct {
         if (!valid) {
             const message = try std.fmt.allocPrint(
                 self.allocator,
-                "default field value must be a literal or struct initializer of type '{s}'",
+                "default field value must be a literal or named initializer of type '{s}'",
                 .{typeName(expected_type)},
             );
             return self.fail(ast.position, message);
@@ -775,11 +808,13 @@ pub const Analyzer = struct {
             }
             const generated_name = try std.fmt.allocPrint(self.allocator, "silexValue{d}", .{self.next_symbol_id});
             self.next_symbol_id += 1;
-            try scope.symbols.append(self.allocator, .{ .source_name = parameter.name, .generated_name = generated_name, .type = parameter_type, .mutability = .mutable, .state = try self.newBindingState(parameter_type), .scope_depth = scope.depth });
+            const state = try self.newBindingState(parameter_type);
+            try scope.symbols.append(self.allocator, .{ .source_name = parameter.name, .generated_name = generated_name, .type = parameter_type, .mutability = .mutable, .state = state, .scope_depth = scope.depth });
             try parameters.append(self.allocator, .{
                 .generated_name = generated_name,
                 .type = parameter_type,
                 .is_mutable_reference = is_mutable_reference,
+                .capture_box = &state.capture_box,
             });
         }
         self.current_return_type = symbol.return_type;
@@ -825,18 +860,20 @@ pub const Analyzer = struct {
             }
             const generated_name = try std.fmt.allocPrint(self.allocator, "silexValue{d}", .{self.next_symbol_id});
             self.next_symbol_id += 1;
+            const state = try self.newBindingState(parameter_type);
             try scope.symbols.append(self.allocator, .{
                 .source_name = parameter.name,
                 .generated_name = generated_name,
                 .type = parameter_type,
                 .mutability = .mutable,
-                .state = try self.newBindingState(parameter_type),
+                .state = state,
                 .scope_depth = scope.depth,
             });
             try parameters.append(self.allocator, .{
                 .generated_name = generated_name,
                 .type = parameter_type,
                 .is_mutable_reference = is_mutable_reference,
+                .capture_box = &state.capture_box,
             });
         }
 
@@ -989,6 +1026,7 @@ pub const Analyzer = struct {
             .type = declared_type,
             .mutability = declaration.mutability,
             .initializer = initializer,
+            .capture_box = &state.capture_box,
         } };
     }
 
@@ -1077,7 +1115,7 @@ pub const Analyzer = struct {
             break :narrowed_assignment try self.newExpression(.{
                 .type = symbol.original_type.?,
                 .position = ast.target.position,
-                .value = .{ .variable = symbol.generated_name },
+                .value = .{ .variable = .{ .generated_name = symbol.generated_name, .capture_box = &symbol.state.capture_box } },
             });
         } else if (ast.target.value == .member_access)
             try self.memberAccessExpressionRaw(ast.target.value.member_access, scope, false)
@@ -1245,12 +1283,13 @@ pub const Analyzer = struct {
                 self.next_symbol_id += 1;
                 const temporary_name = try std.fmt.allocPrint(self.allocator, "silexOptional{d}", .{self.next_symbol_id});
                 self.next_symbol_id += 1;
+                const state = try self.newBindingState(source.type.optional.*);
                 try body_scope.symbols.append(self.allocator, .{
                     .source_name = binding.name,
                     .generated_name = generated_name,
                     .type = source.type.optional.*,
                     .mutability = binding.mutability,
-                    .state = try self.newBindingState(source.type.optional.*),
+                    .state = state,
                     .scope_depth = body_scope.depth,
                     .control_binding = true,
                 });
@@ -1260,6 +1299,7 @@ pub const Analyzer = struct {
                     .generated_name = generated_name,
                     .type = source.type.optional.*,
                     .mutability = binding.mutability,
+                    .capture_box = &state.capture_box,
                 } };
             },
         };
@@ -1378,12 +1418,13 @@ pub const Analyzer = struct {
 
         const generated_name = try std.fmt.allocPrint(self.allocator, "silexValue{d}", .{symbol_id});
         self.next_symbol_id += 1;
+        const state = try self.newBindingState(element_type);
         try body_scope.symbols.append(self.allocator, .{
             .source_name = ast.name,
             .generated_name = generated_name,
             .type = element_type,
             .mutability = ast.mutability,
-            .state = try self.newBindingState(element_type),
+            .state = state,
             .scope_depth = body_scope.depth,
             .control_binding = true,
         });
@@ -1398,6 +1439,7 @@ pub const Analyzer = struct {
             .mutability = ast.mutability,
             .source = source,
             .body = body,
+            .capture_box = &state.capture_box,
         } };
     }
 
@@ -1640,6 +1682,14 @@ pub const Analyzer = struct {
             .optional => self.newExpression(.{ .type = type_value, .position = position, .value = .null }),
             .null => unreachable,
             .structure => |structure_type| structure_default: {
+                if (structure_type.is_class) {
+                    const message = try std.fmt.allocPrint(
+                        self.allocator,
+                        "class '{s}' requires an initializer",
+                        .{structure_type.source_name},
+                    );
+                    return self.fail(position, message);
+                }
                 const structure = self.findStructureByGeneratedName(structure_type.generated_name).?;
                 var fields: std.ArrayList(*Expression) = .empty;
                 for (structure.fields) |field| {
@@ -1682,9 +1732,9 @@ pub const Analyzer = struct {
             .borrow = symbol.state.reference,
             .lifetime_depth = symbol.state.lifetime_depth,
             .value = if (narrowed)
-                .{ .optional_unwrap = symbol.generated_name }
+                .{ .optional_unwrap = .{ .generated_name = symbol.generated_name, .capture_box = &symbol.state.capture_box } }
             else
-                .{ .variable = symbol.generated_name },
+                .{ .variable = .{ .generated_name = symbol.generated_name, .capture_box = &symbol.state.capture_box } },
         });
     }
 
@@ -1698,10 +1748,14 @@ pub const Analyzer = struct {
                 if (!lambda.owner_self) continue;
                 var child_context = self.current_lambda;
                 while (child_context.? != lambda) : (child_context = child_context.?.parent) {
-                    try self.recordLambdaCapture(child_context.?, "silexOwner");
+                    try self.recordLambdaCapture(child_context.?, "silexOwner", false);
                 }
                 return self.newExpression(.{
-                    .type = .{ .structure = .{ .source_name = structure.source_name, .generated_name = structure.generated_name } },
+                    .type = .{ .structure = .{
+                        .source_name = structure.source_name,
+                        .generated_name = structure.generated_name,
+                        .is_class = structure.is_class,
+                    } },
                     .position = position,
                     .value = .owner_self,
                 });
@@ -1716,6 +1770,7 @@ pub const Analyzer = struct {
             .type = .{ .structure = .{
                 .source_name = structure.source_name,
                 .generated_name = structure.generated_name,
+                .is_class = structure.is_class,
             } },
             .position = position,
             .lifetime_depth = if (self.current_lambda != null) self.function_scope_depth else 0,
@@ -2020,18 +2075,20 @@ pub const Analyzer = struct {
             self.next_symbol_id += 1;
             try parameter_types.append(self.allocator, parameter_type);
             try parameter_is_mutable_references.append(self.allocator, parameter.is_mutable_reference);
+            const state = try self.newBindingState(parameter_type);
             try scope.symbols.append(self.allocator, .{
                 .source_name = parameter.name,
                 .generated_name = generated_name,
                 .type = parameter_type,
                 .mutability = .mutable,
-                .state = try self.newBindingState(parameter_type),
+                .state = state,
                 .scope_depth = scope.depth,
             });
             try parameters.append(self.allocator, .{
                 .generated_name = generated_name,
                 .type = parameter_type,
                 .is_mutable_reference = parameter.is_mutable_reference,
+                .capture_box = &state.capture_box,
             });
         }
         const return_type = try typeFromReturn(self, lambda.return_type, lambda.position);
@@ -2101,11 +2158,14 @@ pub const Analyzer = struct {
                 }
             }
         }
-        const receiver = receiverFor(
+        var receiver = receiverFor(
             call.object,
             scope,
             self.current_self_state.mutable_borrow or self.current_self_state.immutable_borrows != 0,
         );
+        if (object.type == .structure and object.type.structure.is_class and receiver == .temporary) {
+            receiver = .mutable;
+        }
         return self.methodCallExpressionWithObject(call, object, scope, receiver, false);
     }
 
@@ -2125,7 +2185,7 @@ pub const Analyzer = struct {
                 allow_temporary_collection_mutation,
             ),
             .structure => {},
-            else => return self.fail(call.name_position, "method call requires a struct or collection value"),
+            else => return self.fail(call.name_position, "method call requires a struct, class, or collection value"),
         }
         const generated_structure_name = object.type.structure.generated_name;
         const structure_index = self.findStructureIndexByGeneratedName(generated_structure_name).?;
@@ -2137,7 +2197,7 @@ pub const Analyzer = struct {
             }
         }
         if (candidates.items.len == 0) {
-            const message = try std.fmt.allocPrint(self.allocator, "struct '{s}' has no method '{s}'", .{ structure.source_name, call.name });
+            const message = try std.fmt.allocPrint(self.allocator, "{s} '{s}' has no method '{s}'", .{ if (structure.is_class) "class" else "struct", structure.source_name, call.name });
             return self.fail(call.name_position, message);
         }
         const resolved = try self.resolveMethodOverload(call.name, call.name_position, call.arguments, scope, candidates.items);
@@ -2226,7 +2286,7 @@ pub const Analyzer = struct {
                 );
                 const structure_type = switch (object.type) {
                     .structure => |structure| structure,
-                    else => return self.fail(field_assignment.name_position, "cascade field assignment requires a struct value"),
+                    else => return self.fail(field_assignment.name_position, "cascade field assignment requires a struct or class value"),
                 };
                 const structure = self.findStructureByGeneratedName(structure_type.generated_name).?;
                 var resolved_field: ?StructureFieldSymbol = null;
@@ -2236,8 +2296,8 @@ pub const Analyzer = struct {
                 const field = resolved_field orelse {
                     const message = try std.fmt.allocPrint(
                         self.allocator,
-                        "struct '{s}' has no field '{s}'",
-                        .{ structure.source_name, field_assignment.name },
+                        "{s} '{s}' has no field '{s}'",
+                        .{ if (structure.is_class) "class" else "struct", structure.source_name, field_assignment.name },
                     );
                     return self.fail(field_assignment.name_position, message);
                 };
@@ -2575,7 +2635,10 @@ pub const Analyzer = struct {
                 try self.newExpression(.{
                     .type = findSymbol(scope, argument.value.unary.operand.value.identifier).?.original_type.?,
                     .position = argument.position,
-                    .value = .{ .variable = findSymbol(scope, argument.value.unary.operand.value.identifier).?.generated_name },
+                    .value = .{ .variable = .{
+                        .generated_name = findSymbol(scope, argument.value.unary.operand.value.identifier).?.generated_name,
+                        .capture_box = &findSymbol(scope, argument.value.unary.operand.value.identifier).?.state.capture_box,
+                    } },
                 })
             else if (is_borrow)
                 try self.expression(argument.value.unary.operand, scope)
@@ -2681,7 +2744,7 @@ pub const Analyzer = struct {
                 if (std.mem.eql(u8, field.name, expected_field.source_name)) known = true;
             }
             if (!known) {
-                const message = try std.fmt.allocPrint(self.allocator, "unknown field '{s}' in struct '{s}'", .{ field.name, initializer.name });
+                const message = try std.fmt.allocPrint(self.allocator, "unknown field '{s}' in {s} '{s}'", .{ field.name, if (structure.is_class) "class" else "struct", initializer.name });
                 return self.fail(field.position, message);
             }
             for (initializer.fields[0..field_index]) |previous| {
@@ -2703,8 +2766,16 @@ pub const Analyzer = struct {
             }
             var value = if (matching) |field|
                 try self.expressionForExpected(field.value, scope, expected_field.type)
-            else
-                expected_field.default_value orelse try self.defaultExpression(expected_field.type, initializer.name_position);
+            else if (expected_field.default_value) |default_value|
+                default_value
+            else if (structure.is_class) {
+                const message = try std.fmt.allocPrint(
+                    self.allocator,
+                    "class '{s}' requires field '{s}'",
+                    .{ structure.source_name, expected_field.source_name },
+                );
+                return self.fail(initializer.name_position, message);
+            } else try self.defaultExpression(expected_field.type, initializer.name_position);
             value = try self.coerce(value, expected_field.type);
             if (!typeEqual(value.type, expected_field.type)) {
                 const message = try typeMismatchMessage(self.allocator, expected_field.type, value.type);
@@ -2718,6 +2789,7 @@ pub const Analyzer = struct {
             .type = .{ .structure = .{
                 .source_name = structure.source_name,
                 .generated_name = structure.generated_name,
+                .is_class = structure.is_class,
             } },
             .position = initializer.name_position,
             .lifetime_depth = lifetime_depth,
@@ -2755,7 +2827,7 @@ pub const Analyzer = struct {
     ) AnalyzeError!*Expression {
         const generated_structure_name = switch (object.type) {
             .structure => |structure_type| structure_type.generated_name,
-            else => return self.fail(member.name_position, "member access requires a struct value"),
+            else => return self.fail(member.name_position, "member access requires a struct or class value"),
         };
         const structure = self.findStructureByGeneratedName(generated_structure_name).?;
         for (structure.fields) |field| {
@@ -2784,7 +2856,7 @@ pub const Analyzer = struct {
                 });
             }
         }
-        const message = try std.fmt.allocPrint(self.allocator, "struct '{s}' has no field '{s}'", .{ structure.source_name, member.name });
+        const message = try std.fmt.allocPrint(self.allocator, "{s} '{s}' has no field '{s}'", .{ if (structure.is_class) "class" else "struct", structure.source_name, member.name });
         return self.fail(member.name_position, message);
     }
 
@@ -2800,7 +2872,7 @@ pub const Analyzer = struct {
             .type = receiver.type.optional.*,
             .position = member.object.position,
             .lifetime_depth = receiver.lifetime_depth,
-            .value = .{ .optional_unwrap = "silexOptionalValue" },
+            .value = .{ .optional_unwrap = .{ .generated_name = "silexOptionalValue", .capture_box = &never_capture_box } },
         });
         const end = if (member.arguments) |arguments|
             try self.methodCallExpressionWithObject(.{
@@ -2898,6 +2970,21 @@ pub const Analyzer = struct {
         return null;
     }
 
+    fn rejectClassMutableReference(
+        self: *Analyzer,
+        type_value: Type,
+        is_mutable_reference: bool,
+        position: Source.Position,
+    ) AnalyzeError!void {
+        if (!is_mutable_reference or type_value != .structure or !type_value.structure.is_class) return;
+        const message = try std.fmt.allocPrint(
+            self.allocator,
+            "class '{s}' already has reference semantics; '&{s}' is invalid",
+            .{ type_value.structure.source_name, type_value.structure.source_name },
+        );
+        return self.fail(position, message);
+    }
+
     fn isEqualityComparable(self: *const Analyzer, type_value: Type) bool {
         return switch (type_value) {
             .function, .reference, .void, .null => false,
@@ -2906,6 +2993,7 @@ pub const Analyzer = struct {
             .fixed_array => |array| self.isEqualityComparable(array.element.*),
             .structure => |structure_type| comparable: {
                 const structure = self.findStructureByGeneratedName(structure_type.generated_name) orelse break :comparable false;
+                if (structure.is_class) break :comparable true;
                 for (structure.fields) |field| if (!self.isEqualityComparable(field.type)) break :comparable false;
                 break :comparable true;
             },
@@ -2952,6 +3040,7 @@ pub const Analyzer = struct {
             .list => |element| self.nonIndependentType(element.*, field_path, visiting),
             .fixed_array => |array| self.nonIndependentType(array.element.*, field_path, visiting),
             .structure => |structure_type| structure: {
+                if (structure_type.is_class) break :structure type_value;
                 if (visiting.contains(structure_type.generated_name)) break :structure null;
                 try visiting.put(structure_type.generated_name, {});
                 defer _ = visiting.remove(structure_type.generated_name);
@@ -3233,7 +3322,7 @@ pub const Analyzer = struct {
             break :narrowed_operand try self.newExpression(.{
                 .type = symbol.original_type.?,
                 .position = unary.operand.position,
-                .value = .{ .variable = symbol.generated_name },
+                .value = .{ .variable = .{ .generated_name = symbol.generated_name, .capture_box = &symbol.state.capture_box } },
             });
         } else try self.expression(unary.operand, scope);
         if (!typeEqual(operand.type, expected_type)) return operand;
@@ -3412,21 +3501,58 @@ pub const Analyzer = struct {
         return result;
     }
 
-    fn recordLambdaCapture(self: *Analyzer, lambda: *LambdaContext, generated_name: []const u8) !void {
+    fn recordLambdaCapture(
+        self: *Analyzer,
+        lambda: *LambdaContext,
+        generated_name: []const u8,
+        by_value: bool,
+    ) !void {
         for (lambda.captures.items) |capture| {
-            if (std.mem.eql(u8, capture, generated_name)) return;
+            if (std.mem.eql(u8, capture.generated_name, generated_name)) return;
         }
-        try lambda.captures.append(self.allocator, generated_name);
+        try lambda.captures.append(self.allocator, .{ .generated_name = generated_name, .by_value = by_value });
     }
 
     fn recordSymbolCapture(self: *Analyzer, symbol: *const Symbol) !void {
         var lambda_context = self.current_lambda;
         while (lambda_context) |lambda| : (lambda_context = lambda.parent) {
             if (symbol.scope_depth < lambda.local_depth) {
-                try self.recordLambdaCapture(lambda, symbol.generated_name);
+                const by_value = try self.typeContainsClass(symbol.type);
+                if (by_value) symbol.state.capture_box = true;
+                try self.recordLambdaCapture(lambda, symbol.generated_name, by_value);
                 lambda.lifetime_depth = @max(lambda.lifetime_depth, symbol.scope_depth);
             }
         }
+    }
+
+    fn typeContainsClass(self: *const Analyzer, type_value: Type) Allocator.Error!bool {
+        var visiting = std.StringHashMap(void).init(self.allocator);
+        defer visiting.deinit();
+        return self.typeContainsClassInner(type_value, &visiting);
+    }
+
+    fn typeContainsClassInner(
+        self: *const Analyzer,
+        type_value: Type,
+        visiting: *std.StringHashMap(void),
+    ) Allocator.Error!bool {
+        return switch (type_value) {
+            .optional => |contained| self.typeContainsClassInner(contained.*, visiting),
+            .list => |element| self.typeContainsClassInner(element.*, visiting),
+            .fixed_array => |array| self.typeContainsClassInner(array.element.*, visiting),
+            .structure => |structure_type| contains: {
+                if (structure_type.is_class) break :contains true;
+                if (visiting.contains(structure_type.generated_name)) break :contains false;
+                try visiting.put(structure_type.generated_name, {});
+                defer _ = visiting.remove(structure_type.generated_name);
+                const structure = self.findStructureByGeneratedName(structure_type.generated_name) orelse break :contains false;
+                for (structure.fields) |field| {
+                    if (try self.typeContainsClassInner(field.type, visiting)) break :contains true;
+                }
+                break :contains false;
+            },
+            else => false,
+        };
     }
 
     fn newBindingState(self: *Analyzer, type_value: Type) !*BindingState {
@@ -3548,6 +3674,7 @@ fn typeFromAnnotation(
             break :structure_type .{ .structure = .{
                 .source_name = structure.source_name,
                 .generated_name = structure.generated_name,
+                .is_class = structure.is_class,
             } };
         },
     };
@@ -3619,6 +3746,14 @@ fn typeFromReference(
     const target = try self.allocator.create(Type);
     target.* = try typeFromAnnotation(self, reference.target.*, position);
     if (target.* == .reference) return self.fail(position, "a reference cannot target another reference");
+    if (target.* == .structure and target.*.structure.is_class) {
+        const message = try std.fmt.allocPrint(
+            self.allocator,
+            "class '{s}' already has reference semantics; '&{s}' is invalid",
+            .{ target.*.structure.source_name, target.*.structure.source_name },
+        );
+        return self.fail(position, message);
+    }
     return .{ .reference = .{ .target = target, .mutable = reference.mutable } };
 }
 
@@ -4296,6 +4431,43 @@ test "let rejects function values directly and through fields" {
         \\func main() { let screen = Screen(handler:null); }
     ,
         "type 'Screen' is not an independent value because field 'handler.callbacks' reaches 'func'; use 'var'",
+    );
+}
+
+test "classes have shared-reference types and are never independent let values" {
+    const Parser = @import("Parser.zig").Parser;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var parser = Parser.init(allocator,
+        \\class Player { health:int = 100 }
+        \\func main() { var player = Player(); var alias = player; alias.health -= 1 }
+    );
+    var analyzer = Analyzer.init(allocator);
+    const program = try analyzer.analyze(try resolveSingleTestProgram(allocator, try parser.parse()));
+    try std.testing.expect(program.structures[0].is_class);
+    try std.testing.expect(program.functions[0].statements[0].variable_declaration.type.structure.is_class);
+
+    try expectResolvedSemanticError(
+        "class Player {} func main() { let player = Player() }",
+        "type 'Player' is not an independent value and cannot be bound with 'let'; use 'var'",
+    );
+    try expectResolvedSemanticError(
+        "class Player {} func replace(player:&Player) {} func main() {}",
+        "class 'Player' already has reference semantics; '&Player' is invalid",
+    );
+    try expectResolvedSemanticError(
+        "class Player {} class Enemy {} func main() { var player = Player(); var enemy = Enemy(); let equal = player == enemy }",
+        "equality operator requires operands of the same type, found 'Player' and 'Enemy'",
+    );
+    try expectResolvedSemanticError(
+        "class Player {} func main() { if var player = Player() {} }",
+        "conditional binding source must have an optional type",
+    );
+    try expectResolvedSemanticError(
+        "class Player {} func invalid() func() { var player = Player(); return func() { print(player == player) } } func main() {}",
+        "capturing function value cannot be returned from its lexical scope",
     );
 }
 

@@ -1,0 +1,8 @@
+class WindowState {
+    title:str
+    width:int = 1280
+}
+
+func main() {
+    var state = WindowState()
+}

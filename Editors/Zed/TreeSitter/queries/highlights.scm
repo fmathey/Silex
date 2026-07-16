@@ -104,6 +104,7 @@
   "in"
   "return"
   "struct"
+  "class"
   "func"
 ] @keyword
 

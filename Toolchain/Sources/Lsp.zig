@@ -991,7 +991,7 @@ fn collectSemanticInfo(
     try collectImportedStructures(allocator, io, source, project_root, tokens, info);
     var index: usize = 0;
     while (index < tokens.len) : (index += 1) {
-        if (tokens[index].tag == .keyword_struct and index + 2 < tokens.len and
+        if ((tokens[index].tag == .keyword_struct or tokens[index].tag == .keyword_class) and index + 2 < tokens.len and
             tokens[index + 1].tag == .identifier and tokens[index + 2].tag == .left_brace)
         {
             const structure_name = tokens[index + 1].lexeme;
@@ -1649,6 +1649,7 @@ fn containsCompletion(items: []const CompletionItem, label: []const u8) bool {
 const language_completions = [_]CompletionItem{
     .{ .label = "func", .kind = 14, .detail = "Silex keyword" },
     .{ .label = "struct", .kind = 14, .detail = "Silex keyword" },
+    .{ .label = "class", .kind = 14, .detail = "Silex keyword" },
     .{ .label = "assert", .kind = 14, .detail = "Silex keyword" },
     .{ .label = "panic", .kind = 14, .detail = "Silex keyword" },
     .{ .label = "let", .kind = 14, .detail = "Silex keyword" },
@@ -1688,6 +1689,7 @@ test "completion items include language terms and document identifiers" {
     const items = try completionItems(std.testing.allocator, std.testing.io, "func main() void { let total = 1 }", null);
     defer std.testing.allocator.free(items);
     try std.testing.expect(containsCompletion(items, "func"));
+    try std.testing.expect(containsCompletion(items, "class"));
     try std.testing.expect(containsCompletion(items, "elif"));
     try std.testing.expect(containsCompletion(items, "total"));
 }
@@ -1933,6 +1935,22 @@ test "member completion only includes members of the receiver structure" {
     try std.testing.expectEqual(@as(usize, 1), items.len);
     try std.testing.expectEqualStrings("speed", items[0].label);
     try std.testing.expectEqual(@as(u8, 5), items[0].kind);
+}
+
+test "member completion recognizes class declarations" {
+    const source =
+        \\class Player {
+        \\    health:int = 100
+        \\}
+        \\func main() {
+        \\    var player = Player()
+        \\    print(player.)
+        \\}
+    ;
+    const items = try completionItems(std.testing.allocator, std.testing.io, source, .{ .line = 5, .character = 17 });
+    defer std.testing.allocator.free(items);
+    try std.testing.expectEqual(@as(usize, 1), items.len);
+    try std.testing.expectEqualStrings("health", items[0].label);
 }
 
 test "self completion resolves fields and methods of the enclosing structure" {

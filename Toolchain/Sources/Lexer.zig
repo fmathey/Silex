@@ -16,6 +16,7 @@ pub const TokenTag = enum {
     keyword_continue,
     keyword_return,
     keyword_struct,
+    keyword_class,
     keyword_func,
     keyword_self,
     keyword_true,
@@ -457,6 +458,7 @@ fn keywordTag(lexeme: []const u8) ?TokenTag {
         .{ "continue", TokenTag.keyword_continue },
         .{ "return", TokenTag.keyword_return },
         .{ "struct", TokenTag.keyword_struct },
+        .{ "class", TokenTag.keyword_class },
         .{ "func", TokenTag.keyword_func },
         .{ "self", TokenTag.keyword_self },
         .{ "true", TokenTag.keyword_true },
@@ -518,6 +520,12 @@ test "recognize declaration keywords" {
     try std.testing.expectEqual(TokenTag.keyword_bool, (try lexer.next()).tag);
     try std.testing.expectEqual(TokenTag.equal, (try lexer.next()).tag);
     try std.testing.expectEqual(TokenTag.keyword_true, (try lexer.next()).tag);
+}
+
+test "reserve class keyword" {
+    var lexer = Lexer.init("class Player {}");
+    try std.testing.expectEqual(TokenTag.keyword_class, (try lexer.next()).tag);
+    try std.testing.expectEqual(TokenTag.identifier, (try lexer.next()).tag);
 }
 
 test "recognize reserved range keyword" {

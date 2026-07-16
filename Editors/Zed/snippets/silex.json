@@ -242,6 +242,16 @@
     ],
     "description": "Declare a value type"
   },
+  "Class": {
+    "prefix": "class",
+    "body": [
+      "class ${1:Name} {",
+      "    ${2:field}:${3:int}",
+      "}",
+      "$0"
+    ],
+    "description": "Declare a shared-identity type"
+  },
   "Default struct field": {
     "prefix": "field",
     "body": [
