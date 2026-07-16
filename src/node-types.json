@@ -1054,6 +1054,10 @@
           "named": true
         },
         {
+          "type": "super_method_expression",
+          "named": true
+        },
+        {
           "type": "unary_expression",
           "named": true
         }
@@ -1078,6 +1082,10 @@
         },
         {
           "type": "safe_member_expression",
+          "named": true
+        },
+        {
+          "type": "super_method_expression",
           "named": true
         }
       ]
@@ -2248,6 +2256,16 @@
           }
         ]
       },
+      "override": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "override",
+            "named": false
+          }
+        ]
+      },
       "visibility": {
         "multiple": true,
         "required": false,
@@ -2313,6 +2331,42 @@
           {
             "type": "type",
             "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "super_method_expression",
+    "named": true,
+    "fields": {
+      "arguments": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "argument_list",
+            "named": true
+          }
+        ]
+      },
+      "method": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "super": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "super",
+            "named": false
           }
         ]
       }
@@ -2896,6 +2950,10 @@
   {
     "type": "null_literal",
     "named": true
+  },
+  {
+    "type": "override",
+    "named": false
   },
   {
     "type": "pub",

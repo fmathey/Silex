@@ -27,3 +27,63 @@ class Player : Entity {
         (expression
           (identifier)))
       (block))))
+
+============================
+Override and direct base call
+============================
+
+class Entity {
+    pub func update(value:int) int { return value }
+}
+
+class Player : Entity {
+    override pub func update(value:int) int {
+        return super.update(value) + 1
+    }
+}
+
+---
+
+(source_file
+  (structure_definition
+    (identifier)
+    (function_definition
+      (identifier)
+      (parameter_list
+        (parameter
+          (identifier)
+          (type
+            (builtin_type))))
+      (type
+        (builtin_type))
+      (block
+        (statement
+          (return_statement
+            (expression
+              (identifier)))))))
+  (structure_definition
+    (identifier)
+    (named_type
+      (type_identifier))
+    (function_definition
+      (identifier)
+      (parameter_list
+        (parameter
+          (identifier)
+          (type
+            (builtin_type))))
+      (type
+        (builtin_type))
+      (block
+        (statement
+          (return_statement
+            (expression
+              (binary_expression
+                (expression
+                  (super_method_expression
+                    (identifier)
+                    (argument_list
+                      (expression
+                        (identifier)))))
+                (expression
+                  (integer_literal))))))))))
