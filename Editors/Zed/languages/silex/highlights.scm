@@ -25,6 +25,9 @@
 
 (constructor_definition "init" @function.definition)
 
+(super_method_expression
+  method: (identifier) @function.method.call)
+
 (lambda_expression "func" @keyword)
 (function_type "func" @type.builtin)
 (function_type_parameter mutable_reference: "&" @type)
@@ -114,6 +117,7 @@
   "class"
   "init"
   "super"
+  "override"
   "func"
 ] @keyword
 

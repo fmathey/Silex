@@ -66,8 +66,10 @@ const ReceiverType = union(enum) {
 
 const StructureRange = struct {
     name: []const u8,
-    start: usize,
-    end: usize,
+    base: ?[]const u8 = null,
+    is_class: bool,
+    start: ?usize = null,
+    end: ?usize = null,
 };
 
 const SemanticInfo = struct {
@@ -941,7 +943,7 @@ fn memberCompletionItems(
             .structure => |name| name,
             .list, .fixed_array => return try allocator.alloc(CompletionItem, 0),
         };
-        receiver_type = fieldType(info.members.items, structure_name, field_name, enclosing_structure) orelse
+        receiver_type = fieldType(info, structure_name, field_name, enclosing_structure) orelse
             return try allocator.alloc(CompletionItem, 0);
     }
 
@@ -952,17 +954,21 @@ fn memberCompletionItems(
     }
 
     var items: std.ArrayList(CompletionItem) = .empty;
-    const structure_name = receiver_type.structure;
-    for (info.members.items) |member| {
-        if (!std.mem.eql(u8, member.structure, structure_name)) continue;
-        if (member.visibility != .public_access and
-            (enclosing_structure == null or !std.mem.eql(u8, enclosing_structure.?, structure_name))) continue;
-        if (containsCompletion(items.items, member.name)) continue;
-        try items.append(allocator, .{
-            .label = member.name,
-            .kind = member.kind,
-            .detail = member.detail,
-        });
+    var current_structure: ?[]const u8 = receiver_type.structure;
+    var hierarchy_depth: usize = 0;
+    while (current_structure) |structure_name| : (hierarchy_depth += 1) {
+        if (hierarchy_depth > info.structures.items.len) break;
+        for (info.members.items) |member| {
+            if (!std.mem.eql(u8, member.structure, structure_name)) continue;
+            if (!memberVisibleForCompletion(info, structure_name, member.visibility, enclosing_structure)) continue;
+            if (containsCompletion(items.items, member.name)) continue;
+            try items.append(allocator, .{
+                .label = member.name,
+                .kind = member.kind,
+                .detail = member.detail,
+            });
+        }
+        current_structure = structureBase(info, structure_name);
     }
     return try items.toOwnedSlice(allocator);
 }
@@ -995,14 +1001,23 @@ fn collectSemanticInfo(
     try collectImportedStructures(allocator, io, source, project_root, tokens, info);
     var index: usize = 0;
     while (index < tokens.len) : (index += 1) {
-        if ((tokens[index].tag == .keyword_struct or tokens[index].tag == .keyword_class) and index + 2 < tokens.len and
-            tokens[index + 1].tag == .identifier and tokens[index + 2].tag == .left_brace)
+        if ((tokens[index].tag == .keyword_struct or tokens[index].tag == .keyword_class) and
+            index + 2 < tokens.len and tokens[index + 1].tag == .identifier)
         {
             const structure_name = tokens[index + 1].lexeme;
             const is_class = tokens[index].tag == .keyword_class;
+            var base_name: ?[]const u8 = null;
+            var body_index = index + 2;
+            if (tokens[body_index].tag == .colon) {
+                body_index += 1;
+                while (body_index < tokens.len and tokens[body_index].tag != .left_brace) : (body_index += 1) {
+                    if (tokens[body_index].tag == .identifier) base_name = tokens[body_index].lexeme;
+                }
+            }
+            if (body_index >= tokens.len or tokens[body_index].tag != .left_brace) continue;
             var depth: usize = 0;
             var parentheses: usize = 0;
-            var member_index = index + 2;
+            var member_index = body_index;
             while (member_index < tokens.len) : (member_index += 1) {
                 const token = tokens[member_index];
                 switch (token.tag) {
@@ -1013,6 +1028,8 @@ fn collectSemanticInfo(
                         if (depth == 0) {
                             try info.structures.append(allocator, .{
                                 .name = structure_name,
+                                .base = base_name,
+                                .is_class = is_class,
                                 .start = tokenOffset(source, tokens[index]),
                                 .end = tokenOffset(source, token) + token.lexeme.len,
                             });
@@ -1031,8 +1048,14 @@ fn collectSemanticInfo(
                 if (depth != 1 or parentheses != 0) continue;
                 var declaration_index = member_index;
                 var visibility: Ast.MemberVisibility = if (is_class) .private_access else .public_access;
-                if (token.tag == .keyword_pub or token.tag == .keyword_sub) {
-                    visibility = if (token.tag == .keyword_pub) .public_access else .subclass;
+                if (tokens[declaration_index].tag == .keyword_override) {
+                    declaration_index += 1;
+                    member_index += 1;
+                }
+                if (declaration_index < tokens.len and
+                    (tokens[declaration_index].tag == .keyword_pub or tokens[declaration_index].tag == .keyword_sub))
+                {
+                    visibility = if (tokens[declaration_index].tag == .keyword_pub) .public_access else .subclass;
                     declaration_index += 1;
                     member_index += 1;
                 }
@@ -1118,13 +1141,14 @@ fn structureInitializerType(info: *const SemanticInfo, tokens: []const LexerModu
         index += 2;
     }
     if (index >= tokens.len or tokens[index].tag != .left_parenthesis) return null;
-    if (index + 2 < tokens.len and tokens[index + 1].tag == .identifier and tokens[index + 2].tag == .colon) {
-        return type_name;
-    }
-    if (index + 1 >= tokens.len or tokens[index + 1].tag != .right_parenthesis) return null;
+    const named_initializer = index + 2 < tokens.len and tokens[index + 1].tag == .identifier and
+        tokens[index + 2].tag == .colon;
+    const empty_initializer = index + 1 < tokens.len and tokens[index + 1].tag == .right_parenthesis;
     for (info.structures.items) |structure| {
-        if (std.mem.eql(u8, structure.name, type_name)) return type_name;
+        if (std.mem.eql(u8, structure.name, type_name) and
+            (structure.is_class or named_initializer or empty_initializer)) return type_name;
     }
+    if (!named_initializer and !empty_initializer) return null;
     for (info.members.items) |member| {
         if (std.mem.eql(u8, member.structure, type_name)) return type_name;
     }
@@ -1272,6 +1296,11 @@ fn collectPublicStructureMembers(
 ) !void {
     for (program.structures) |structure| {
         if (!structure.is_public) continue;
+        try info.structures.append(allocator, .{
+            .name = structure.name,
+            .base = if (structure.base) |base| lastPathSegment(base.name) else null,
+            .is_class = structure.is_class,
+        });
         for (structure.fields) |field| {
             if (structure.is_class and field.visibility != .public_access) continue;
             try info.members.append(allocator, .{
@@ -1553,7 +1582,9 @@ fn cascadeReceiverEnd(source: []const u8, operator_start: usize) ?usize {
 fn receiverType(info: SemanticInfo, receiver: []const u8, cursor_offset: usize) ?ReceiverType {
     if (std.mem.eql(u8, receiver, "self")) {
         for (info.structures.items) |structure| {
-            if (structure.start <= cursor_offset and cursor_offset <= structure.end) {
+            if (structure.start != null and structure.end != null and
+                structure.start.? <= cursor_offset and cursor_offset <= structure.end.?)
+            {
                 return .{ .structure = structure.name };
             }
         }
@@ -1578,29 +1609,69 @@ fn receiverType(info: SemanticInfo, receiver: []const u8, cursor_offset: usize) 
 
 fn enclosingStructureName(info: SemanticInfo, cursor_offset: usize) ?[]const u8 {
     for (info.structures.items) |structure| {
-        if (structure.start <= cursor_offset and cursor_offset <= structure.end) return structure.name;
+        if (structure.start != null and structure.end != null and
+            structure.start.? <= cursor_offset and cursor_offset <= structure.end.?) return structure.name;
     }
     return null;
 }
 
 fn fieldType(
-    members: []const DeclaredMember,
+    info: SemanticInfo,
     structure: []const u8,
     field: []const u8,
     enclosing_structure: ?[]const u8,
 ) ?ReceiverType {
-    for (members) |member| {
-        if (std.mem.eql(u8, member.structure, structure) and std.mem.eql(u8, member.name, field)) {
-            if (member.visibility != .public_access and
-                (enclosing_structure == null or !std.mem.eql(u8, enclosing_structure.?, structure))) return null;
-            if (member.collection) |collection| return switch (collection) {
-                .list => .list,
-                .fixed_array => .fixed_array,
-            };
-            return if (member.type_name) |type_name| .{ .structure = type_name } else null;
+    var current_structure: ?[]const u8 = structure;
+    var hierarchy_depth: usize = 0;
+    while (current_structure) |structure_name| : (hierarchy_depth += 1) {
+        if (hierarchy_depth > info.structures.items.len) return null;
+        for (info.members.items) |member| {
+            if (std.mem.eql(u8, member.structure, structure_name) and std.mem.eql(u8, member.name, field)) {
+                if (!memberVisibleForCompletion(info, structure_name, member.visibility, enclosing_structure)) return null;
+                if (member.collection) |collection| return switch (collection) {
+                    .list => .list,
+                    .fixed_array => .fixed_array,
+                };
+                return if (member.type_name) |type_name| .{ .structure = type_name } else null;
+            }
         }
+        current_structure = structureBase(info, structure_name);
     }
     return null;
+}
+
+fn structureBase(info: SemanticInfo, structure_name: []const u8) ?[]const u8 {
+    for (info.structures.items) |structure| {
+        if (std.mem.eql(u8, structure.name, structure_name)) return structure.base;
+    }
+    return null;
+}
+
+fn structureDescendsFrom(info: SemanticInfo, candidate: []const u8, ancestor: []const u8) bool {
+    var current = structureBase(info, candidate);
+    var hierarchy_depth: usize = 0;
+    while (current) |structure_name| : (hierarchy_depth += 1) {
+        if (hierarchy_depth > info.structures.items.len) return false;
+        if (std.mem.eql(u8, structure_name, ancestor)) return true;
+        current = structureBase(info, structure_name);
+    }
+    return false;
+}
+
+fn memberVisibleForCompletion(
+    info: SemanticInfo,
+    declaring_structure: []const u8,
+    visibility: Ast.MemberVisibility,
+    enclosing_structure: ?[]const u8,
+) bool {
+    return switch (visibility) {
+        .public_access => true,
+        .private_access => enclosing_structure != null and
+            std.mem.eql(u8, enclosing_structure.?, declaring_structure),
+        .subclass => enclosing_structure != null and
+            (std.mem.eql(u8, enclosing_structure.?, declaring_structure) or
+                structureDescendsFrom(info, enclosing_structure.?, declaring_structure)),
+    };
 }
 
 fn byteOffsetAtPosition(source: []const u8, position: Position) ?usize {
@@ -1691,6 +1762,7 @@ const language_completions = [_]CompletionItem{
     .{ .label = "class", .kind = 14, .detail = "Silex keyword" },
     .{ .label = "init", .kind = 14, .detail = "Silex keyword" },
     .{ .label = "super", .kind = 14, .detail = "Silex keyword" },
+    .{ .label = "override", .kind = 14, .detail = "Silex keyword" },
     .{ .label = "assert", .kind = 14, .detail = "Silex keyword" },
     .{ .label = "panic", .kind = 14, .detail = "Silex keyword" },
     .{ .label = "let", .kind = 14, .detail = "Silex keyword" },
@@ -1733,6 +1805,7 @@ test "completion items include language terms and document identifiers" {
     try std.testing.expect(containsCompletion(items, "func"));
     try std.testing.expect(containsCompletion(items, "class"));
     try std.testing.expect(containsCompletion(items, "init"));
+    try std.testing.expect(containsCompletion(items, "override"));
     try std.testing.expect(containsCompletion(items, "super"));
     try std.testing.expect(containsCompletion(items, "sub"));
     try std.testing.expect(containsCompletion(items, "elif"));
@@ -1999,6 +2072,29 @@ test "member completion recognizes class declarations" {
     defer std.testing.allocator.free(items);
     try std.testing.expectEqual(@as(usize, 1), items.len);
     try std.testing.expectEqualStrings("health", items[0].label);
+}
+
+test "member completion infers positional class construction and inherited methods" {
+    const source =
+        \\class Animal {
+        \\    sub name:str
+        \\    sub init(name:str) { self.name = name }
+        \\    pub func get_name() str { return self.name }
+        \\}
+        \\class Dog : Animal {
+        \\    pub init(name:str) : super(name) {}
+        \\    pub func show() {}
+        \\}
+        \\func main() {
+        \\    var animal = Dog("Kiki")
+        \\    print(animal.)
+        \\}
+    ;
+    const items = try completionItems(std.testing.allocator, std.testing.io, source, .{ .line = 11, .character = 17 });
+    defer std.testing.allocator.free(items);
+    try std.testing.expect(containsCompletion(items, "show"));
+    try std.testing.expect(containsCompletion(items, "get_name"));
+    try std.testing.expect(!containsCompletion(items, "name"));
 }
 
 test "self completion includes private sub and public class members" {

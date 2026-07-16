@@ -371,6 +371,22 @@
                     "members": [
                       {
                         "type": "FIELD",
+                        "name": "override",
+                        "content": {
+                          "type": "STRING",
+                          "value": "override"
+                        }
+                      },
+                      {
+                        "type": "BLANK"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "CHOICE",
+                    "members": [
+                      {
+                        "type": "FIELD",
                         "name": "visibility",
                         "content": {
                           "type": "CHOICE",
@@ -1590,6 +1606,10 @@
         },
         {
           "type": "SYMBOL",
+          "name": "super_method_expression"
+        },
+        {
+          "type": "SYMBOL",
           "name": "safe_member_expression"
         },
         {
@@ -2033,6 +2053,10 @@
         },
         {
           "type": "SYMBOL",
+          "name": "super_method_expression"
+        },
+        {
+          "type": "SYMBOL",
           "name": "cascade_expression"
         },
         {
@@ -2131,6 +2155,39 @@
           "content": {
             "type": "SYMBOL",
             "name": "block"
+          }
+        }
+      ]
+    },
+    "super_method_expression": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "FIELD",
+          "name": "super",
+          "content": {
+            "type": "STRING",
+            "value": "super"
+          }
+        },
+        {
+          "type": "STRING",
+          "value": "."
+        },
+        {
+          "type": "FIELD",
+          "name": "method",
+          "content": {
+            "type": "SYMBOL",
+            "name": "identifier"
+          }
+        },
+        {
+          "type": "FIELD",
+          "name": "arguments",
+          "content": {
+            "type": "SYMBOL",
+            "name": "argument_list"
           }
         }
       ]

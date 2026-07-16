@@ -70,7 +70,11 @@ module.exports = grammar({
           choice(
             seq(optional(field("visibility", choice("pub", "sub"))), $.structure_field),
             seq(optional(field("visibility", choice("pub", "sub"))), $.constructor_definition),
-            seq(optional(field("visibility", choice("pub", "sub"))), $.function_definition),
+            seq(
+              optional(field("override", "override")),
+              optional(field("visibility", choice("pub", "sub"))),
+              $.function_definition,
+            ),
           ),
         ),
         "}",
@@ -253,7 +257,12 @@ module.exports = grammar({
     return_statement: ($) => seq("return", optional(field("value", $.expression))),
 
     expression_statement: ($) =>
-      choice($.invocation_expression, $.safe_member_expression, $.cascade_expression),
+      choice(
+        $.invocation_expression,
+        $.super_method_expression,
+        $.safe_member_expression,
+        $.cascade_expression,
+      ),
 
     if_statement: ($) =>
       seq(
@@ -341,6 +350,7 @@ module.exports = grammar({
         $.conversion_expression,
         $.lambda_expression,
         $.invocation_expression,
+        $.super_method_expression,
         $.cascade_expression,
         $.sequence_literal,
         $.member_expression,
@@ -363,6 +373,14 @@ module.exports = grammar({
         $.parameter_list,
         optional(field("return_type", choice($.void_type, $.type))),
         field("body", $.block),
+      ),
+
+    super_method_expression: ($) =>
+      seq(
+        field("super", "super"),
+        ".",
+        field("method", $.identifier),
+        field("arguments", $.argument_list),
       ),
 
     cascade_expression: ($) =>

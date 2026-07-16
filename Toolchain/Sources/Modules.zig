@@ -754,6 +754,13 @@ pub const Resolver = struct {
                     .arguments = try self.transformExpressions(call.arguments),
                 } };
             },
+            .super_method_call => |call| .{ .super_method_call = .{
+                .position = call.position,
+                .name = call.name,
+                .name_position = call.name_position,
+                .arguments = try self.transformExpressions(call.arguments),
+                .named_fields = if (call.named_fields) |fields| try self.transformFieldInitializers(fields) else null,
+            } },
             .cascade => |cascade| cascade_expression: {
                 var operations: std.ArrayList(Ast.Expression.Cascade.Operation) = .empty;
                 for (cascade.operations) |operation| {

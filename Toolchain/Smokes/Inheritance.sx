@@ -18,6 +18,18 @@ class Entity {
     pub func classify(value:int) int {
         return value
     }
+
+    pub func describe() int {
+        return 10
+    }
+
+    func secret() int {
+        return 30
+    }
+
+    pub func expose_secret() int {
+        return self.secret()
+    }
 }
 
 class Player : Entity {
@@ -34,6 +46,14 @@ class Player : Entity {
     pub func classify(value:str) int {
         return 2
     }
+
+    override pub func describe() int {
+        return super.describe() + 1
+    }
+
+    pub func secret() int {
+        return 40
+    }
 }
 
 class ElitePlayer : Player {
@@ -41,6 +61,58 @@ class ElitePlayer : Player {
 
     pub init(id:int, name:str, position:int, rank:int) : super(id, name, position) {
         self.rank = rank
+    }
+
+    override pub func describe() int {
+        return super.describe() + 1
+    }
+}
+
+class EntityHolder {
+    entity:Entity
+
+    pub init(entity:Entity) {
+        self.entity = entity
+    }
+
+    pub func describe() int {
+        return self.entity.describe()
+    }
+}
+
+class ConstructorBase {
+    sub init(marker:&int) {
+        self.probe(&marker)
+    }
+
+    pub func probe(marker:&int) {
+        marker = 1
+    }
+}
+
+class ConstructorChild : ConstructorBase {
+    pub init(marker:&int) : super(&marker) {
+        assert(marker == 1, "base construction does not dispatch into the child")
+    }
+
+    override pub func probe(marker:&int) {
+        marker = 2
+    }
+}
+
+class TickBase {
+    pub func tick() {}
+}
+
+class TickChild : TickBase {
+    count:int = 0
+
+    override pub func tick() {
+        self.count += 1
+    }
+
+    pub func get_count() int {
+        return self.count
     }
 }
 
@@ -123,17 +195,28 @@ func main() {
     assert(entity.get_position() == 3, "inherited method mutates the same instance")
     assert(player.classify(4) == 4, "base overload remains visible")
     assert(player.classify("ok") == 2, "child overload joins the inherited set")
+    assert(entity.describe() == 11, "a base binding dispatches to the real class")
+    assert(entity.expose_secret() == 30, "a base method keeps its private implementation")
+    assert(player.secret() == 40, "the child may declare an independent private signature")
 
     var elite = ElitePlayer(2, "Lin", 4, 9)
     var transitive:Entity = elite
     assert(transitive.get_position() == 4, "upcast is transitive")
     assert(make_entity(elite) == elite, "return conversion keeps identity")
+    assert(transitive.describe() == 12, "dispatch follows the most-derived override")
+    assert(make_entity(elite).describe() == 12, "a base-typed return keeps dynamic dispatch")
+
+    var holder = EntityHolder(player)
+    assert(holder.describe() == 11, "a base-typed field keeps dynamic dispatch")
 
     var optional:Entity? = player
     assert(optional == player, "optional promotion converts to the base")
     var optional_player:Player? = player
     var optional_entity:Entity? = optional_player
     assert(optional_entity == player, "optional upcast keeps identity")
+    if var present = optional_entity {
+        assert(present.describe() == 11, "an unwrapped base optional keeps dynamic dispatch")
+    }
     var entities:Entity[] = [player, elite]
     assert(entities.count() == 2, "a new base collection converts each element")
 
@@ -147,6 +230,17 @@ func main() {
     var order = 0
     var ordered = OrderedChild(&order)
     assert(order == 2, "child body runs after the base")
+
+    var constructor_marker = 0
+    var constructor_child = ConstructorChild(&constructor_marker)
+    assert(constructor_marker == 1, "base constructor selected its own implementation")
+    constructor_child.probe(&constructor_marker)
+    assert(constructor_marker == 2, "dispatch starts after complete construction")
+
+    var ticking = TickChild()
+    var tick_base:TickBase = ticking
+    tick_base.tick()
+    assert(ticking.get_count() == 1, "a base call preserves override mutation")
 
     var first = DerivedNode()
     var second = DerivedNode()

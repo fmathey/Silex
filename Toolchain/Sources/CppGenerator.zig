@@ -847,7 +847,9 @@ pub fn generateWithSources(
         if (structure.fields.len > 0 and (structure.constructors.len > 0 or structure.methods.len > 0)) try output.append(allocator, '\n');
         for (structure.methods) |method| {
             try output.appendSlice(allocator, "    ");
+            if (structure.is_class and method.visibility != .private_access) try output.appendSlice(allocator, "virtual ");
             try generateMethodSignature(allocator, &output, method, null, false);
+            if (method.is_override) try output.appendSlice(allocator, " override");
             try output.appendSlice(allocator, ";\n");
         }
         try output.appendSlice(allocator, "\n    void silexTrace(const SilexTraceVisitor& visit) const");
@@ -1823,6 +1825,17 @@ fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expressi
                 try generateExpression(allocator, output, call.object);
                 try output.appendSlice(allocator, if (isClassType(call.object.type)) "->" else ".");
             }
+            try output.appendSlice(allocator, call.generated_name);
+            try output.append(allocator, '(');
+            for (call.arguments, 0..) |argument, index| {
+                if (index != 0) try output.appendSlice(allocator, ", ");
+                try generateExpression(allocator, output, argument);
+            }
+            try output.append(allocator, ')');
+        },
+        .super_method_call => |call| {
+            try output.appendSlice(allocator, call.base_generated_name);
+            try output.appendSlice(allocator, "::");
             try output.appendSlice(allocator, call.generated_name);
             try output.append(allocator, '(');
             for (call.arguments, 0..) |argument, index| {

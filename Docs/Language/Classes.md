@@ -142,8 +142,8 @@ An inherited `pub` method remains available through the child. Code in a child
 may also use `sub` fields and methods declared anywhere in its base chain,
 including through another instance from that hierarchy. Private members remain
 exclusive to their declaring class. A child field cannot reuse an inherited
-field name. An identical inherited method signature is rejected until explicit
-overriding and dynamic dispatch are introduced.
+field name. An identical accessible inherited method signature requires the
+explicit `override` marker.
 
 A child reference converts implicitly to any base reference for a binding,
 argument, return value or optional promotion. The conversion keeps a strong
@@ -165,6 +165,49 @@ The reverse conversion is not implicit. Mutable collections are invariant:
 `Player[]` does not convert to `Entity[]`. A new `Entity[]` may nevertheless be
 built from player expressions because each element is converted while the new
 collection is created.
+
+## Method overriding and dynamic dispatch
+
+Every `sub` or `pub` instance method can be overridden. The child writes
+`override` before the visibility marker, and keeps the same ordered parameter
+types, `&` markers, and return type. An override cannot reduce visibility: a
+`pub` method remains `pub`, while a `sub` method may remain `sub` or become
+`pub`. The base method needs no prior marker such as `virtual`.
+
+```sx
+class Entity {
+    pub func update() {
+        print("entity")
+    }
+}
+
+class Player : Entity {
+    override pub func update() {
+        super.update()
+        print("player")
+    }
+}
+
+var entity:Entity = Player()
+entity.update() // entity, then player
+```
+
+The call first selects a signature from the static type, using ordinary
+overload rules. It then runs the matching implementation from the instance's
+real class. A base-typed binding, parameter, return, field, or unwrapped
+optional therefore preserves dynamic dispatch, but child-only overloads do not
+become visible through the base type.
+
+Inside a child method, `super.method(...)` directly calls the implementation
+available from the immediate base and does not dispatch back into the child.
+It is not a value and cannot access private base members. During construction,
+a call on `self` remains attached to the class whose constructor is currently
+running; child overrides become active only after the complete instance has
+been built.
+
+A private method is never overridable. A child may independently declare the
+same name and signature without `override`: calls written in the base keep its
+private method, while calls written in the child use the child's method.
 
 ## Member visibility
 
@@ -261,5 +304,5 @@ program will not use it again. Native resources therefore keep an explicit,
 idempotent operation such as `close()` for deterministic release; cycle
 collection is not an observable Silex destructor or finalizer.
 
-Method overriding and dynamic dispatch, interfaces, weak references, user
-destructors, and finalizers are not part of the current language.
+Interfaces, weak references, user destructors, and finalizers are not part of
+the current language.

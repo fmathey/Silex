@@ -225,6 +225,22 @@
     ],
     "description": "Declare a struct method with an explicit return type"
   },
+  "Override class method": {
+    "prefix": "override",
+    "body": [
+      "override pub func ${1:name}(${2}) {",
+      "    $0",
+      "}"
+    ],
+    "description": "Override an inherited public class method"
+  },
+  "Call base method": {
+    "prefix": "supermethod",
+    "body": [
+      "super.${1:method}(${2})$0"
+    ],
+    "description": "Call the immediate base implementation directly"
+  },
   "Return": {
     "prefix": "return",
     "body": [

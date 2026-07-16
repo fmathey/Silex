@@ -90,6 +90,7 @@ pub const Expression = struct {
         lambda: Lambda,
         owner_self,
         method_call: MethodCall,
+        super_method_call: SuperMethodCall,
         class_initializer: ClassInitializer,
         structure_initializer: StructureInitializer,
         member_access: MemberAccess,
@@ -151,6 +152,12 @@ pub const Expression = struct {
         method_id: MethodId,
         receiver: Receiver,
         position: Source.Position,
+    };
+
+    pub const SuperMethodCall = struct {
+        base_generated_name: []const u8,
+        generated_name: []const u8,
+        arguments: []const *Expression,
     };
 
     pub const CollectionMethod = struct {
@@ -389,6 +396,7 @@ pub const Method = struct {
     statements: []const Statement,
     is_mutating: bool,
     visibility: Ast.MemberVisibility,
+    is_override: bool,
 };
 
 pub const MethodId = struct {
@@ -498,6 +506,7 @@ const MethodSymbol = struct {
     parameter_stored: []const bool,
     position: Source.Position,
     visibility: Ast.MemberVisibility,
+    is_override: bool,
     direct_mutation: bool = false,
     dependencies: []const MethodId = &.{},
     is_mutating: bool = false,
@@ -508,6 +517,21 @@ const MethodCandidate = struct {
     structure_index: usize,
     index: usize,
 };
+
+fn methodCandidatesContainSlot(candidates: []const MethodCandidate, generated_name: []const u8) bool {
+    for (candidates) |candidate| {
+        if (std.mem.eql(u8, candidate.symbol.generated_name, generated_name)) return true;
+    }
+    return false;
+}
+
+fn visibilityRank(visibility: Ast.MemberVisibility) u2 {
+    return switch (visibility) {
+        .private_access => 0,
+        .subclass => 1,
+        .public_access => 2,
+    };
+}
 
 const FieldCandidate = struct {
     symbol: StructureFieldSymbol,
@@ -758,6 +782,7 @@ pub const Analyzer = struct {
                     .parameter_stored = try parameter_stored_values.toOwnedSlice(self.allocator),
                     .position = ast_method.name_position,
                     .visibility = ast_method.member_visibility.?,
+                    .is_override = ast_method.is_override,
                 });
             }
             self.structures.items[structure_index].methods = try methods.toOwnedSlice(self.allocator);
@@ -780,35 +805,81 @@ pub const Analyzer = struct {
     }
 
     fn validateInheritedMembers(self: *Analyzer) AnalyzeError!void {
-        for (self.structures.items) |structure| {
-            if (!structure.is_class) continue;
-            var base_index = structure.base_index;
+        const validated = try self.allocator.alloc(bool, self.structures.items.len);
+        @memset(validated, false);
+        for (self.structures.items, 0..) |structure, structure_index| {
+            if (structure.is_class) try self.validateInheritedStructure(structure_index, validated);
+        }
+    }
+
+    fn validateInheritedStructure(self: *Analyzer, structure_index: usize, validated: []bool) AnalyzeError!void {
+        if (validated[structure_index]) return;
+        const direct_base_index = self.structures.items[structure_index].base_index orelse {
+            validated[structure_index] = true;
+            return;
+        };
+        try self.validateInheritedStructure(direct_base_index, validated);
+
+        var base_index: ?usize = direct_base_index;
+        while (base_index) |index| {
+            const base = self.structures.items[index];
+            for (self.structures.items[structure_index].fields) |field| {
+                for (base.fields) |base_field| {
+                    if (std.mem.eql(u8, field.source_name, base_field.source_name)) {
+                        const message = try std.fmt.allocPrint(self.allocator, "field '{s}' in class '{s}' collides with an inherited field", .{ field.source_name, self.structures.items[structure_index].source_name });
+                        return self.fail(field.position, message);
+                    }
+                }
+            }
+            base_index = base.base_index;
+        }
+
+        for (self.structures.items[structure_index].methods, 0..) |method_symbol, method_index| {
+            var inherited: ?MethodCandidate = null;
+            var private_match = false;
+            base_index = direct_base_index;
             while (base_index) |index| {
                 const base = self.structures.items[index];
-                for (structure.fields) |field| {
-                    for (base.fields) |base_field| {
-                        if (std.mem.eql(u8, field.source_name, base_field.source_name)) {
-                            const message = try std.fmt.allocPrint(self.allocator, "field '{s}' in class '{s}' collides with an inherited field", .{ field.source_name, structure.source_name });
-                            return self.fail(field.position, message);
-                        }
+                for (base.methods, 0..) |base_method, base_method_index| {
+                    if (!std.mem.eql(u8, method_symbol.source_name, base_method.source_name) or !sameSignature(
+                        method_symbol.parameter_types,
+                        method_symbol.parameter_is_mutable_references,
+                        base_method.parameter_types,
+                        base_method.parameter_is_mutable_references,
+                    )) continue;
+                    if (base_method.visibility == .private_access) {
+                        private_match = true;
+                    } else if (inherited == null) {
+                        inherited = .{ .symbol = base_method, .structure_index = index, .index = base_method_index };
                     }
                 }
-                for (structure.methods) |method_symbol| {
-                    for (base.methods) |base_method| {
-                        if (base_method.visibility != .private_access and std.mem.eql(u8, method_symbol.source_name, base_method.source_name) and sameSignature(
-                            method_symbol.parameter_types,
-                            method_symbol.parameter_is_mutable_references,
-                            base_method.parameter_types,
-                            base_method.parameter_is_mutable_references,
-                        )) {
-                            const message = try std.fmt.allocPrint(self.allocator, "method '{s}' in class '{s}' matches an inherited signature; method overriding is not available yet", .{ method_symbol.source_name, structure.source_name });
-                            return self.fail(method_symbol.position, message);
-                        }
-                    }
-                }
+                if (inherited != null) break;
                 base_index = base.base_index;
             }
+
+            if (inherited) |candidate| {
+                if (!method_symbol.is_override) {
+                    const message = try std.fmt.allocPrint(self.allocator, "method '{s}' matches an inherited signature; declare it with 'override'", .{method_symbol.source_name});
+                    return self.fail(method_symbol.position, message);
+                }
+                if (!typeEqual(method_symbol.return_type, candidate.symbol.return_type)) {
+                    const message = try std.fmt.allocPrint(self.allocator, "override method '{s}' must return '{s}'", .{ method_symbol.source_name, typeName(candidate.symbol.return_type) });
+                    return self.fail(method_symbol.position, message);
+                }
+                if (visibilityRank(method_symbol.visibility) < visibilityRank(candidate.symbol.visibility)) {
+                    const message = try std.fmt.allocPrint(self.allocator, "override method '{s}' cannot reduce inherited visibility", .{method_symbol.source_name});
+                    return self.fail(method_symbol.position, message);
+                }
+                self.structures.items[structure_index].methods[method_index].generated_name = candidate.symbol.generated_name;
+            } else if (method_symbol.is_override) {
+                const message = if (private_match)
+                    try std.fmt.allocPrint(self.allocator, "private method '{s}' cannot be overridden", .{method_symbol.source_name})
+                else
+                    try std.fmt.allocPrint(self.allocator, "override method '{s}' has no compatible inherited method", .{method_symbol.source_name});
+                return self.fail(method_symbol.position, message);
+            }
         }
+        validated[structure_index] = true;
     }
 
     fn collectFunctions(self: *Analyzer, ast_functions: []const Ast.Function) AnalyzeError!void {
@@ -1075,6 +1146,7 @@ pub const Analyzer = struct {
             .statements = method_statements,
             .is_mutating = false,
             .visibility = symbol.visibility,
+            .is_override = symbol.is_override,
         };
     }
 
@@ -1366,6 +1438,7 @@ pub const Analyzer = struct {
                 } else try self.validateConstructorExpression(structure, call.object, initialized);
                 for (call.arguments) |argument| try self.validateConstructorExpression(structure, argument, initialized);
             },
+            .super_method_call => return self.fail(expression_value.position, "'super.method(...)' is only available inside a class method"),
             .class_initializer => |initializer| for (initializer.arguments) |argument| try self.validateConstructorExpression(structure, argument, initialized),
             .structure_initializer => |initializer| for (initializer.fields) |field| try self.validateConstructorExpression(structure, field, initialized),
             .member_access, .bound_function => |member| {
@@ -2020,6 +2093,7 @@ pub const Analyzer = struct {
             .value_call => |call| self.valueCallExpression(call, scope),
             .lambda => |lambda| self.lambdaExpression(lambda, scope, null),
             .method_call => |call| self.methodCallExpression(call, scope),
+            .super_method_call => |call| self.superMethodCallExpression(call, scope),
             .cascade => |cascade| self.cascadeExpression(cascade, scope, null),
             .class_initializer => |initializer| self.classInitializerExpression(initializer, scope),
             .structure_initializer => |initializer| self.structureInitializerExpression(initializer, scope),
@@ -2764,7 +2838,7 @@ pub const Analyzer = struct {
                 if (std.mem.eql(u8, method_symbol.source_name, call.name)) {
                     const candidate = MethodCandidate{ .symbol = method_symbol, .structure_index = index, .index = method_index };
                     if (self.memberVisibleFromCurrentContext(index, method_symbol.visibility)) {
-                        try candidates.append(self.allocator, candidate);
+                        if (!methodCandidatesContainSlot(candidates.items, method_symbol.generated_name)) try candidates.append(self.allocator, candidate);
                     } else {
                         inaccessible = candidate;
                     }
@@ -2815,6 +2889,74 @@ pub const Analyzer = struct {
                 .method_id = method_id,
                 .receiver = receiver,
                 .position = call.name_position,
+            } },
+        });
+    }
+
+    fn superMethodCallExpression(
+        self: *Analyzer,
+        call: Ast.Expression.SuperMethodCall,
+        scope: *const Scope,
+    ) AnalyzeError!*Expression {
+        if (call.named_fields != null) return self.fail(call.name_position, "'super' method calls do not accept named arguments");
+        const structure_index = self.current_structure_index orelse return self.fail(call.position, "'super' is only available inside a class method");
+        if (self.current_method_index == null or self.current_constructor) return self.fail(call.position, "'super.method(...)' is only available inside a class method");
+        const structure = self.structures.items[structure_index];
+        if (!structure.is_class) return self.fail(call.position, "'super' is only available inside a class method");
+        const direct_base_index = structure.base_index orelse return self.fail(call.position, "'super' requires a base class");
+
+        var candidates: std.ArrayList(MethodCandidate) = .empty;
+        var inaccessible: ?MethodCandidate = null;
+        var declaring_index: ?usize = direct_base_index;
+        while (declaring_index) |index| {
+            const declaring_structure = self.structures.items[index];
+            for (declaring_structure.methods, 0..) |method_symbol, method_index| {
+                if (!std.mem.eql(u8, method_symbol.source_name, call.name)) continue;
+                const candidate = MethodCandidate{ .symbol = method_symbol, .structure_index = index, .index = method_index };
+                if (self.memberVisibleFrom(structure_index, index, method_symbol.visibility)) {
+                    if (!methodCandidatesContainSlot(candidates.items, method_symbol.generated_name)) try candidates.append(self.allocator, candidate);
+                } else {
+                    inaccessible = candidate;
+                }
+            }
+            declaring_index = declaring_structure.base_index;
+        }
+        if (candidates.items.len == 0) {
+            if (inaccessible) |candidate| {
+                return self.failMemberAccess("method", &self.structures.items[candidate.structure_index], candidate.symbol.source_name, candidate.symbol.visibility, call.name_position);
+            }
+            const message = try std.fmt.allocPrint(self.allocator, "base class has no method '{s}'", .{call.name});
+            return self.fail(call.name_position, message);
+        }
+
+        const resolved = try self.resolveMethodOverload(call.name, call.name_position, call.arguments, scope, candidates.items);
+        const method_symbol = resolved.symbol;
+        var arguments: std.ArrayList(*Expression) = .empty;
+        for (call.arguments, method_symbol.parameter_types, method_symbol.parameter_is_mutable_references, method_symbol.parameter_stored, 0..) |argument, expected_type, is_mutable_reference, is_stored, index| {
+            var value = if (is_mutable_reference)
+                try self.mutableReferenceArgument(argument, scope, expected_type)
+            else
+                try self.expressionForExpected(argument, scope, expected_type);
+            value = try self.coerce(value, expected_type);
+            if (!typeEqual(value.type, expected_type)) {
+                const message = try std.fmt.allocPrint(self.allocator, "argument {d} of method '{s}' expects '{s}', found '{s}'", .{ index + 1, call.name, typeName(expected_type), typeName(value.type) });
+                return self.fail(argument.position, message);
+            }
+            if (is_stored and value.lifetime_depth > 1) {
+                return self.fail(argument.position, "capturing callback cannot be stored in a receiver that outlives one of its captures");
+            }
+            try arguments.append(self.allocator, value);
+            self.releaseTransientBorrow(value);
+        }
+        const method_id = MethodId{ .structure_index = resolved.structure_index, .method_index = resolved.index };
+        try self.current_method_dependencies.append(self.allocator, method_id);
+        return self.newExpression(.{
+            .type = method_symbol.return_type,
+            .position = call.name_position,
+            .value = .{ .super_method_call = .{
+                .base_generated_name = self.structures.items[direct_base_index].generated_name,
+                .generated_name = method_symbol.generated_name,
+                .arguments = try arguments.toOwnedSlice(self.allocator),
             } },
         });
     }
@@ -3935,6 +4077,23 @@ pub const Analyzer = struct {
                     }
                 }
             }
+            for (self.structures.items) |*structure| {
+                if (!structure.is_class) continue;
+                for (structure.methods) |*method_symbol| {
+                    if (method_symbol.is_mutating) continue;
+                    for (self.structures.items) |candidate_structure| {
+                        if (!candidate_structure.is_class) continue;
+                        for (candidate_structure.methods) |candidate| {
+                            if (candidate.is_mutating and std.mem.eql(u8, candidate.generated_name, method_symbol.generated_name)) {
+                                method_symbol.is_mutating = true;
+                                changed = true;
+                                break;
+                            }
+                        }
+                        if (method_symbol.is_mutating) break;
+                    }
+                }
+            }
         }
     }
 
@@ -4053,6 +4212,9 @@ pub const Analyzer = struct {
                         return self.fail(call.position, message);
                     },
                 }
+            },
+            .super_method_call => |call| {
+                for (call.arguments) |argument| try self.validateExpression(argument);
             },
             .cascade => |cascade| {
                 try self.validateExpression(cascade.object);
@@ -4759,6 +4921,10 @@ fn astExpressionUsesIdentifier(expression_value: *const Ast.Expression, name: []
             for (call.arguments) |argument| if (astExpressionUsesIdentifier(argument, name)) break :uses true;
             break :uses false;
         },
+        .super_method_call => |call| uses: {
+            for (call.arguments) |argument| if (astExpressionUsesIdentifier(argument, name)) break :uses true;
+            break :uses false;
+        },
         .member_access => |member| astExpressionUsesIdentifier(member.object, name),
         .index_access => |access| astExpressionUsesIdentifier(access.object, name) or astExpressionUsesIdentifier(access.index, name),
         .slice_access => |access| astExpressionUsesIdentifier(access.object, name) or astExpressionUsesIdentifier(access.start, name) or astExpressionUsesIdentifier(access.end, name),
@@ -5156,7 +5322,7 @@ const AssignmentRoot = union(enum) {
 
 fn isCascadeOwnedTemporary(expression: *const Ast.Expression) bool {
     return switch (expression.value) {
-        .call, .method_call, .class_initializer, .structure_initializer, .sequence_literal => true,
+        .call, .method_call, .super_method_call, .class_initializer, .structure_initializer, .sequence_literal => true,
         .member_access => |member| isCascadeOwnedTemporary(member.object),
         .index_access => |access| isCascadeOwnedTemporary(access.object),
         .slice_access => true,
@@ -5559,7 +5725,7 @@ test "class inheritance constructs one base and converts references upward" {
     );
     try expectResolvedSemanticError(
         "class Base { pub func act() {} } class Child : Base { pub func act() {} } func main() {}",
-        "method 'act' in class 'Child' matches an inherited signature; method overriding is not available yet",
+        "method 'act' matches an inherited signature; declare it with 'override'",
     );
     try expectResolvedSemanticError(
         "class Base {} class Child : Base {} func main() { var children:Child[] = []; var bases:Base[] = children }",
@@ -5580,6 +5746,52 @@ test "class inheritance constructs one base and converts references upward" {
     try expectResolvedSemanticError(
         "class Root { pub init() : super() {} } func main() {}",
         "constructor 'super' call requires a base class",
+    );
+}
+
+test "class overrides share a dynamic slot and super selects the base implementation" {
+    const Parser = @import("Parser.zig").Parser;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var parser = Parser.init(allocator,
+        \\class Child : Base {
+        \\    override pub func value(input:int) int { return super.value(input) + 1 }
+        \\}
+        \\class Base { pub func value(input:int) int { return input } }
+        \\func main() {}
+    );
+    var analyzer = Analyzer.init(allocator);
+    const program = try analyzer.analyze(try resolveSingleTestProgram(allocator, try parser.parse()));
+    try std.testing.expectEqualStrings(program.structures[1].methods[0].generated_name, program.structures[0].methods[0].generated_name);
+    try std.testing.expect(program.structures[0].methods[0].is_override);
+    const returned = program.structures[0].methods[0].statements[0].return_statement.?;
+    try std.testing.expect(returned.value.binary.left.value == .super_method_call);
+
+    try expectResolvedSemanticError(
+        "class Base { pub func act() {} } class Child : Base { override pub func other() {} } func main() {}",
+        "override method 'other' has no compatible inherited method",
+    );
+    try expectResolvedSemanticError(
+        "class Base { pub func value() int { return 1 } } class Child : Base { override pub func value() str { return \"x\" } } func main() {}",
+        "override method 'value' must return 'int'",
+    );
+    try expectResolvedSemanticError(
+        "class Base { pub func act() {} } class Child : Base { override sub func act() {} } func main() {}",
+        "override method 'act' cannot reduce inherited visibility",
+    );
+    try expectResolvedSemanticError(
+        "class Base { func hidden() {} } class Child : Base { override pub func hidden() {} } func main() {}",
+        "private method 'hidden' cannot be overridden",
+    );
+    try expectResolvedSemanticError(
+        "class Base {} class Child : Base { pub func act() { super.missing() } } func main() {}",
+        "base class has no method 'missing'",
+    );
+    try expectResolvedSemanticError(
+        "class Base { pub func classify(value:int) {} } class Child : Base { pub func classify(value:str) {} } func main() { var value:Base = Child(); value.classify(\"child\") }",
+        "no compatible signature for method 'classify'; visible signatures: classify(int)",
     );
 }
 

@@ -132,18 +132,26 @@ pub const Parser = struct {
         var constructors: std.ArrayList(Ast.Constructor) = .empty;
         var methods: std.ArrayList(Ast.Function) = .empty;
         while (self.current.tag != .right_brace and self.current.tag != .end) {
+            const is_override = self.current.tag == .keyword_override;
+            if (is_override) {
+                if (!is_class) return self.fail("only class methods can use 'override'");
+                try self.advance();
+            }
             var visibility: Ast.MemberVisibility = if (is_class) .private_access else .public_access;
             if (self.current.tag == .keyword_pub or self.current.tag == .keyword_sub) {
                 if (!is_class) return self.fail("struct members are already public and do not accept visibility modifiers");
                 visibility = if (self.current.tag == .keyword_pub) .public_access else .subclass;
                 try self.advance();
             }
+            if (self.current.tag == .keyword_override) return self.fail("'override' must precede the method visibility");
             if (self.current.tag == .keyword_func) {
                 var method = try self.parseFunction(false);
                 method.member_visibility = visibility;
+                method.is_override = is_override;
                 try methods.append(self.allocator, method);
                 continue;
             }
+            if (is_override) return self.fail("'override' must declare a class method");
             if (self.current.tag == .keyword_init) {
                 if (!is_class) return self.fail("custom constructors are available only in classes");
                 const constructor_position = self.current.position;
@@ -335,7 +343,7 @@ pub const Parser = struct {
             .keyword_break => self.parseLoopControl(.break_statement),
             .keyword_continue => self.parseLoopControl(.continue_statement),
             .keyword_return => self.parseReturn(),
-            .identifier, .keyword_self => self.parseIdentifierStatement(),
+            .identifier, .keyword_self, .keyword_super => self.parseIdentifierStatement(),
             else => self.fail("expected statement"),
         };
     }
@@ -517,7 +525,7 @@ pub const Parser = struct {
                 .value = value,
             } };
         }
-        if (target.value == .call or target.value == .value_call or target.value == .method_call or target.value == .safe_member_access or target.value == .cascade) {
+        if (target.value == .call or target.value == .value_call or target.value == .method_call or target.value == .super_method_call or target.value == .safe_member_access or target.value == .cascade) {
             try self.expectStatementTerminator();
             return .{ .expression_statement = target };
         }
@@ -917,6 +925,7 @@ pub const Parser = struct {
             },
             .left_bracket => return self.parsePostfix(try self.parseSequenceLiteral()),
             .keyword_func => return self.parsePostfix(try self.parseLambda()),
+            .keyword_super => return self.parseSuperMethodCall(),
             .identifier, .keyword_self => {
                 return self.parseIdentifierExpression();
             },
@@ -928,6 +937,34 @@ pub const Parser = struct {
             },
             else => return self.fail("expected expression"),
         }
+    }
+
+    fn parseSuperMethodCall(self: *Parser) ParseError!*Ast.Expression {
+        const position = self.current.position;
+        try self.advance();
+        try self.expect(.dot, "expected '.' after 'super'");
+        if (self.current.tag != .identifier) return self.fail("expected method name after 'super.'");
+        const name = self.current.lexeme;
+        const name_position = self.current.position;
+        try self.advance();
+        if (self.current.tag != .left_parenthesis) return self.fail("'super' can only call a base method");
+        const invocation = try self.parseInvocationArguments();
+        return self.parsePostfix(try self.newExpression(.{
+            .position = position,
+            .value = .{ .super_method_call = .{
+                .position = position,
+                .name = name,
+                .name_position = name_position,
+                .arguments = switch (invocation) {
+                    .positional => |arguments| arguments,
+                    .named => &.{},
+                },
+                .named_fields = switch (invocation) {
+                    .positional => null,
+                    .named => |fields| fields,
+                },
+            } },
+        }));
     }
 
     fn parseLambda(self: *Parser) ParseError!*Ast.Expression {
@@ -2108,4 +2145,31 @@ test "parse negative collection indexes and slices" {
     const slice = program.functions[0].statements[2].variable_declaration.initializer.?.value.slice_access;
     try std.testing.expectEqualStrings("1", slice.start.value.integer);
     try std.testing.expectEqual(Ast.UnaryOperator.numeric_negate, slice.end.value.unary.operator);
+}
+
+test "parse override methods and direct super calls" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var parser = Parser.init(arena.allocator(),
+        \\class Base { sub func update(value:int) int { return value } }
+        \\class Child : Base {
+        \\    override pub func update(value:int) int { return super.update(value) }
+        \\}
+        \\func main() {}
+    );
+    const program = try parser.parse();
+    const method = program.structures[1].methods[0];
+    try std.testing.expect(method.is_override);
+    try std.testing.expectEqual(Ast.MemberVisibility.public_access, method.member_visibility.?);
+    const call = method.statements[0].return_statement.value.?.value.super_method_call;
+    try std.testing.expectEqualStrings("update", call.name);
+    try std.testing.expectEqual(@as(usize, 1), call.arguments.len);
+}
+
+test "override must precede method visibility" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var parser = Parser.init(arena.allocator(), "class Child { pub override func update() {} }");
+    try std.testing.expectError(error.InvalidSource, parser.parse());
+    try std.testing.expectEqualStrings("'override' must precede the method visibility", parser.diagnostic.?.message);
 }
