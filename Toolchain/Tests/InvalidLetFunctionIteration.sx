@@ -1,0 +1,4 @@
+func main() {
+    var callbacks:func()[] = [func() {}]
+    for let callback in callbacks {}
+}

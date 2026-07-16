@@ -33,10 +33,13 @@ function. Braces delimit declarations and blocks; `Position { x:10 }` is not an
 initializer.
 
 Fields of a `var` structure may be changed, including through nested paths. A
-`let` structure is fully immutable. Structures compare by value when they have
-the same declared type, except when they contain a function value directly or
-recursively; such values are not comparable. A function field has no intrinsic
-default and must be supplied by the initializer, for example with `func() {}`.
+`let` structure is fully immutable and is accepted only when all its fields are
+recursively independent values. A structure containing a function value must
+therefore use `var`; the same rule will apply to future class references.
+Structures compare by value when they have the same declared type, except when
+they contain a function value directly or recursively; such values are not
+comparable. A function field has no intrinsic default and must be supplied by
+the initializer, for example with `func() {}`.
 
 ## Methods
 
@@ -74,6 +77,6 @@ struct Counter {
 }
 ```
 
-An extracted field such as `let callback = counter.callback` is instead bound
+An extracted field such as `var callback = counter.callback` is instead bound
 to `counter` and cannot outlive it. A direct `counter.callback()` call supplies
 the current owner without extracting the field.

@@ -10,7 +10,7 @@ let count:int?                 // null
 let title:str? = "Silex"      // implicit str -> str?
 let positions:Position?[] = []
 let cache:Position[]?          // null
-let callback:(func(int))? = null
+var callback:(func(int))? = null
 ```
 
 `null` is a reserved keyword and needs an expected optional type from an
@@ -44,7 +44,9 @@ subsequent uses again have type `T?`.
 
 `if`, `elif`, `else if`, and `while` can extract a present value. The binding
 contains exactly one unannotated name. `let` creates an immutable local copy;
-`var` creates a mutable local copy. It is visible only in the associated body.
+`var` creates a mutable local copy. `let` is available only when the extracted
+type is an independent value; an optional function and, in the future, an
+optional class use `var`. The binding is visible only in the associated body.
 
 ```sx
 if let position = find_position() {
@@ -70,7 +72,8 @@ nullable step needs its own `?.`.
 ```sx
 let x:int? = profile?.position?.x
 
-var position:Position? = Position(x:1, y:2)
+var position:Position?
+position = Position(x:1, y:2)
 position?.translate(3)
 ```
 

@@ -1,0 +1,19 @@
+struct Position {
+    x:int
+    y:int
+}
+
+struct Snapshot {
+    selected:Position?
+}
+
+func main() {
+    let origin = Position(x:0, y:0)
+    let positions:Position[] = [origin, Position(x:1, y:2)]
+    let snapshot = Snapshot(selected:origin)
+
+    assert(positions.count() == 2, "let preserves independent lists")
+    assert(positions[1].y == 2, "let preserves nested structures")
+    assert(snapshot.selected == origin, "let preserves independent optionals")
+    print("independent let")
+}

@@ -945,6 +945,9 @@ pub const Analyzer = struct {
             return self.fail(if (declaration.initializer) |value| value.position else declaration.name_position, message);
         }
 
+        if (declaration.mutability == .immutable) {
+            try self.requireIndependentLetType(declared_type, declaration.name_position);
+        }
         if (declared_type == .reference and declaration.mutability == .mutable) {
             return self.fail(declaration.name_position, "a reference must be declared with 'let'");
         }
@@ -1224,6 +1227,9 @@ pub const Analyzer = struct {
                 try self.requireAvailableVariableName(body_scope, binding.name, binding.name_position);
                 const source = try self.expression(binding.source, parent_scope);
                 if (source.type != .optional) return self.fail(binding.source.position, "conditional binding source must have an optional type");
+                if (binding.mutability == .immutable) {
+                    try self.requireIndependentLetType(source.type.optional.*, binding.name_position);
+                }
                 const generated_name = try std.fmt.allocPrint(self.allocator, "silexValue{d}", .{self.next_symbol_id});
                 self.next_symbol_id += 1;
                 const temporary_name = try std.fmt.allocPrint(self.allocator, "silexOptional{d}", .{self.next_symbol_id});
@@ -1353,6 +1359,10 @@ pub const Analyzer = struct {
             },
         };
         defer if (iteration_borrow) |borrow| releaseBorrow(borrow);
+
+        if (ast.mutability == .immutable) {
+            try self.requireIndependentLetType(element_type, ast.name_position);
+        }
 
         const generated_name = try std.fmt.allocPrint(self.allocator, "silexValue{d}", .{symbol_id});
         self.next_symbol_id += 1;
@@ -2884,6 +2894,65 @@ pub const Analyzer = struct {
         };
     }
 
+    fn requireIndependentLetType(
+        self: *Analyzer,
+        type_value: Type,
+        position: Source.Position,
+    ) AnalyzeError!void {
+        var field_path: std.ArrayList([]const u8) = .empty;
+        defer field_path.deinit(self.allocator);
+        var visiting = std.StringHashMap(void).init(self.allocator);
+        defer visiting.deinit();
+        const cause = try self.nonIndependentType(type_value, &field_path, &visiting) orelse return;
+        const declared_name = try allocatedTypeName(self.allocator, type_value);
+        const cause_name = try allocatedTypeName(self.allocator, cause);
+        const message = if (field_path.items.len == 0)
+            try std.fmt.allocPrint(
+                self.allocator,
+                "type '{s}' is not an independent value and cannot be bound with 'let'; use 'var'",
+                .{declared_name},
+            )
+        else
+            try std.fmt.allocPrint(
+                self.allocator,
+                "type '{s}' is not an independent value because field '{s}' reaches '{s}'; use 'var'",
+                .{ declared_name, try std.mem.join(self.allocator, ".", field_path.items), cause_name },
+            );
+        return self.fail(position, message);
+    }
+
+    fn nonIndependentType(
+        self: *const Analyzer,
+        type_value: Type,
+        field_path: *std.ArrayList([]const u8),
+        visiting: *std.StringHashMap(void),
+    ) Allocator.Error!?Type {
+        return switch (type_value) {
+            .function, .reference => type_value,
+            .optional => |contained| self.nonIndependentType(contained.*, field_path, visiting),
+            .list => |element| self.nonIndependentType(element.*, field_path, visiting),
+            .fixed_array => |array| self.nonIndependentType(array.element.*, field_path, visiting),
+            .structure => |structure_type| structure: {
+                if (visiting.contains(structure_type.generated_name)) break :structure null;
+                try visiting.put(structure_type.generated_name, {});
+                defer _ = visiting.remove(structure_type.generated_name);
+
+                const structure_symbol = self.findStructureByGeneratedName(structure_type.generated_name) orelse
+                    break :structure type_value;
+                for (structure_symbol.fields) |field| {
+                    try field_path.append(self.allocator, field.source_name);
+                    if (try self.nonIndependentType(field.type, field_path, visiting)) |cause| {
+                        break :structure cause;
+                    }
+                    _ = field_path.pop();
+                }
+                break :structure null;
+            },
+            .void, .null => type_value,
+            else => null,
+        };
+    }
+
     fn inferMethodMutability(self: *Analyzer) void {
         for (self.structures.items) |*structure| {
             for (structure.methods) |*method_symbol| {
@@ -4087,6 +4156,21 @@ fn expectSemanticError(source: []const u8, expected_message: []const u8) !void {
     try std.testing.expectEqualStrings(expected_message, analyzer.diagnostic.?.message);
 }
 
+fn expectResolvedSemanticError(source: []const u8, expected_message: []const u8) !void {
+    const Parser = @import("Parser.zig").Parser;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var parser = Parser.init(allocator, source);
+    var analyzer = Analyzer.init(allocator);
+    try std.testing.expectError(
+        error.InvalidSource,
+        analyzer.analyze(try resolveSingleTestProgram(allocator, try parser.parse())),
+    );
+    try std.testing.expectEqualStrings(expected_message, analyzer.diagnostic.?.message);
+}
+
 fn resolveSingleTestProgram(allocator: Allocator, program: Ast.Program) !Ast.Program {
     const Modules = @import("Modules.zig");
     const project = @import("Project.zig").Project{
@@ -4143,6 +4227,58 @@ test "infer variables and resolve nested scope" {
     try std.testing.expectEqual(
         Type.int,
         program.functions[0].statements[1].if_statement.body[0].print.type,
+    );
+}
+
+test "let accepts recursively independent values" {
+    const Parser = @import("Parser.zig").Parser;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var parser = Parser.init(allocator,
+        \\struct Position { x:int; y:int }
+        \\struct Snapshot { positions:Position[]; selected:Position? }
+        \\func main() {
+        \\    let origin = Position()
+        \\    let snapshot = Snapshot(positions:[origin], selected:origin)
+        \\    print(snapshot.positions[0].x)
+        \\}
+    );
+    var analyzer = Analyzer.init(allocator);
+    const program = try analyzer.analyze(try resolveSingleTestProgram(allocator, try parser.parse()));
+
+    try std.testing.expectEqual(@as(usize, 3), program.functions[0].statements.len);
+}
+
+test "let rejects function values directly and through fields" {
+    try expectSemanticError(
+        "func main() { let callback = func() {}; }",
+        "type 'func' is not an independent value and cannot be bound with 'let'; use 'var'",
+    );
+    try expectResolvedSemanticError(
+        \\struct Handler { callback:func() }
+        \\func main() { let handler = Handler(callback:func() {}); }
+    ,
+        "type 'Handler' is not an independent value because field 'callback' reaches 'func'; use 'var'",
+    );
+    try expectResolvedSemanticError(
+        \\struct Handler { callbacks:func()[] }
+        \\struct Screen { handler:Handler? }
+        \\func main() { let screen = Screen(handler:null); }
+    ,
+        "type 'Screen' is not an independent value because field 'handler.callbacks' reaches 'func'; use 'var'",
+    );
+}
+
+test "let rejects non-independent conditional and iteration bindings" {
+    try expectSemanticError(
+        "func main() { var callback:(func())? = func() {}; if let selected = callback {} }",
+        "type 'func' is not an independent value and cannot be bound with 'let'; use 'var'",
+    );
+    try expectSemanticError(
+        "func main() { var callbacks:func()[] = [func() {}]; for (let callback in callbacks) {} }",
+        "type 'func' is not an independent value and cannot be bound with 'let'; use 'var'",
     );
 }
 
@@ -4571,7 +4707,7 @@ test "resolve forward and recursive function calls" {
 
 test "reject mutation of a let captured by a lambda" {
     try expectSemanticError(
-        "func main() { let count = 1; let callback = func() { count += 1; }; callback(); }",
+        "func main() { let count = 1; var callback = func() { count += 1; }; callback(); }",
         "cannot assign to immutable variable 'count'",
     );
 }
@@ -4614,21 +4750,21 @@ test "reject storing a callback beyond a captured block" {
 
 test "reject incompatible lambda signature" {
     try expectSemanticError(
-        "func main() { let callback:func(int) int = func(value:str) int { return 1; }; }",
+        "func main() { var callback:func(int) int = func(value:str) int { return 1; }; }",
         "expected 'func', found 'func'",
     );
 }
 
 test "reject missing default function value" {
     try expectSemanticError(
-        "func main() { let callback:func(); }",
+        "func main() { var callback:func(); }",
         "a function value requires an initializer",
     );
 }
 
 test "reject equality of function values" {
     try expectSemanticError(
-        "func main() { let callback = func() {}; let same = callback == callback; }",
+        "func main() { var callback = func() {}; let same = callback == callback; }",
         "function values and values containing them are not comparable",
     );
 }

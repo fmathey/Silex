@@ -1,0 +1,7 @@
+struct Handler {
+    callback:func()
+}
+
+func main() {
+    let handler = Handler(callback:func() {})
+}

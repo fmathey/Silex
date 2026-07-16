@@ -320,6 +320,26 @@ pub fn build(b: *std.Build) void {
     invalidated_optional_lambda_reduction_command.expectExitCode(1);
     invalidated_optional_lambda_reduction_command.expectStdErrEqual("Tests/InvalidatedOptionalLambdaReduction.sx:7:21: error: arithmetic operator requires numeric operands, found 'int?' and 'int'\n");
 
+    const invalid_let_function_command = b.addRunArtifact(executable);
+    invalid_let_function_command.addArgs(&.{ "compile", "Tests/InvalidLetFunction.sx" });
+    invalid_let_function_command.expectExitCode(1);
+    invalid_let_function_command.expectStdErrEqual("Tests/InvalidLetFunction.sx:2:9: error: type 'func' is not an independent value and cannot be bound with 'let'; use 'var'\n");
+
+    const invalid_let_function_field_command = b.addRunArtifact(executable);
+    invalid_let_function_field_command.addArgs(&.{ "compile", "Tests/InvalidLetFunctionField.sx" });
+    invalid_let_function_field_command.expectExitCode(1);
+    invalid_let_function_field_command.expectStdErrEqual("Tests/InvalidLetFunctionField.sx:6:9: error: type 'Handler' is not an independent value because field 'callback' reaches 'func'; use 'var'\n");
+
+    const invalid_let_conditional_function_command = b.addRunArtifact(executable);
+    invalid_let_conditional_function_command.addArgs(&.{ "compile", "Tests/InvalidLetConditionalFunction.sx" });
+    invalid_let_conditional_function_command.expectExitCode(1);
+    invalid_let_conditional_function_command.expectStdErrEqual("Tests/InvalidLetConditionalFunction.sx:3:12: error: type 'func' is not an independent value and cannot be bound with 'let'; use 'var'\n");
+
+    const invalid_let_function_iteration_command = b.addRunArtifact(executable);
+    invalid_let_function_iteration_command.addArgs(&.{ "compile", "Tests/InvalidLetFunctionIteration.sx" });
+    invalid_let_function_iteration_command.expectExitCode(1);
+    invalid_let_function_iteration_command.expectStdErrEqual("Tests/InvalidLetFunctionIteration.sx:3:13: error: type 'func' is not an independent value and cannot be bound with 'let'; use 'var'\n");
+
     const invalid_assertion_condition_command = b.addRunArtifact(executable);
     invalid_assertion_condition_command.addArgs(&.{ "compile", "Tests/InvalidAssertionCondition.sx" });
     invalid_assertion_condition_command.expectExitCode(1);
@@ -1033,6 +1053,10 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&invalidated_optional_reduction_command.step);
     test_step.dependOn(&invalidated_optional_alias_reduction_command.step);
     test_step.dependOn(&invalidated_optional_lambda_reduction_command.step);
+    test_step.dependOn(&invalid_let_function_command.step);
+    test_step.dependOn(&invalid_let_function_field_command.step);
+    test_step.dependOn(&invalid_let_conditional_function_command.step);
+    test_step.dependOn(&invalid_let_function_iteration_command.step);
     test_step.dependOn(&invalid_assertion_condition_command.step);
     test_step.dependOn(&invalid_assertion_message_command.step);
     test_step.dependOn(&assertion_failure_command.step);
@@ -1150,8 +1174,13 @@ pub fn build(b: *std.Build) void {
     optional_values_command.addArgs(&.{ "run", "Smokes/OptionalValues.sx" });
     optional_values_command.expectStdOutEqual(hostText(b, "missing\noptionals\n"));
 
+    const independent_let_values_command = b.addRunArtifact(executable);
+    independent_let_values_command.step.dependOn(&optional_values_command.step);
+    independent_let_values_command.addArgs(&.{ "run", "Smokes/IndependentLetValues.sx" });
+    independent_let_values_command.expectStdOutEqual(hostText(b, "independent let\n"));
+
     const functions_command = b.addRunArtifact(executable);
-    functions_command.step.dependOn(&optional_values_command.step);
+    functions_command.step.dependOn(&independent_let_values_command.step);
     functions_command.addArgs(&.{ "run", "Smokes/Functions.sx" });
     functions_command.expectStdOutEqual(hostText(b, "8\n2\n85\n6\n84\n82\n1\n3\n77\n0\n1\n"));
 

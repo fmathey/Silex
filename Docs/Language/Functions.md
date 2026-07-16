@@ -113,6 +113,16 @@ let doubled = apply(4, func(value:int) int {
 })
 ```
 
+A function value itself uses `var`, even when its binding is not reassigned:
+its type may carry lexical captures shared with another path and therefore
+cannot satisfy the independent-value contract of `let`.
+
+```sx
+var callback = func(value:int) int {
+    return value * 2
+}
+```
+
 A lambda begins with `func` but has no name. Every parameter is named and
 annotated, and every non-`void` return type and path is explicit. The compiler
 captures only the outer bindings actually used. A captured `var` may be read
@@ -126,5 +136,5 @@ when a callback parameter is stored by the called function or method. This is a
 lexical check: captures do not allocate shared cells or extend a scope.
 
 Function values and values that contain them are not printable or comparable.
-They have no intrinsic default and remain forbidden in `native func`
-parameters and returns.
+They cannot be bound with `let`, have no intrinsic default, and remain
+forbidden in `native func` parameters and returns.

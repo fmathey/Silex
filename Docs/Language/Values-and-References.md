@@ -10,6 +10,20 @@ the captured values. The compiler therefore prevents the lambda, or any
 structure or collection containing it, from surviving the shortest captured
 scope.
 
+This shared captured state also means a function value is not independent and
+cannot be bound with `let`, directly or inside another value. Callback storage
+uses `var`:
+
+```sx
+var callback = func() {}
+var callbacks:func()[] = [callback]
+```
+
+A structure, array, list, or optional qualifies for `let` only when its
+contained types recursively preserve the independent value behaviour. Future
+class references do not qualify, including when reached through one of these
+containers.
+
 ```sx
 var first:int[] = [1]
 var second = first

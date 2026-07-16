@@ -21,6 +21,9 @@ value with `let name = source` or `var name = source`. The source is evaluated
 once per reached `if` branch and once before each `while` attempt. Parentheses
 may wrap the complete binding; the unparenthesized form is canonical.
 
+`let` requires the extracted type to be an independent value. Function values
+and future class references, including values that contain them, use `var`.
+
 ```sx
 if let position = find_position() {
     print(position.x)
@@ -74,7 +77,8 @@ initial condition. `elif` is reserved and cannot be used as an identifier.
 
 `for` iterates through a fixed array, dynamic list, or exclusive integer range.
 Every iteration binding starts with `let` or `var`: `let` creates an immutable
-binding, while `var` creates a mutable binding.
+binding for an independent element type, while `var` creates a mutable binding
+and is required for non-independent element types such as callbacks.
 
 ```sx
 for let value in values {

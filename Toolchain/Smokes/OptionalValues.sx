@@ -111,8 +111,8 @@ func main() {
     assert(cache == null, "optional collection")
     assert(samples[1] == null, "optional array elements")
 
-    let callback:(func(int) int)? = func(value:int) int { return value + 1 }
-    if let operation = callback {
+    var callback:(func(int) int)? = func(value:int) int { return value + 1 }
+    if var operation = callback {
         assert(apply(4, operation) == 5, "optional function extraction")
     }
 

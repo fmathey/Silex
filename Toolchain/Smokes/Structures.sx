@@ -49,7 +49,7 @@ func main() {
     let empty = Position()
     print(empty.total())
 
-    let Signal = func() int { return 9 }
+    var Signal = func() int { return 9 }
     print(Signal())
     print(Signal(value:3).value)
 }

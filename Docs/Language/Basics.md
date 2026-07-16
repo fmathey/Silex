@@ -28,8 +28,8 @@ struct WindowSession {
 
 ## Local variables
 
-`let` declares an immutable value. `var` declares a reassignable variable. A
-declaration needs an initializer, an explicit type, or both.
+`let` declares a constant, independent value. `var` declares general mutable
+state. A declaration needs an initializer, an explicit type, or both.
 
 ```sx
 let count = 3
@@ -38,6 +38,25 @@ var enabled:bool = true
 var attempts:int
 let title:str
 ```
+
+`let` is accepted only when the complete type has independent value semantics:
+no mutation through another path can change what the binding observes.
+Scalars, strings, and structures or collections recursively composed from such
+values qualify. Function values do not qualify because their captures may
+share mutable bindings; future class references and every value containing one
+do not qualify either. Use `var` for those types even when the local name is not
+eventually reassigned.
+
+```sx
+let session = WindowSession()
+let sessions:WindowSession[] = [session]
+
+var callback = func() {}
+```
+
+The choice does not control optimization. A `var` that is never written can be
+compiled exactly like a `let`; `let` exists only to request the constant-value
+guarantee.
 
 An uninitialized typed declaration receives the intrinsic value of its type:
 zero for numbers, `false` for `bool`, an empty string for `str`, an empty list

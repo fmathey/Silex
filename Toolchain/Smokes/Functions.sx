@@ -57,14 +57,14 @@ func main() {
 
     var health:int = 100
     let divisor:int = 2
-    let take_damage = func(amount:int) {
+    var take_damage = func(amount:int) {
         health -= amount
         health -= amount / divisor
     }
     take_damage(10)
     print(health)
 
-    let increment = make_incrementer()
+    var increment = make_incrementer()
     print(increment(5))
 
     var callbacks:func()[] = []
@@ -74,8 +74,8 @@ func main() {
     callbacks[0]()
     print(health)
 
-    let nested = func(amount:int) {
-        let inner = func() {
+    var nested = func(amount:int) {
+        var inner = func() {
             health -= amount
         }
         inner()
