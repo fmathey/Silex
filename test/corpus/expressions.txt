@@ -297,6 +297,54 @@ func main() {
                     (expression
                       (integer_literal))))))))))))
 
+====================================
+Alternative branch chains
+====================================
+
+func main() {
+    if false {} elif true {} else if (false) {} elif true {} else {}
+    if false {} else { if true {} }
+}
+
+---
+
+(source_file
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (block
+      (statement
+        (if_statement
+          (expression
+            (boolean_literal))
+          (block)
+          (alternative_branch
+            (expression
+              (boolean_literal))
+            (block))
+          (alternative_branch
+            (expression
+              (parenthesized_expression
+                (expression
+                  (boolean_literal))))
+            (block))
+          (alternative_branch
+            (expression
+              (boolean_literal))
+            (block))
+          (block)))
+      (statement
+        (if_statement
+          (expression
+            (boolean_literal))
+          (block)
+          (block
+            (statement
+              (if_statement
+                (expression
+                  (boolean_literal))
+                (block)))))))))
+
 ============================
 Runtime assertion
 ============================
@@ -883,3 +931,138 @@ func main() {
                     (identifier)
                     (expression
                       (integer_literal))))))))))))
+
+============================
+Optional values and safe access
+============================
+
+struct Profile {
+    value:int?
+}
+
+func find() Profile? {
+    return null
+}
+
+func main() {
+    let values:int?[] = [null, 1]
+    let callback:(func(int))? = null
+    if let profile = find() {
+        print(profile.value)
+    } elif (var fallback = find()) {
+        fallback?.value
+    }
+    while let profile = find() {
+        print(profile.value)
+    }
+    let value:int? = find()?.value
+}
+
+---
+
+(source_file
+  (structure_definition
+    (identifier)
+    (structure_field
+      (identifier)
+      (type
+        (optional_type
+          (builtin_type)))))
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (type
+      (optional_type
+        (named_type
+          (type_identifier))))
+    (block
+      (statement
+        (return_statement
+          (expression
+            (null_literal))))))
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (block
+      (statement
+        (variable_declaration
+          (identifier)
+          (type_annotation
+            (type
+              (array_type
+                (optional_type
+                  (builtin_type)))))
+          (expression
+            (sequence_literal
+              (expression
+                (null_literal))
+              (expression
+                (integer_literal))))))
+      (statement
+        (variable_declaration
+          (identifier)
+          (type_annotation
+            (type
+              (optional_type
+                (grouped_type
+                  (type
+                    (function_type
+                      (function_type_parameter
+                        (type
+                          (builtin_type)))))))))
+          (expression
+            (null_literal))))
+      (statement
+        (if_statement
+          (conditional_binding
+            (identifier)
+            (expression
+              (invocation_expression
+                (identifier))))
+          (block
+            (statement
+              (print_statement
+                (identifier)
+                (expression
+                  (member_expression
+                    (identifier)
+                    (identifier))))))
+          (alternative_branch
+            (conditional_binding
+              (identifier)
+              (expression
+                (invocation_expression
+                  (identifier))))
+            (block
+              (statement
+                (expression_statement
+                  (safe_member_expression
+                    (identifier)
+                    (identifier))))))))
+      (statement
+        (while_statement
+          (conditional_binding
+            (identifier)
+            (expression
+              (invocation_expression
+                (identifier))))
+          (block
+            (statement
+              (print_statement
+                (identifier)
+                (expression
+                  (member_expression
+                    (identifier)
+                    (identifier))))))))
+      (statement
+        (variable_declaration
+          (identifier)
+          (type_annotation
+            (type
+              (optional_type
+                (builtin_type))))
+          (expression
+            (safe_member_expression
+              (invocation_expression
+                (identifier))
+              (identifier))))))))

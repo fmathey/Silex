@@ -19,7 +19,7 @@ module.exports = grammar({
   extras: ($) => [/\s/, $.comment],
   word: ($) => $.identifier,
   externals: ($) => [$._automatic_semicolon],
-  conflicts: ($) => [[$.array_type, $.type]],
+  conflicts: ($) => [[$.array_type, $.type], [$.optional_type, $.type]],
 
   rules: {
     source_file: ($) =>
@@ -127,14 +127,25 @@ module.exports = grammar({
       ),
     function_type_parameter: ($) =>
       seq(optional(field("mutable_reference", "&")), field("type", $.type)),
+    grouped_type: ($) => seq("(", field("type", $.type), ")"),
+    optional_type: ($) =>
+      prec.left(
+        seq(
+          field(
+            "contained",
+            choice($.builtin_type, $.named_type, $.function_type, $.grouped_type, $.array_type),
+          ),
+          "?",
+        ),
+      ),
     array_type: ($) =>
       prec.left(
         seq(
-          field("element", choice($.builtin_type, $.named_type, $.function_type)),
+          field("element", choice($.builtin_type, $.named_type, $.function_type, $.grouped_type, $.optional_type)),
           repeat1(choice(seq("[", "]"), seq("[", field("length", $.integer_literal), "]"))),
         ),
       ),
-    type: ($) => choice($.array_type, $.function_type, $.builtin_type, $.named_type),
+    type: ($) => choice($.optional_type, $.array_type, $.grouped_type, $.function_type, $.builtin_type, $.named_type),
     parameter_list: ($) =>
       seq("(", optional(seq($.parameter, repeat(seq(",", $.parameter)))), ")"),
 
@@ -224,21 +235,48 @@ module.exports = grammar({
     return_statement: ($) => seq("return", optional(field("value", $.expression))),
 
     expression_statement: ($) =>
-      choice($.invocation_expression, $.cascade_expression),
+      choice($.invocation_expression, $.safe_member_expression, $.cascade_expression),
 
     if_statement: ($) =>
       seq(
         "if",
-        field("condition", $.expression),
+        field("condition", $._condition_header),
         field("body", $.block),
+        repeat(field("branch", $.alternative_branch)),
         optional(seq("else", field("alternative", $.block))),
+      ),
+
+    alternative_branch: ($) =>
+      choice(
+        seq(
+          "elif",
+          field("condition", $._condition_header),
+          field("body", $.block),
+        ),
+        seq(
+          "else",
+          "if",
+          field("condition", $._condition_header),
+          field("body", $.block),
+        ),
       ),
 
     while_statement: ($) =>
       seq(
         "while",
-        field("condition", $.expression),
+        field("condition", $._condition_header),
         field("body", $.block),
+      ),
+
+    _condition_header: ($) =>
+      choice($.expression, $.conditional_binding, seq("(", $.conditional_binding, ")")),
+
+    conditional_binding: ($) =>
+      seq(
+        field("mutability", choice("let", "var")),
+        field("name", $.identifier),
+        "=",
+        field("source", $.expression),
       ),
 
     for_statement: ($) =>
@@ -288,6 +326,7 @@ module.exports = grammar({
         $.cascade_expression,
         $.sequence_literal,
         $.member_expression,
+        $.safe_member_expression,
         $.index_expression,
         $.slice_expression,
         $.parenthesized_expression,
@@ -295,6 +334,7 @@ module.exports = grammar({
         $.float_literal,
         $.integer_literal,
         $.boolean_literal,
+        $.null_literal,
         $.self_expression,
         $.identifier,
       ),
@@ -329,6 +369,7 @@ module.exports = grammar({
         $.self_expression,
         $.invocation_expression,
         $.member_expression,
+        $.safe_member_expression,
         $.index_expression,
         $.slice_expression,
         $.sequence_literal,
@@ -510,6 +551,7 @@ module.exports = grammar({
               $.self_expression,
               $.invocation_expression,
               $.member_expression,
+              $.safe_member_expression,
               $.index_expression,
               $.slice_expression,
               $.sequence_literal,
@@ -525,6 +567,34 @@ module.exports = grammar({
         ),
       ),
 
+    safe_member_expression: ($) =>
+      prec.left(
+        PREC.member,
+        seq(
+          field(
+            "object",
+            choice(
+              $.identifier,
+              $.self_expression,
+              $.invocation_expression,
+              $.member_expression,
+              $.safe_member_expression,
+              $.index_expression,
+              $.slice_expression,
+              $.sequence_literal,
+              $.string_literal,
+              $.float_literal,
+              $.integer_literal,
+              $.boolean_literal,
+              $.null_literal,
+              $.parenthesized_expression,
+            ),
+          ),
+          "?.",
+          field("field", $.identifier),
+        ),
+      ),
+
     invocation_expression: ($) =>
       seq(
         field(
@@ -535,6 +605,7 @@ module.exports = grammar({
             $.parenthesized_expression,
             $.lambda_expression,
             $.member_expression,
+            $.safe_member_expression,
             $.index_expression,
           ),
         ),
@@ -711,6 +782,7 @@ module.exports = grammar({
         /\d(?:_?\d)*[eE][+-]?\d(?:_?\d)*/,
       ),
     boolean_literal: (_) => choice("true", "false"),
+    null_literal: (_) => "null",
     self_expression: (_) => "self",
     identifier: (_) => /[A-Za-z_][A-Za-z0-9_]*/,
     comment: (_) => token(seq("//", /[^\n]*/)),
