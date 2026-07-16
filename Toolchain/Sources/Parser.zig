@@ -118,8 +118,16 @@ pub const Parser = struct {
         var fields: std.ArrayList(Ast.StructureField) = .empty;
         var methods: std.ArrayList(Ast.Function) = .empty;
         while (self.current.tag != .right_brace and self.current.tag != .end) {
+            var visibility: Ast.MemberVisibility = if (is_class) .private_access else .public_access;
+            if (self.current.tag == .keyword_pub or self.current.tag == .keyword_sub) {
+                if (!is_class) return self.fail("struct members are already public and do not accept visibility modifiers");
+                visibility = if (self.current.tag == .keyword_pub) .public_access else .subclass;
+                try self.advance();
+            }
             if (self.current.tag == .keyword_func) {
-                try methods.append(self.allocator, try self.parseFunction(false));
+                var method = try self.parseFunction(false);
+                method.member_visibility = visibility;
+                try methods.append(self.allocator, method);
                 continue;
             }
             if (self.current.tag == .identifier and std.mem.eql(u8, self.current.lexeme, "native")) {
@@ -141,6 +149,7 @@ pub const Parser = struct {
                 .position = field_position,
                 .type = field_type,
                 .initializer = initializer,
+                .visibility = visibility,
             });
             try self.expectStatementTerminator();
         }
@@ -1628,8 +1637,9 @@ test "parse class declarations with the structure member grammar" {
     defer arena.deinit();
     var parser = Parser.init(arena.allocator(),
         \\pub class Player {
-        \\    health:int = 100
-        \\    func damage(amount:int) { self.health -= amount }
+        \\    pub health:int = 100
+        \\    sub velocity:int = 0
+        \\    pub func damage(amount:int) { self.health -= amount }
         \\}
         \\func main() {}
     );
@@ -1637,9 +1647,23 @@ test "parse class declarations with the structure member grammar" {
     try std.testing.expectEqual(@as(usize, 1), program.structures.len);
     try std.testing.expect(program.structures[0].is_public);
     try std.testing.expect(program.structures[0].is_class);
+    try std.testing.expectEqual(Ast.MemberVisibility.public_access, program.structures[0].fields[0].visibility);
+    try std.testing.expectEqual(Ast.MemberVisibility.subclass, program.structures[0].fields[1].visibility);
+    try std.testing.expectEqual(Ast.MemberVisibility.public_access, program.structures[0].methods[0].member_visibility.?);
     try std.testing.expectEqualStrings("Player", program.structures[0].name);
-    try std.testing.expectEqual(@as(usize, 1), program.structures[0].fields.len);
+    try std.testing.expectEqual(@as(usize, 2), program.structures[0].fields.len);
     try std.testing.expectEqual(@as(usize, 1), program.structures[0].methods.len);
+}
+
+test "reject class visibility modifiers on struct members" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var parser = Parser.init(arena.allocator(), "struct Position { pub x:int } func main() {}");
+    try std.testing.expectError(error.InvalidSource, parser.parse());
+    try std.testing.expectEqualStrings(
+        "struct members are already public and do not accept visibility modifiers",
+        parser.diagnostic.?.message,
+    );
 }
 
 test "logical operators follow comparison precedence" {

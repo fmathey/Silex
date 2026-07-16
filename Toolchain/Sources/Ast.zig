@@ -97,6 +97,12 @@ pub const Mutability = enum {
     mutable,
 };
 
+pub const MemberVisibility = enum {
+    private_access,
+    subclass,
+    public_access,
+};
+
 pub const AssignmentOperator = enum {
     assign,
     add,
@@ -381,6 +387,7 @@ pub const StructureField = struct {
     position: Source.Position,
     type: TypeName,
     initializer: ?*Expression,
+    visibility: MemberVisibility,
 };
 
 pub const Parameter = struct {
@@ -393,6 +400,7 @@ pub const Parameter = struct {
 pub const Function = struct {
     is_public: bool = false,
     is_native: bool = false,
+    member_visibility: ?MemberVisibility = null,
     position: Source.Position,
     name: []const u8,
     name_position: Source.Position,

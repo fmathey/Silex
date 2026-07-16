@@ -8,15 +8,19 @@ collection keeps the same instance instead of copying its fields.
 class Player {
     health:int = 100
 
-    func take_damage(amount:int) {
+    pub func take_damage(amount:int) {
         self.health -= amount
+    }
+
+    pub func get_health() int {
+        return self.health
     }
 }
 
 var first = Player()
 var second = first
 second.take_damage(10)
-print(first.health) // 90
+print(first.get_health()) // 90
 ```
 
 Classes use the same named initializer and member syntax as structures. Every
@@ -24,6 +28,45 @@ field without a declared default must be supplied. Construction is explicit:
 a non-optional declaration such as `var player:Player` is invalid, because a
 class has no intrinsic instance. `var player:Player?` is valid and starts as
 `null` under the ordinary optional-value rules. A class may be declared `pub`.
+
+## Member visibility
+
+Every class field and method is private by default. A private member is
+accessible from methods of its declaring class, including through another
+instance of that same class, but not from other code in the module.
+
+`pub` exposes a member everywhere the class is visible. `sub` reserves a member
+for its declaring class and its future descendants:
+
+```sx
+pub class Session {
+    secret:str = ""
+    sub generation:int = 0
+    pub token:str
+
+    pub func reset_from(other:Session) {
+        self.secret = other.secret
+        self.generation = other.generation
+    }
+}
+```
+
+Inheritance is not currently part of Silex, so a `sub` member can presently be
+used only by its declaring class. There is no explicit `private` keyword: the
+absence of a marker is the canonical private form.
+
+A named initializer is also an external member access. It can name only `pub`
+fields, while private and `sub` fields must obtain their declared defaults:
+
+```sx
+var session = Session(token:"abc") // accepted
+Session(secret:"abc", token:"def") // rejected: secret is private
+```
+
+A private required field without a default cannot be initialized from outside
+the class. It will become constructible through a public custom constructor
+when constructors are introduced. Structure members remain public by default;
+`pub` and `sub` member markers are specific to classes.
 
 ## Bindings and shared mutation
 

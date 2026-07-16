@@ -96,6 +96,7 @@
   "import"
   "use"
   "pub"
+  "sub"
   "as"
   "let"
   "var"

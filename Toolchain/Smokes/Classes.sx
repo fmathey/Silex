@@ -1,19 +1,19 @@
 class Player {
-    health:int = 100
+    pub health:int = 100
 
-    func take_damage(amount:int) {
+    pub func take_damage(amount:int) {
         self.health -= amount
     }
 }
 
 class Node {
-    next:Node? = null
-    links:Node[] = []
+    pub next:Node? = null
+    pub links:Node[] = []
 }
 
 class CallbackNode {
-    value:int
-    callback:func()
+    pub value:int
+    pub callback:func()
 }
 
 struct NodeSlot {
@@ -21,7 +21,28 @@ struct NodeSlot {
 }
 
 class WrappedNode {
-    slot:NodeSlot = NodeSlot(node:null)
+    pub slot:NodeSlot = NodeSlot(node:null)
+}
+
+class Vault {
+    value:int = 40
+    sub offset:int = 2
+
+    sub func subtotal() int {
+        return self.value + self.offset
+    }
+
+    func total() int {
+        return self.subtotal()
+    }
+
+    pub func read() int {
+        return self.total()
+    }
+
+    pub func copy_from(other:Vault) {
+        self.value = other.value
+    }
 }
 
 struct Holder {
@@ -81,6 +102,12 @@ func verify_parameter_capture(player:Player) {
 }
 
 func main() {
+    var vault = Vault()
+    assert(vault.read() == 42, "public methods can use private and sub members")
+    var copied_vault = Vault()
+    copied_vault.copy_from(vault)
+    assert(copied_vault.read() == 42, "private fields are visible across instances of the declaring class")
+
     var first = Player()
     var alias = first
     alias.take_damage(10)

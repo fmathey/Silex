@@ -252,6 +252,38 @@
     ],
     "description": "Declare a shared-identity type"
   },
+  "Public class member": {
+    "prefix": "pub",
+    "body": [
+      "pub ${1:name}:${2:type}"
+    ],
+    "description": "Expose a class member"
+  },
+  "Public class method": {
+    "prefix": "pubmethod",
+    "body": [
+      "pub func ${1:name}(${2}) {",
+      "    $0",
+      "}"
+    ],
+    "description": "Expose a class method"
+  },
+  "Subclass class member": {
+    "prefix": "sub",
+    "body": [
+      "sub ${1:name}:${2:type}"
+    ],
+    "description": "Expose a class member to future descendants"
+  },
+  "Subclass class method": {
+    "prefix": "submethod",
+    "body": [
+      "sub func ${1:name}(${2}) {",
+      "    $0",
+      "}"
+    ],
+    "description": "Expose a class method to future descendants"
+  },
   "Default struct field": {
     "prefix": "field",
     "body": [

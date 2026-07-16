@@ -1,0 +1,7 @@
+class Vault {
+    value:int
+}
+
+func main() {
+    var vault = Vault(value:1)
+}

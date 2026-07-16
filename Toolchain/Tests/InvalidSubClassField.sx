@@ -1,0 +1,8 @@
+class Vault {
+    sub value:int = 1
+}
+
+func main() {
+    var vault = Vault()
+    print(vault.value)
+}

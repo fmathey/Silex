@@ -43,6 +43,7 @@ const DeclaredMember = struct {
     collection: ?CollectionKind = null,
     kind: u8,
     detail: []const u8,
+    visibility: Ast.MemberVisibility = .public_access,
 };
 
 const DeclaredVariable = struct {
@@ -934,12 +935,13 @@ fn memberCompletionItems(
 
     var receiver_type = receiverType(info, receiver_path[0], cursor_offset) orelse
         return try allocator.alloc(CompletionItem, 0);
+    const enclosing_structure = enclosingStructureName(info, cursor_offset);
     for (receiver_path[1..]) |field_name| {
         const structure_name = switch (receiver_type) {
             .structure => |name| name,
             .list, .fixed_array => return try allocator.alloc(CompletionItem, 0),
         };
-        receiver_type = fieldType(info.members.items, structure_name, field_name) orelse
+        receiver_type = fieldType(info.members.items, structure_name, field_name, enclosing_structure) orelse
             return try allocator.alloc(CompletionItem, 0);
     }
 
@@ -953,6 +955,8 @@ fn memberCompletionItems(
     const structure_name = receiver_type.structure;
     for (info.members.items) |member| {
         if (!std.mem.eql(u8, member.structure, structure_name)) continue;
+        if (member.visibility != .public_access and
+            (enclosing_structure == null or !std.mem.eql(u8, enclosing_structure.?, structure_name))) continue;
         if (containsCompletion(items.items, member.name)) continue;
         try items.append(allocator, .{
             .label = member.name,
@@ -995,6 +999,7 @@ fn collectSemanticInfo(
             tokens[index + 1].tag == .identifier and tokens[index + 2].tag == .left_brace)
         {
             const structure_name = tokens[index + 1].lexeme;
+            const is_class = tokens[index].tag == .keyword_class;
             var depth: usize = 0;
             var parentheses: usize = 0;
             var member_index = index + 2;
@@ -1024,26 +1029,37 @@ fn collectSemanticInfo(
                 }
 
                 if (depth != 1 or parentheses != 0) continue;
-                if (token.tag == .keyword_func and member_index + 1 < tokens.len and
-                    tokens[member_index + 1].tag == .identifier)
+                var declaration_index = member_index;
+                var visibility: Ast.MemberVisibility = if (is_class) .private_access else .public_access;
+                if (token.tag == .keyword_pub or token.tag == .keyword_sub) {
+                    visibility = if (token.tag == .keyword_pub) .public_access else .subclass;
+                    declaration_index += 1;
+                    member_index += 1;
+                }
+                if (declaration_index >= tokens.len) continue;
+                const declaration = tokens[declaration_index];
+                if (declaration.tag == .keyword_func and declaration_index + 1 < tokens.len and
+                    tokens[declaration_index + 1].tag == .identifier)
                 {
                     try info.members.append(allocator, .{
                         .structure = structure_name,
-                        .name = tokens[member_index + 1].lexeme,
+                        .name = tokens[declaration_index + 1].lexeme,
                         .type_name = null,
                         .kind = 2,
                         .detail = "Silex method",
+                        .visibility = visibility,
                     });
-                } else if (token.tag == .identifier and member_index + 2 < tokens.len and
-                    tokens[member_index + 1].tag == .colon and isTypeToken(tokens[member_index + 2].tag))
+                } else if (declaration.tag == .identifier and declaration_index + 2 < tokens.len and
+                    tokens[declaration_index + 1].tag == .colon and isTypeToken(tokens[declaration_index + 2].tag))
                 {
                     try info.members.append(allocator, .{
                         .structure = structure_name,
-                        .name = token.lexeme,
-                        .type_name = tokens[member_index + 2].lexeme,
-                        .collection = collectionKind(tokens, member_index + 2),
+                        .name = declaration.lexeme,
+                        .type_name = tokens[declaration_index + 2].lexeme,
+                        .collection = collectionKind(tokens, declaration_index + 2),
                         .kind = 5,
                         .detail = "Silex field",
+                        .visibility = visibility,
                     });
                 }
             }
@@ -1256,21 +1272,30 @@ fn collectPublicStructureMembers(
 ) !void {
     for (program.structures) |structure| {
         if (!structure.is_public) continue;
-        for (structure.fields) |field| try info.members.append(allocator, .{
-            .structure = structure.name,
-            .name = field.name,
-            .type_name = astTypeName(field.type),
-            .collection = astCollectionKind(field.type),
-            .kind = 5,
-            .detail = "Silex module field",
-        });
-        for (structure.methods) |method| try info.members.append(allocator, .{
-            .structure = structure.name,
-            .name = method.name,
-            .type_name = null,
-            .kind = 2,
-            .detail = "Silex module method",
-        });
+        for (structure.fields) |field| {
+            if (structure.is_class and field.visibility != .public_access) continue;
+            try info.members.append(allocator, .{
+                .structure = structure.name,
+                .name = field.name,
+                .type_name = astTypeName(field.type),
+                .collection = astCollectionKind(field.type),
+                .kind = 5,
+                .detail = "Silex module field",
+                .visibility = field.visibility,
+            });
+        }
+        for (structure.methods) |method| {
+            const visibility = method.member_visibility orelse .public_access;
+            if (structure.is_class and visibility != .public_access) continue;
+            try info.members.append(allocator, .{
+                .structure = structure.name,
+                .name = method.name,
+                .type_name = null,
+                .kind = 2,
+                .detail = "Silex module method",
+                .visibility = visibility,
+            });
+        }
     }
 }
 
@@ -1551,9 +1576,23 @@ fn receiverType(info: SemanticInfo, receiver: []const u8, cursor_offset: usize) 
     return result;
 }
 
-fn fieldType(members: []const DeclaredMember, structure: []const u8, field: []const u8) ?ReceiverType {
+fn enclosingStructureName(info: SemanticInfo, cursor_offset: usize) ?[]const u8 {
+    for (info.structures.items) |structure| {
+        if (structure.start <= cursor_offset and cursor_offset <= structure.end) return structure.name;
+    }
+    return null;
+}
+
+fn fieldType(
+    members: []const DeclaredMember,
+    structure: []const u8,
+    field: []const u8,
+    enclosing_structure: ?[]const u8,
+) ?ReceiverType {
     for (members) |member| {
         if (std.mem.eql(u8, member.structure, structure) and std.mem.eql(u8, member.name, field)) {
+            if (member.visibility != .public_access and
+                (enclosing_structure == null or !std.mem.eql(u8, enclosing_structure.?, structure))) return null;
             if (member.collection) |collection| return switch (collection) {
                 .list => .list,
                 .fixed_array => .fixed_array,
@@ -1662,6 +1701,7 @@ const language_completions = [_]CompletionItem{
     .{ .label = "import", .kind = 14, .detail = "Silex keyword" },
     .{ .label = "use", .kind = 14, .detail = "Silex keyword" },
     .{ .label = "pub", .kind = 14, .detail = "Silex keyword" },
+    .{ .label = "sub", .kind = 14, .detail = "Silex keyword" },
     .{ .label = "as", .kind = 14, .detail = "Silex keyword" },
     .{ .label = "self", .kind = 14, .detail = "Silex keyword" },
     .{ .label = "true", .kind = 14, .detail = "Silex keyword" },
@@ -1690,6 +1730,7 @@ test "completion items include language terms and document identifiers" {
     defer std.testing.allocator.free(items);
     try std.testing.expect(containsCompletion(items, "func"));
     try std.testing.expect(containsCompletion(items, "class"));
+    try std.testing.expect(containsCompletion(items, "sub"));
     try std.testing.expect(containsCompletion(items, "elif"));
     try std.testing.expect(containsCompletion(items, "total"));
 }
@@ -1940,17 +1981,40 @@ test "member completion only includes members of the receiver structure" {
 test "member completion recognizes class declarations" {
     const source =
         \\class Player {
-        \\    health:int = 100
+        \\    secret:int = 1
+        \\    sub energy:int = 50
+        \\    pub health:int = 100
+        \\    func reset() {}
         \\}
         \\func main() {
         \\    var player = Player()
         \\    print(player.)
         \\}
     ;
-    const items = try completionItems(std.testing.allocator, std.testing.io, source, .{ .line = 5, .character = 17 });
+    const items = try completionItems(std.testing.allocator, std.testing.io, source, .{ .line = 8, .character = 17 });
     defer std.testing.allocator.free(items);
     try std.testing.expectEqual(@as(usize, 1), items.len);
     try std.testing.expectEqualStrings("health", items[0].label);
+}
+
+test "self completion includes private sub and public class members" {
+    const source =
+        \\class Player {
+        \\    secret:int = 1
+        \\    sub energy:int = 50
+        \\    pub health:int = 100
+        \\    func reset() {
+        \\        print(self.)
+        \\    }
+        \\}
+        \\func main() {}
+    ;
+    const items = try completionItems(std.testing.allocator, std.testing.io, source, .{ .line = 5, .character = 19 });
+    defer std.testing.allocator.free(items);
+    try std.testing.expect(containsCompletion(items, "secret"));
+    try std.testing.expect(containsCompletion(items, "energy"));
+    try std.testing.expect(containsCompletion(items, "health"));
+    try std.testing.expect(containsCompletion(items, "reset"));
 }
 
 test "self completion resolves fields and methods of the enclosing structure" {

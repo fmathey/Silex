@@ -1,7 +1,8 @@
 # Structures
 
 A `struct` is a nominal value type with typed fields and optional field
-defaults.
+defaults. Its fields and methods are public by default; class-only member
+markers `pub` and `sub` are not written in a structure.
 
 ```sx
 struct Position {

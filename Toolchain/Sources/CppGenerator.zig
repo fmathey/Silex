@@ -2473,7 +2473,7 @@ test "generate class references identity access and cycle tracing" {
     const allocator = arena.allocator();
 
     var parser = Parser.init(allocator,
-        \\class Node { next:Node? = null; func clear() { self.next = null } }
+        \\class Node { next:Node? = null; pub func clear() { self.next = null } }
         \\func main() { var first = Node(); var alias = first; alias.clear(); assert(first == alias) }
     );
     var analyzer = Semantic.Analyzer.init(allocator);

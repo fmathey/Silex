@@ -337,6 +337,7 @@ pub const Structure = struct {
 pub const StructureField = struct {
     generated_name: []const u8,
     type: Type,
+    visibility: Ast.MemberVisibility,
 };
 
 pub const Parameter = struct {
@@ -363,6 +364,7 @@ pub const Method = struct {
     parameters: []const Parameter,
     statements: []const Statement,
     is_mutating: bool,
+    visibility: Ast.MemberVisibility,
 };
 
 pub const MethodId = struct {
@@ -451,6 +453,7 @@ const MethodSymbol = struct {
     parameter_is_mutable_references: []const bool,
     parameter_stored: []const bool,
     position: Source.Position,
+    visibility: Ast.MemberVisibility,
     direct_mutation: bool = false,
     dependencies: []const MethodId = &.{},
     is_mutating: bool = false,
@@ -467,6 +470,7 @@ const StructureFieldSymbol = struct {
     type: Type,
     position: Source.Position,
     ast_initializer: ?*Ast.Expression,
+    visibility: Ast.MemberVisibility,
     default_value: ?*Expression = null,
 };
 
@@ -501,6 +505,7 @@ pub const Analyzer = struct {
             for (symbol.fields) |field| try fields.append(self.allocator, .{
                 .generated_name = field.generated_name,
                 .type = field.type,
+                .visibility = field.visibility,
             });
             var methods: std.ArrayList(Method) = .empty;
             for (ast_structure.methods, symbol.methods, 0..) |ast_method, method_symbol, method_index| {
@@ -588,6 +593,7 @@ pub const Analyzer = struct {
                     .type = field_type,
                     .position = field.position,
                     .ast_initializer = field.initializer,
+                    .visibility = field.visibility,
                 });
             }
             self.structures.items[structure_index].fields = try fields.toOwnedSlice(self.allocator);
@@ -625,6 +631,7 @@ pub const Analyzer = struct {
                     .parameter_is_mutable_references = try parameter_is_mutable_references.toOwnedSlice(self.allocator),
                     .parameter_stored = try parameter_stored_values.toOwnedSlice(self.allocator),
                     .position = ast_method.name_position,
+                    .visibility = ast_method.member_visibility.?,
                 });
             }
             self.structures.items[structure_index].methods = try methods.toOwnedSlice(self.allocator);
@@ -892,6 +899,7 @@ pub const Analyzer = struct {
             .parameters = try parameters.toOwnedSlice(self.allocator),
             .statements = method_statements,
             .is_mutating = false,
+            .visibility = symbol.visibility,
         };
     }
 
@@ -2147,8 +2155,10 @@ pub const Analyzer = struct {
         const object = try self.expression(call.object, scope);
         if (object.type == .structure) {
             const structure = self.findStructureByGeneratedName(object.type.structure.generated_name).?;
+            const structure_index = self.findStructureIndexByGeneratedName(object.type.structure.generated_name).?;
             for (structure.fields) |field| {
                 if (std.mem.eql(u8, field.source_name, call.name) and field.type == .function) {
+                    try self.requireFieldAccess(structure_index, structure, field, call.name_position);
                     const callee = try self.newExpression(.{
                         .type = field.type,
                         .position = call.name_position,
@@ -2189,14 +2199,22 @@ pub const Analyzer = struct {
         }
         const generated_structure_name = object.type.structure.generated_name;
         const structure_index = self.findStructureIndexByGeneratedName(generated_structure_name).?;
-        const structure = self.structures.items[structure_index];
+        const structure = &self.structures.items[structure_index];
         var candidates: std.ArrayList(MethodCandidate) = .empty;
+        var inaccessible: ?MethodSymbol = null;
         for (structure.methods, 0..) |method_symbol, index| {
             if (std.mem.eql(u8, method_symbol.source_name, call.name)) {
-                try candidates.append(self.allocator, .{ .symbol = method_symbol, .index = index });
+                if (self.memberVisibleFromCurrentContext(structure_index, method_symbol.visibility)) {
+                    try candidates.append(self.allocator, .{ .symbol = method_symbol, .index = index });
+                } else {
+                    inaccessible = method_symbol;
+                }
             }
         }
         if (candidates.items.len == 0) {
+            if (inaccessible) |method_symbol| {
+                return self.failMemberAccess("method", structure, method_symbol.source_name, method_symbol.visibility, call.name_position);
+            }
             const message = try std.fmt.allocPrint(self.allocator, "{s} '{s}' has no method '{s}'", .{ if (structure.is_class) "class" else "struct", structure.source_name, call.name });
             return self.fail(call.name_position, message);
         }
@@ -2301,6 +2319,8 @@ pub const Analyzer = struct {
                     );
                     return self.fail(field_assignment.name_position, message);
                 };
+                const structure_index = self.findStructureIndexByGeneratedName(structure_type.generated_name).?;
+                try self.requireFieldAccess(structure_index, structure, field, field_assignment.name_position);
                 var value = try self.expressionForExpected(field_assignment.value, scope, field.type);
                 value = try self.coerce(value, field.type);
                 if (!typeEqual(value.type, field.type)) {
@@ -2729,6 +2749,49 @@ pub const Analyzer = struct {
         return null;
     }
 
+    fn memberVisibleFromCurrentContext(
+        self: *const Analyzer,
+        structure_index: usize,
+        visibility: Ast.MemberVisibility,
+    ) bool {
+        return visibility == .public_access or self.current_structure_index == structure_index;
+    }
+
+    fn requireFieldAccess(
+        self: *Analyzer,
+        structure_index: usize,
+        structure: *const StructureSymbol,
+        field: StructureFieldSymbol,
+        position: Source.Position,
+    ) AnalyzeError!void {
+        if (self.memberVisibleFromCurrentContext(structure_index, field.visibility)) return;
+        return self.failMemberAccess("field", structure, field.source_name, field.visibility, position);
+    }
+
+    fn failMemberAccess(
+        self: *Analyzer,
+        member_kind: []const u8,
+        structure: *const StructureSymbol,
+        member_name: []const u8,
+        visibility: Ast.MemberVisibility,
+        position: Source.Position,
+    ) AnalyzeError {
+        const message = switch (visibility) {
+            .private_access => try std.fmt.allocPrint(
+                self.allocator,
+                "{s} '{s}' is private in class '{s}'",
+                .{ member_kind, member_name, structure.source_name },
+            ),
+            .subclass => try std.fmt.allocPrint(
+                self.allocator,
+                "{s} '{s}' is accessible only from class '{s}' and its descendants",
+                .{ member_kind, member_name, structure.source_name },
+            ),
+            .public_access => unreachable,
+        };
+        return self.fail(position, message);
+    }
+
     fn structureInitializerExpression(
         self: *Analyzer,
         initializer: Ast.Expression.StructureInitializer,
@@ -2738,15 +2801,17 @@ pub const Analyzer = struct {
             const message = try std.fmt.allocPrint(self.allocator, "unknown struct '{s}'", .{initializer.name});
             return self.fail(initializer.name_position, message);
         };
+        const structure_index = self.findStructureIndexByGeneratedName(structure.generated_name).?;
         for (initializer.fields, 0..) |field, field_index| {
-            var known = false;
+            var known: ?StructureFieldSymbol = null;
             for (structure.fields) |expected_field| {
-                if (std.mem.eql(u8, field.name, expected_field.source_name)) known = true;
+                if (std.mem.eql(u8, field.name, expected_field.source_name)) known = expected_field;
             }
-            if (!known) {
+            if (known == null) {
                 const message = try std.fmt.allocPrint(self.allocator, "unknown field '{s}' in {s} '{s}'", .{ field.name, if (structure.is_class) "class" else "struct", initializer.name });
                 return self.fail(field.position, message);
             }
+            try self.requireFieldAccess(structure_index, structure, known.?, field.position);
             for (initializer.fields[0..field_index]) |previous| {
                 if (std.mem.eql(u8, previous.name, field.name)) {
                     const message = try std.fmt.allocPrint(self.allocator, "field '{s}' is initialized more than once", .{field.name});
@@ -2830,8 +2895,10 @@ pub const Analyzer = struct {
             else => return self.fail(member.name_position, "member access requires a struct or class value"),
         };
         const structure = self.findStructureByGeneratedName(generated_structure_name).?;
+        const structure_index = self.findStructureIndexByGeneratedName(generated_structure_name).?;
         for (structure.fields) |field| {
             if (std.mem.eql(u8, field.source_name, member.name)) {
+                try self.requireFieldAccess(structure_index, structure, field, member.name_position);
                 if (bind_function and field.type == .function and field.type.function.owner != null) {
                     var bound_type = field.type;
                     bound_type.function.owner = null;
@@ -4441,7 +4508,7 @@ test "classes have shared-reference types and are never independent let values" 
     const allocator = arena.allocator();
 
     var parser = Parser.init(allocator,
-        \\class Player { health:int = 100 }
+        \\class Player { pub health:int = 100 }
         \\func main() { var player = Player(); var alias = player; alias.health -= 1 }
     );
     var analyzer = Analyzer.init(allocator);
@@ -4468,6 +4535,58 @@ test "classes have shared-reference types and are never independent let values" 
     try expectResolvedSemanticError(
         "class Player {} func invalid() func() { var player = Player(); return func() { print(player == player) } } func main() {}",
         "capturing function value cannot be returned from its lexical scope",
+    );
+}
+
+test "class members are private by default and pub exposes them" {
+    const Parser = @import("Parser.zig").Parser;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var parser = Parser.init(allocator,
+        \\class Vault {
+        \\    value:int = 40
+        \\    sub offset:int = 2
+        \\    func total() int { return self.value + self.offset }
+        \\    pub func read() int { return self.total() }
+        \\    pub func copy_from(other:Vault) { self.value = other.value }
+        \\}
+        \\func main() { var first = Vault(); var second = Vault(); second.copy_from(first); print(second.read()) }
+    );
+    var analyzer = Analyzer.init(allocator);
+    const program = try analyzer.analyze(try resolveSingleTestProgram(allocator, try parser.parse()));
+    try std.testing.expectEqual(Ast.MemberVisibility.private_access, program.structures[0].fields[0].visibility);
+    try std.testing.expectEqual(Ast.MemberVisibility.subclass, program.structures[0].fields[1].visibility);
+    try std.testing.expectEqual(Ast.MemberVisibility.public_access, program.structures[0].methods[1].visibility);
+
+    try expectResolvedSemanticError(
+        "class Vault { value:int = 1 } func main() { var vault = Vault(); print(vault.value) }",
+        "field 'value' is private in class 'Vault'",
+    );
+    try expectResolvedSemanticError(
+        "class Vault { func reset() {} } func main() { var vault = Vault(); vault.reset() }",
+        "method 'reset' is private in class 'Vault'",
+    );
+    try expectResolvedSemanticError(
+        "class Vault { sub value:int = 1 } func main() { var vault = Vault(); print(vault.value) }",
+        "field 'value' is accessible only from class 'Vault' and its descendants",
+    );
+    try expectResolvedSemanticError(
+        "class Vault { value:int } func main() { var vault = Vault(value:1) }",
+        "field 'value' is private in class 'Vault'",
+    );
+    try expectResolvedSemanticError(
+        "class Vault { callback:(func())? = null } func main() { var vault = Vault(); print(vault.callback == null) }",
+        "field 'callback' is private in class 'Vault'",
+    );
+    try expectResolvedSemanticError(
+        "class Vault { func reset() {} } func main() { var vault:Vault? = Vault(); vault?.reset() }",
+        "method 'reset' is private in class 'Vault'",
+    );
+    try expectResolvedSemanticError(
+        "class Vault { value:int = 1 } func main() { var vault = Vault()..value = 2 }",
+        "field 'value' is private in class 'Vault'",
     );
 }
 

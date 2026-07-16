@@ -43,6 +43,7 @@ pub const TokenTag = enum {
     keyword_import,
     keyword_use,
     keyword_pub,
+    keyword_sub,
     keyword_as,
     identifier,
     integer,
@@ -485,6 +486,7 @@ fn keywordTag(lexeme: []const u8) ?TokenTag {
         .{ "import", TokenTag.keyword_import },
         .{ "use", TokenTag.keyword_use },
         .{ "pub", TokenTag.keyword_pub },
+        .{ "sub", TokenTag.keyword_sub },
         .{ "as", TokenTag.keyword_as },
     };
     inline for (keywords) |keyword| {
@@ -526,6 +528,11 @@ test "reserve class keyword" {
     var lexer = Lexer.init("class Player {}");
     try std.testing.expectEqual(TokenTag.keyword_class, (try lexer.next()).tag);
     try std.testing.expectEqual(TokenTag.identifier, (try lexer.next()).tag);
+}
+
+test "reserve sub keyword" {
+    var lexer = Lexer.init("sub");
+    try std.testing.expectEqual(TokenTag.keyword_sub, (try lexer.next()).tag);
 }
 
 test "recognize reserved range keyword" {

@@ -95,7 +95,9 @@ may use `return` without a value.
 
 Methods are functions declared inside a structure or class. Their receiver is
 the explicit `self` value; see [Structures](Structures.md) and
-[Classes](Classes.md).
+[Classes](Classes.md). Structure methods are public by default. Class methods
+are private by default and use `pub` for general access or `sub` for access by
+future descendants.
 
 ## Function values and lambdas
 

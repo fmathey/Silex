@@ -1,0 +1,8 @@
+class Vault {
+    func reset() {}
+}
+
+func main() {
+    var vault = Vault()
+    vault.reset()
+}

@@ -2,8 +2,24 @@ pub struct Session {
     active:bool = true
 }
 
+pub class Counter {
+    value:int = 0
+
+    pub func increment() {
+        self.value += 1
+    }
+
+    pub func current() int {
+        return self.value
+    }
+}
+
 pub func create_session() Session {
     return Session()
+}
+
+pub func create_counter() Counter {
+    return Counter()
 }
 
 func validate_session(session:Session) bool {

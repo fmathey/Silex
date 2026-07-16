@@ -54,6 +54,10 @@ Declarations are private by default. `pub` exposes a structure, class, or
 function, while `pub use` re-exports an existing declaration under the current
 module name. Modules cannot currently be re-exported with `pub use`.
 
+For a class, declaration and member visibility are independent: `pub class`
+exposes the type outside its module, while only its `pub` members are accessible
+outside the class. See [Classes](Classes.md).
+
 Duplicate providers, missing modules, dependency cycles, ambiguous aliases, and
 access to private declarations are compile-time errors. Dependencies are never
 implicitly transitive. A project manifest can define this module layout

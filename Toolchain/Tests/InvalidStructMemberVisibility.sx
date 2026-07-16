@@ -1,0 +1,5 @@
+struct Position {
+    pub x:int
+}
+
+func main() {}

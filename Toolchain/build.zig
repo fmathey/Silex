@@ -375,6 +375,31 @@ pub fn build(b: *std.Build) void {
     invalid_class_default_variable_command.expectExitCode(1);
     invalid_class_default_variable_command.expectStdErrEqual("Tests/InvalidClassDefaultVariable.sx:4:9: error: class 'Player' requires an initializer\n");
 
+    const invalid_private_class_field_command = b.addRunArtifact(executable);
+    invalid_private_class_field_command.addArgs(&.{ "compile", "Tests/InvalidPrivateClassField.sx" });
+    invalid_private_class_field_command.expectExitCode(1);
+    invalid_private_class_field_command.expectStdErrEqual("Tests/InvalidPrivateClassField.sx:7:17: error: field 'value' is private in class 'Vault'\n");
+
+    const invalid_private_class_method_command = b.addRunArtifact(executable);
+    invalid_private_class_method_command.addArgs(&.{ "compile", "Tests/InvalidPrivateClassMethod.sx" });
+    invalid_private_class_method_command.expectExitCode(1);
+    invalid_private_class_method_command.expectStdErrEqual("Tests/InvalidPrivateClassMethod.sx:7:11: error: method 'reset' is private in class 'Vault'\n");
+
+    const invalid_sub_class_field_command = b.addRunArtifact(executable);
+    invalid_sub_class_field_command.addArgs(&.{ "compile", "Tests/InvalidSubClassField.sx" });
+    invalid_sub_class_field_command.expectExitCode(1);
+    invalid_sub_class_field_command.expectStdErrEqual("Tests/InvalidSubClassField.sx:7:17: error: field 'value' is accessible only from class 'Vault' and its descendants\n");
+
+    const invalid_private_class_initializer_command = b.addRunArtifact(executable);
+    invalid_private_class_initializer_command.addArgs(&.{ "compile", "Tests/InvalidPrivateClassInitializer.sx" });
+    invalid_private_class_initializer_command.expectExitCode(1);
+    invalid_private_class_initializer_command.expectStdErrEqual("Tests/InvalidPrivateClassInitializer.sx:6:23: error: field 'value' is private in class 'Vault'\n");
+
+    const invalid_struct_member_visibility_command = b.addRunArtifact(executable);
+    invalid_struct_member_visibility_command.addArgs(&.{ "compile", "Tests/InvalidStructMemberVisibility.sx" });
+    invalid_struct_member_visibility_command.expectExitCode(1);
+    invalid_struct_member_visibility_command.expectStdErrEqual("Tests/InvalidStructMemberVisibility.sx:2:5: error: struct members are already public and do not accept visibility modifiers\n");
+
     const invalid_assertion_condition_command = b.addRunArtifact(executable);
     invalid_assertion_condition_command.addArgs(&.{ "compile", "Tests/InvalidAssertionCondition.sx" });
     invalid_assertion_condition_command.expectExitCode(1);
@@ -1099,6 +1124,11 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&invalid_implicit_class_iteration_command.step);
     test_step.dependOn(&invalid_class_missing_field_command.step);
     test_step.dependOn(&invalid_class_default_variable_command.step);
+    test_step.dependOn(&invalid_private_class_field_command.step);
+    test_step.dependOn(&invalid_private_class_method_command.step);
+    test_step.dependOn(&invalid_sub_class_field_command.step);
+    test_step.dependOn(&invalid_private_class_initializer_command.step);
+    test_step.dependOn(&invalid_struct_member_visibility_command.step);
     test_step.dependOn(&invalid_assertion_condition_command.step);
     test_step.dependOn(&invalid_assertion_message_command.step);
     test_step.dependOn(&assertion_failure_command.step);
@@ -1495,7 +1525,7 @@ pub fn build(b: *std.Build) void {
     const modules_command = b.addRunArtifact(executable);
     modules_command.step.dependOn(previous_integer_error_step);
     modules_command.addArgs(&.{ "run", "Smokes/Modules/silex.json" });
-    modules_command.expectStdOutEqual(hostText(b, "true\ntrue\ntrue\n1\n2\nmodules\n"));
+    modules_command.expectStdOutEqual(hostText(b, "true\ntrue\ntrue\n1\n1\n2\nmodules\n"));
 
     const local_imports_command = b.addRunArtifact(executable);
     local_imports_command.step.dependOn(&modules_command.step);
