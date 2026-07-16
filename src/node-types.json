@@ -38,6 +38,21 @@
     }
   },
   {
+    "type": "argument_list",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "expression",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "array_type",
     "named": true,
     "fields": {
@@ -822,6 +837,16 @@
     "type": "constructor_definition",
     "named": true,
     "fields": {
+      "arguments": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "argument_list",
+            "named": true
+          }
+        ]
+      },
       "body": {
         "multiple": false,
         "required": true,
@@ -829,6 +854,16 @@
           {
             "type": "block",
             "named": true
+          }
+        ]
+      },
+      "super": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "super",
+            "named": false
           }
         ]
       }
@@ -2193,6 +2228,16 @@
     "type": "structure_definition",
     "named": true,
     "fields": {
+      "base": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "named_type",
+            "named": true
+          }
+        ]
+      },
       "name": {
         "multiple": false,
         "required": true,
@@ -2878,6 +2923,10 @@
   },
   {
     "type": "sub",
+    "named": false
+  },
+  {
+    "type": "super",
     "named": false
   },
   {

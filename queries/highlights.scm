@@ -109,6 +109,7 @@
   "struct"
   "class"
   "init"
+  "super"
   "func"
 ] @keyword
 

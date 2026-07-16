@@ -64,6 +64,7 @@ module.exports = grammar({
       seq(
         choice("struct", "class"),
         field("name", $.identifier),
+        optional(seq(":", field("base", $.named_type))),
         "{",
         repeat(
           choice(
@@ -88,6 +89,7 @@ module.exports = grammar({
       seq(
         "init",
         $.parameter_list,
+        optional(seq(":", field("super", "super"), field("arguments", $.argument_list))),
         field("body", $.block),
       ),
 
@@ -161,6 +163,9 @@ module.exports = grammar({
     type: ($) => choice($.optional_type, $.array_type, $.grouped_type, $.function_type, $.builtin_type, $.named_type),
     parameter_list: ($) =>
       seq("(", optional(seq($.parameter, repeat(seq(",", $.parameter)))), ")"),
+
+    argument_list: ($) =>
+      seq("(", optional(seq($.expression, repeat(seq(",", $.expression)))), ")"),
 
     parameter: ($) =>
       seq(
