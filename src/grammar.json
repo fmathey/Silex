@@ -364,6 +364,10 @@
                 ]
               },
               {
+                "type": "SYMBOL",
+                "name": "drop_definition"
+              },
+              {
                 "type": "SEQ",
                 "members": [
                   {
@@ -528,6 +532,23 @@
               "type": "BLANK"
             }
           ]
+        },
+        {
+          "type": "FIELD",
+          "name": "body",
+          "content": {
+            "type": "SYMBOL",
+            "name": "block"
+          }
+        }
+      ]
+    },
+    "drop_definition": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "drop"
         },
         {
           "type": "FIELD",

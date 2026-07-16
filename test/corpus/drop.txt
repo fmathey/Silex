@@ -1,0 +1,30 @@
+================
+Class drop block
+================
+
+class Texture {
+    handle:int
+
+    drop {
+        print(self.handle)
+    }
+}
+
+---
+
+(source_file
+  (structure_definition
+    (identifier)
+    (structure_field
+      (identifier)
+      (type
+        (builtin_type)))
+    (drop_definition
+      (block
+        (statement
+          (print_statement
+            (identifier)
+            (expression
+              (member_expression
+                (self_expression)
+                (identifier)))))))))

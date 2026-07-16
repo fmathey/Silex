@@ -24,6 +24,7 @@
   name: (identifier) @function.definition)
 
 (constructor_definition "init" @function.definition)
+(drop_definition "drop" @function.definition)
 
 (super_method_expression
   method: (identifier) @function.method.call)
@@ -112,6 +113,7 @@
   "struct"
   "class"
   "init"
+  "drop"
   "super"
   "override"
   "func"

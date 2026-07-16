@@ -970,6 +970,22 @@
     }
   },
   {
+    "type": "drop_definition",
+    "named": true,
+    "fields": {
+      "body": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "block",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "expression",
     "named": true,
     "fields": {},
@@ -2290,6 +2306,10 @@
           "named": true
         },
         {
+          "type": "drop_definition",
+          "named": true
+        },
+        {
           "type": "function_definition",
           "named": true
         },
@@ -2866,6 +2886,10 @@
   {
     "type": "continue_statement",
     "named": true
+  },
+  {
+    "type": "drop",
+    "named": false
   },
   {
     "type": "elif",

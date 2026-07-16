@@ -70,6 +70,7 @@ module.exports = grammar({
           choice(
             seq(optional(field("visibility", choice("pub", "sub"))), $.structure_field),
             seq(optional(field("visibility", choice("pub", "sub"))), $.constructor_definition),
+            $.drop_definition,
             seq(
               optional(field("override", "override")),
               optional(field("visibility", choice("pub", "sub"))),
@@ -96,6 +97,8 @@ module.exports = grammar({
         optional(seq(":", field("super", "super"), field("arguments", $.argument_list))),
         field("body", $.block),
       ),
+
+    drop_definition: ($) => seq("drop", field("body", $.block)),
 
     function_definition: ($) =>
       seq(
