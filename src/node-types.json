@@ -2176,6 +2176,20 @@
             "named": true
           }
         ]
+      },
+      "visibility": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "pub",
+            "named": false
+          },
+          {
+            "type": "sub",
+            "named": false
+          }
+        ]
       }
     },
     "children": {
@@ -2826,6 +2840,10 @@
   },
   {
     "type": "struct",
+    "named": false
+  },
+  {
+    "type": "sub",
     "named": false
   },
   {

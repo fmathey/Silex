@@ -65,7 +65,12 @@ module.exports = grammar({
         choice("struct", "class"),
         field("name", $.identifier),
         "{",
-        repeat(choice($.structure_field, $.function_definition)),
+        repeat(
+          choice(
+            seq(optional(field("visibility", choice("pub", "sub"))), $.structure_field),
+            seq(optional(field("visibility", choice("pub", "sub"))), $.function_definition),
+          ),
+        ),
         "}",
       ),
 
