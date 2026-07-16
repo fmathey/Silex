@@ -405,9 +405,28 @@ pub const Resolver = struct {
         }
         var methods: std.ArrayList(Ast.Function) = .empty;
         for (structure.methods) |method| try methods.append(self.allocator, try self.transformFunctionBody(method, method.name));
+        var constructors: std.ArrayList(Ast.Constructor) = .empty;
+        for (structure.constructors) |constructor| {
+            try self.pushLocalScope();
+            defer self.popLocalScope();
+            var parameters: std.ArrayList(Ast.Parameter) = .empty;
+            for (constructor.parameters) |parameter| {
+                var copy = parameter;
+                copy.type = try self.transformType(parameter.type, parameter.position);
+                try parameters.append(self.allocator, copy);
+                try self.declareLocal(parameter.name);
+            }
+            try constructors.append(self.allocator, .{
+                .visibility = constructor.visibility,
+                .position = constructor.position,
+                .parameters = try parameters.toOwnedSlice(self.allocator),
+                .statements = try self.transformStatementsInCurrentScope(constructor.statements),
+            });
+        }
         var result = structure;
         result.name = declaration.canonical_name;
         result.fields = try fields.toOwnedSlice(self.allocator);
+        result.constructors = try constructors.toOwnedSlice(self.allocator);
         result.methods = try methods.toOwnedSlice(self.allocator);
         return result;
     }
@@ -615,6 +634,13 @@ pub const Resolver = struct {
                 }
                 if ((try self.visibleDeclarationKind(expression.position.file, call.name)) == .structure) {
                     const declaration = try self.resolveName(expression.position.file, call.name, .structure, call.name_position);
+                    if (self.declarationIsClass(declaration)) {
+                        break :call .{ .class_initializer = .{
+                            .name = declaration.canonical_name,
+                            .name_position = call.name_position,
+                            .arguments = arguments,
+                        } };
+                    }
                     if (arguments.len != 0) {
                         const message = try std.fmt.allocPrint(self.allocator, "struct '{s}' requires named fields such as 'field:value'", .{call.name});
                         return self.fail(call.name_position, message);
@@ -661,6 +687,11 @@ pub const Resolver = struct {
                 .name_position = initializer.name_position,
                 .fields = try self.transformFieldInitializers(initializer.fields),
             } },
+            .class_initializer => |initializer| .{ .class_initializer = .{
+                .name = (try self.resolveName(expression.position.file, initializer.name, .structure, initializer.name_position)).canonical_name,
+                .name_position = initializer.name_position,
+                .arguments = try self.transformExpressions(initializer.arguments),
+            } },
             .method_call => |call| method: {
                 if (try self.expressionPath(call.object)) |prefix| {
                     const path = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ prefix, call.name });
@@ -679,6 +710,13 @@ pub const Resolver = struct {
                         }
                         if ((try self.visibleDeclarationKind(expression.position.file, path)) == .structure) {
                             const declaration = try self.resolveName(expression.position.file, path, .structure, call.name_position);
+                            if (self.declarationIsClass(declaration)) {
+                                break :method .{ .class_initializer = .{
+                                    .name = declaration.canonical_name,
+                                    .name_position = call.name_position,
+                                    .arguments = try self.transformExpressions(call.arguments),
+                                } };
+                            }
                             if (call.arguments.len != 0) {
                                 const message = try std.fmt.allocPrint(self.allocator, "struct '{s}' requires named fields such as 'field:value'", .{path});
                                 return self.fail(call.name_position, message);
@@ -1047,6 +1085,21 @@ pub const Resolver = struct {
                 declaration.position.line == position.line and declaration.position.column == position.column) return declaration;
         }
         return null;
+    }
+
+    fn declarationIsClass(self: *const Resolver, declaration: *const Declaration) bool {
+        if (declaration.kind != .structure) return false;
+        for (self.files) |file| {
+            for (file.program.structures) |structure| {
+                if (structure.name_position.file == declaration.position.file and
+                    structure.name_position.line == declaration.position.line and
+                    structure.name_position.column == declaration.position.column)
+                {
+                    return structure.is_class;
+                }
+            }
+        }
+        return false;
     }
 
     fn findExport(self: *Resolver, module_index: usize, name: []const u8, kind: ?Kind) ?*const Export {

@@ -1,0 +1,11 @@
+class Session {
+    token:str
+
+    pub init(token:str) {
+        self.token = token
+    }
+}
+
+func main() {
+    var session = Session()
+}

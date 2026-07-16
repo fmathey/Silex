@@ -3,7 +3,11 @@ pub struct Session {
 }
 
 pub class Counter {
-    value:int = 0
+    value:int
+
+    pub init(value:int) {
+        self.value = value
+    }
 
     pub func increment() {
         self.value += 1
@@ -19,7 +23,7 @@ pub func create_session() Session {
 }
 
 pub func create_counter() Counter {
-    return Counter()
+    return Counter(0)
 }
 
 func validate_session(session:Session) bool {

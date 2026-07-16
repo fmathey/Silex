@@ -116,6 +116,7 @@ pub const Parser = struct {
         try self.advance();
         try self.expect(.left_brace, "expected '{'");
         var fields: std.ArrayList(Ast.StructureField) = .empty;
+        var constructors: std.ArrayList(Ast.Constructor) = .empty;
         var methods: std.ArrayList(Ast.Function) = .empty;
         while (self.current.tag != .right_brace and self.current.tag != .end) {
             var visibility: Ast.MemberVisibility = if (is_class) .private_access else .public_access;
@@ -128,6 +129,20 @@ pub const Parser = struct {
                 var method = try self.parseFunction(false);
                 method.member_visibility = visibility;
                 try methods.append(self.allocator, method);
+                continue;
+            }
+            if (self.current.tag == .keyword_init) {
+                if (!is_class) return self.fail("custom constructors are available only in classes");
+                const constructor_position = self.current.position;
+                try self.advance();
+                const parameters = try self.parseParameters();
+                if (self.current.tag != .left_brace) return self.fail("constructor 'init' cannot declare a return type");
+                try constructors.append(self.allocator, .{
+                    .visibility = visibility,
+                    .position = constructor_position,
+                    .parameters = parameters,
+                    .statements = try self.parseBlock(),
+                });
                 continue;
             }
             if (self.current.tag == .identifier and std.mem.eql(u8, self.current.lexeme, "native")) {
@@ -161,6 +176,7 @@ pub const Parser = struct {
             .name = name,
             .name_position = name_position,
             .fields = try fields.toOwnedSlice(self.allocator),
+            .constructors = try constructors.toOwnedSlice(self.allocator),
             .methods = try methods.toOwnedSlice(self.allocator),
         };
     }
@@ -1653,6 +1669,32 @@ test "parse class declarations with the structure member grammar" {
     try std.testing.expectEqualStrings("Player", program.structures[0].name);
     try std.testing.expectEqual(@as(usize, 2), program.structures[0].fields.len);
     try std.testing.expectEqual(@as(usize, 1), program.structures[0].methods.len);
+}
+
+test "parse visible overloaded class constructors" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var parser = Parser.init(arena.allocator(),
+        \\class Session {
+        \\    token:str
+        \\    pub init() { self.token = "" }
+        \\    sub init(token:str) { self.token = token }
+        \\}
+        \\func main() {}
+    );
+    const program = try parser.parse();
+    try std.testing.expectEqual(@as(usize, 2), program.structures[0].constructors.len);
+    try std.testing.expectEqual(Ast.MemberVisibility.public_access, program.structures[0].constructors[0].visibility);
+    try std.testing.expectEqual(Ast.MemberVisibility.subclass, program.structures[0].constructors[1].visibility);
+    try std.testing.expectEqual(@as(usize, 1), program.structures[0].constructors[1].parameters.len);
+}
+
+test "reject constructors on structs" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var parser = Parser.init(arena.allocator(), "struct Value { init() {} } func main() {}");
+    try std.testing.expectError(error.InvalidSource, parser.parse());
+    try std.testing.expectEqualStrings("custom constructors are available only in classes", parser.diagnostic.?.message);
 }
 
 test "reject class visibility modifiers on struct members" {

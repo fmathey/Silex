@@ -129,6 +129,7 @@ pub const Expression = struct {
         lambda: Lambda,
         method_call: MethodCall,
         cascade: Cascade,
+        class_initializer: ClassInitializer,
         structure_initializer: StructureInitializer,
         member_access: MemberAccess,
         safe_member_access: SafeMemberAccess,
@@ -200,6 +201,12 @@ pub const Expression = struct {
         name: []const u8,
         name_position: Source.Position,
         fields: []const FieldInitializer,
+    };
+
+    pub const ClassInitializer = struct {
+        name: []const u8,
+        name_position: Source.Position,
+        arguments: []const *Expression,
     };
 
     pub const FieldInitializer = struct {
@@ -379,7 +386,15 @@ pub const Structure = struct {
     name: []const u8,
     name_position: Source.Position,
     fields: []const StructureField,
+    constructors: []const Constructor = &.{},
     methods: []const Function,
+};
+
+pub const Constructor = struct {
+    visibility: MemberVisibility,
+    position: Source.Position,
+    parameters: []const Parameter,
+    statements: []const Statement,
 };
 
 pub const StructureField = struct {

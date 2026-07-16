@@ -45,6 +45,63 @@ class Vault {
     }
 }
 
+class Session {
+    token:str
+    attempts:int = 1
+
+    pub init(token:str) {
+        self.token = token
+    }
+
+    pub init(token:str, attempts:int) {
+        self.token = token
+        self.attempts = attempts
+    }
+
+    pub func get_token() str {
+        return self.token
+    }
+
+    pub func get_attempts() int {
+        return self.attempts
+    }
+}
+
+class Match {
+    owner:Player
+    score:int
+
+    pub init(owner:Player) {
+        self.owner = owner
+    }
+
+    pub func get_owner() Player {
+        return self.owner
+    }
+}
+
+class ConstructorCycle {
+    next:ConstructorCycle?
+
+    pub init() {
+        self.next = self
+    }
+}
+
+class ConstructorCallback {
+    value:int = 7
+    callback:func()
+
+    pub init() {
+        self.callback = func() {}
+        self.callback = func() { assert(self.value == 7, "constructor self capture keeps the instance alive") }
+    }
+
+    pub func invoke() {
+        self.callback()
+    }
+}
+
 struct Holder {
     player:Player
 }
@@ -86,6 +143,12 @@ func make_struct_cycle() {
     second.slot.node = first
 }
 
+func make_constructor_cycles() {
+    var node = ConstructorCycle()
+    var callback = ConstructorCallback()
+    callback.invoke()
+}
+
 func verify_capture_binding() {
     var player = Player()
     var callback = func() {
@@ -102,6 +165,14 @@ func verify_parameter_capture(player:Player) {
 }
 
 func main() {
+    var session = Session("abc")
+    var retried_session = Session("def", 3)
+    assert(session.get_token() == "abc" && session.get_attempts() == 1, "constructors apply intrinsic and declared field values")
+    assert(retried_session.get_token() == "def" && retried_session.get_attempts() == 3, "constructors overload by signature")
+
+    var match = Match(Player())
+    assert(match.get_owner().health == 100, "constructors initialize required class fields")
+
     var vault = Vault()
     assert(vault.read() == 42, "public methods can use private and sub members")
     var copied_vault = Vault()
@@ -156,7 +227,8 @@ func main() {
         make_cycle()
         make_list_cycle()
         make_callback_cycle()
-        make_struct_cycle()
+    make_struct_cycle()
+    make_constructor_cycles()
     }
 
     print("classes")

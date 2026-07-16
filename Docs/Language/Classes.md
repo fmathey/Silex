@@ -23,11 +23,73 @@ second.take_damage(10)
 print(first.get_health()) // 90
 ```
 
-Classes use the same named initializer and member syntax as structures. Every
-field without a declared default must be supplied. Construction is explicit:
-a non-optional declaration such as `var player:Player` is invalid, because a
-class has no intrinsic instance. `var player:Player?` is valid and starts as
-`null` under the ordinary optional-value rules. A class may be declared `pub`.
+Without a custom constructor, classes use the same named initializer and member
+syntax as structures. Every field without a declared default must be supplied.
+Construction is explicit: a non-optional declaration such as
+`var player:Player` is invalid, because a class has no intrinsic instance.
+`var player:Player?` is valid and starts as `null` under the ordinary
+optional-value rules. A class may be declared `pub`.
+
+## Constructors
+
+`init` declares a class constructor. It has no `func` prefix or return type and
+receives `self` implicitly:
+
+```sx
+class Session {
+    token:str
+    attempts:int = 1
+
+    pub init(token:str) {
+        self.token = token
+    }
+
+    pub init(token:str, attempts:int) {
+        self.token = token
+        self.attempts = attempts
+    }
+
+    pub func get_token() str {
+        return self.token
+    }
+}
+
+var session = Session("abc")
+var retried = Session("def", 3)
+```
+
+Constructor arguments are positional and overload selection follows function
+rules. A constructor is private without a marker, `sub` for the declaring class
+and future descendants, and `pub` for ordinary callers. It cannot be invoked as
+an instance method or return a value.
+
+Before the constructor body, fields receive their declared default or their
+type's intrinsic value when one exists. A field with neither must be assigned
+on every normal path. An uninitialized field cannot be read, and `self` cannot
+escape or receive an instance-method call until every field is initialized.
+A bare `return` is valid only after that point.
+
+Declaring any `init` closes the named field initializer for that class. Every
+construction must then select a visible constructor; defaults do not synthesize
+missing overloads:
+
+```sx
+class Session {
+    token:str
+
+    pub init(token:str) {
+        self.token = token
+    }
+}
+
+var session = Session("abc") // accepted
+var empty = Session()        // rejected: no init()
+Session(token:"abc")         // rejected: named fields are closed
+```
+
+A class without any `init` keeps its existing named field initializer,
+including `Type()` when its fields permit it. Structures do not have custom
+constructors.
 
 ## Member visibility
 
@@ -63,10 +125,9 @@ var session = Session(token:"abc") // accepted
 Session(secret:"abc", token:"def") // rejected: secret is private
 ```
 
-A private required field without a default cannot be initialized from outside
-the class. It will become constructible through a public custom constructor
-when constructors are introduced. Structure members remain public by default;
-`pub` and `sub` member markers are specific to classes.
+A private required field without a default can be established by a visible
+custom constructor. Structure members remain public by default; `pub` and
+`sub` member markers are specific to classes.
 
 ## Bindings and shared mutation
 
@@ -123,6 +184,5 @@ program will not use it again. Native resources therefore keep an explicit,
 idempotent operation such as `close()` for deterministic release; cycle
 collection is not an observable Silex destructor or finalizer.
 
-Custom constructors, inheritance, interfaces, virtual methods, weak
-references, user destructors, and finalizers are not part of the current
-language.
+Inheritance, interfaces, virtual methods, weak references, user destructors,
+and finalizers are not part of the current language.

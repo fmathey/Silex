@@ -19,6 +19,8 @@ func main() {
     var counter = Window.create_counter()
     counter.increment()
     print(counter.current())
+    var initialized_counter = Window.Counter(4)
+    print(initialized_counter.current())
     print(Shared.value())
     print(Deep.value())
     print(message())

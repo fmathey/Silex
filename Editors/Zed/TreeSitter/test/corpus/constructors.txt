@@ -1,0 +1,49 @@
+==================
+Class constructors
+==================
+
+class Session {
+    token:str
+
+    pub init(token:str) {
+        self.token = token
+    }
+
+    sub init() {
+        self.token = ""
+    }
+}
+
+---
+
+(source_file
+  (structure_definition
+    (identifier)
+    (structure_field
+      (identifier)
+      (type
+        (builtin_type)))
+    (constructor_definition
+      (parameter_list
+        (parameter
+          (identifier)
+          (type
+            (builtin_type))))
+      (block
+        (statement
+          (assignment_statement
+            (member_expression
+              (self_expression)
+              (identifier))
+            (expression
+              (identifier))))))
+    (constructor_definition
+      (parameter_list)
+      (block
+        (statement
+          (assignment_statement
+            (member_expression
+              (self_expression)
+              (identifier))
+            (expression
+              (string_literal))))))))

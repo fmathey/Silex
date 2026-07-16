@@ -68,6 +68,7 @@ module.exports = grammar({
         repeat(
           choice(
             seq(optional(field("visibility", choice("pub", "sub"))), $.structure_field),
+            seq(optional(field("visibility", choice("pub", "sub"))), $.constructor_definition),
             seq(optional(field("visibility", choice("pub", "sub"))), $.function_definition),
           ),
         ),
@@ -81,6 +82,13 @@ module.exports = grammar({
         field("type", $.type),
         optional(seq("=", field("default", $.expression))),
         choice(";", $._automatic_semicolon),
+      ),
+
+    constructor_definition: ($) =>
+      seq(
+        "init",
+        $.parameter_list,
+        field("body", $.block),
       ),
 
     function_definition: ($) =>

@@ -90,6 +90,7 @@ pub const Expression = struct {
         lambda: Lambda,
         owner_self,
         method_call: MethodCall,
+        class_initializer: ClassInitializer,
         structure_initializer: StructureInitializer,
         member_access: MemberAccess,
         bound_function: MemberAccess,
@@ -139,6 +140,7 @@ pub const Expression = struct {
         statements: []const Statement,
         captures: []const Capture,
         captures_self: bool,
+        self_is_class: bool,
     };
 
     pub const MethodCall = struct {
@@ -192,6 +194,11 @@ pub const Expression = struct {
     pub const StructureInitializer = struct {
         generated_name: []const u8,
         fields: []const *Expression,
+    };
+
+    pub const ClassInitializer = struct {
+        generated_name: []const u8,
+        arguments: []const *Expression,
     };
 
     pub const MemberAccess = struct {
@@ -331,12 +338,20 @@ pub const Structure = struct {
     generated_name: []const u8,
     is_class: bool,
     fields: []const StructureField,
+    constructors: []const Constructor,
     methods: []Method,
 };
 
 pub const StructureField = struct {
     generated_name: []const u8,
     type: Type,
+    visibility: Ast.MemberVisibility,
+    initializer: ?*Expression,
+};
+
+pub const Constructor = struct {
+    parameters: []const Parameter,
+    statements: []const Statement,
     visibility: Ast.MemberVisibility,
 };
 
@@ -441,8 +456,22 @@ const StructureSymbol = struct {
     generated_name: []const u8,
     is_class: bool,
     fields: []StructureFieldSymbol,
+    constructors: []ConstructorSymbol,
     methods: []MethodSymbol,
     position: Source.Position,
+};
+
+const ConstructorSymbol = struct {
+    parameter_types: []const Type,
+    parameter_is_mutable_references: []const bool,
+    parameter_stored: []const bool,
+    position: Source.Position,
+    visibility: Ast.MemberVisibility,
+};
+
+const ConstructorCandidate = struct {
+    symbol: ConstructorSymbol,
+    index: usize,
 };
 
 const MethodSymbol = struct {
@@ -483,6 +512,7 @@ pub const Analyzer = struct {
     current_return_type: Type = .void,
     current_structure_index: ?usize = null,
     current_method_index: ?usize = null,
+    current_constructor: bool = false,
     current_method_direct_mutation: bool = false,
     current_method_dependencies: std.ArrayList(MethodId) = .empty,
     current_self_state: BindingState = .{},
@@ -506,7 +536,17 @@ pub const Analyzer = struct {
                 .generated_name = field.generated_name,
                 .type = field.type,
                 .visibility = field.visibility,
+                .initializer = if (symbol.constructors.len == 0)
+                    field.default_value
+                else if (field.default_value) |default_value|
+                    default_value
+                else
+                    try self.intrinsicDefaultExpression(field.type, field.position),
             });
+            var constructors: std.ArrayList(Constructor) = .empty;
+            for (ast_structure.constructors, symbol.constructors) |ast_constructor, constructor_symbol| {
+                try constructors.append(self.allocator, try self.constructor(ast_constructor, constructor_symbol, structure_index));
+            }
             var methods: std.ArrayList(Method) = .empty;
             for (ast_structure.methods, symbol.methods, 0..) |ast_method, method_symbol, method_index| {
                 try methods.append(self.allocator, try self.method(ast_method, method_symbol, structure_index, method_index));
@@ -515,6 +555,7 @@ pub const Analyzer = struct {
                 .generated_name = symbol.generated_name,
                 .is_class = symbol.is_class,
                 .fields = try fields.toOwnedSlice(self.allocator),
+                .constructors = try constructors.toOwnedSlice(self.allocator),
                 .methods = try methods.toOwnedSlice(self.allocator),
             });
         }
@@ -550,6 +591,7 @@ pub const Analyzer = struct {
                     try std.fmt.allocPrint(self.allocator, "SilexStruct{d}", .{structure_index}),
                 .is_class = ast_structure.is_class,
                 .fields = &.{},
+                .constructors = &.{},
                 .methods = &.{},
                 .position = ast_structure.name_position,
             });
@@ -597,6 +639,36 @@ pub const Analyzer = struct {
                 });
             }
             self.structures.items[structure_index].fields = try fields.toOwnedSlice(self.allocator);
+
+            var constructors: std.ArrayList(ConstructorSymbol) = .empty;
+            for (ast_structure.constructors) |ast_constructor| {
+                var parameter_types: std.ArrayList(Type) = .empty;
+                var parameter_is_mutable_references: std.ArrayList(bool) = .empty;
+                var parameter_stored_values: std.ArrayList(bool) = .empty;
+                for (ast_constructor.parameters) |parameter| {
+                    const parameter_type = try typeFromAnnotation(self, parameter.type, parameter.position);
+                    try self.rejectClassMutableReference(parameter_type, parameter.is_mutable_reference, parameter.position);
+                    try parameter_types.append(self.allocator, parameter_type);
+                    try parameter_is_mutable_references.append(self.allocator, parameter.is_mutable_reference);
+                    try parameter_stored_values.append(self.allocator, parameterStored(ast_constructor.statements, parameter.name));
+                }
+                for (constructors.items) |existing| {
+                    if (sameSignature(
+                        existing.parameter_types,
+                        existing.parameter_is_mutable_references,
+                        parameter_types.items,
+                        parameter_is_mutable_references.items,
+                    )) return self.fail(ast_constructor.position, "constructor 'init' with this signature is already declared in this class");
+                }
+                try constructors.append(self.allocator, .{
+                    .parameter_types = try parameter_types.toOwnedSlice(self.allocator),
+                    .parameter_is_mutable_references = try parameter_is_mutable_references.toOwnedSlice(self.allocator),
+                    .parameter_stored = try parameter_stored_values.toOwnedSlice(self.allocator),
+                    .position = ast_constructor.position,
+                    .visibility = ast_constructor.visibility,
+                });
+            }
+            self.structures.items[structure_index].constructors = try constructors.toOwnedSlice(self.allocator);
 
             var methods: std.ArrayList(MethodSymbol) = .empty;
             for (ast_structure.methods, 0..) |ast_method, method_index| {
@@ -803,6 +875,7 @@ pub const Analyzer = struct {
     fn function(self: *Analyzer, ast: Ast.Function, symbol: FunctionSymbol) AnalyzeError!Function {
         self.current_structure_index = null;
         self.current_method_index = null;
+        self.current_constructor = false;
         self.current_self_state = .{};
         self.loop_depth = 0;
         var scope = Scope{ .parent = null, .depth = 1 };
@@ -852,6 +925,7 @@ pub const Analyzer = struct {
     ) AnalyzeError!Method {
         self.current_structure_index = structure_index;
         self.current_method_index = method_index;
+        self.current_constructor = false;
         self.current_method_direct_mutation = false;
         self.current_method_dependencies = .empty;
         self.current_self_state = .{};
@@ -901,6 +975,276 @@ pub const Analyzer = struct {
             .is_mutating = false,
             .visibility = symbol.visibility,
         };
+    }
+
+    fn constructor(
+        self: *Analyzer,
+        ast: Ast.Constructor,
+        symbol: ConstructorSymbol,
+        structure_index: usize,
+    ) AnalyzeError!Constructor {
+        self.current_structure_index = structure_index;
+        self.current_method_index = null;
+        self.current_constructor = true;
+        defer self.current_constructor = false;
+        self.current_method_direct_mutation = false;
+        self.current_method_dependencies = .empty;
+        self.current_self_state = .{};
+        self.loop_depth = 0;
+
+        var scope = Scope{ .parent = null, .depth = 1 };
+        self.function_scope_depth = scope.depth;
+        var parameters: std.ArrayList(Parameter) = .empty;
+        for (ast.parameters, symbol.parameter_types, symbol.parameter_is_mutable_references) |parameter, parameter_type, is_mutable_reference| {
+            if (findInCurrentScope(&scope, parameter.name) != null) {
+                const message = try std.fmt.allocPrint(self.allocator, "parameter '{s}' is already declared", .{parameter.name});
+                return self.fail(parameter.position, message);
+            }
+            const generated_name = try std.fmt.allocPrint(self.allocator, "silexValue{d}", .{self.next_symbol_id});
+            self.next_symbol_id += 1;
+            const state = try self.newBindingState(parameter_type);
+            try scope.symbols.append(self.allocator, .{
+                .source_name = parameter.name,
+                .generated_name = generated_name,
+                .type = parameter_type,
+                .mutability = .mutable,
+                .state = state,
+                .scope_depth = scope.depth,
+            });
+            try parameters.append(self.allocator, .{
+                .generated_name = generated_name,
+                .type = parameter_type,
+                .is_mutable_reference = is_mutable_reference,
+                .capture_box = &state.capture_box,
+            });
+        }
+
+        self.current_return_type = .void;
+        const constructor_statements = try self.statements(ast.statements, &scope);
+        self.releaseScopeBorrows(&scope);
+        try self.validateConstructorInitialization(structure_index, constructor_statements, ast.position);
+        return .{
+            .parameters = try parameters.toOwnedSlice(self.allocator),
+            .statements = constructor_statements,
+            .visibility = symbol.visibility,
+        };
+    }
+
+    fn validateConstructorInitialization(
+        self: *Analyzer,
+        structure_index: usize,
+        statements_value: []const Statement,
+        position: Source.Position,
+    ) AnalyzeError!void {
+        const structure = &self.structures.items[structure_index];
+        const initialized = try self.allocator.alloc(bool, structure.fields.len);
+        for (structure.fields, 0..) |field, index| {
+            initialized[index] = field.default_value != null or self.hasIntrinsicDefault(field.type);
+        }
+        const falls_through = try self.validateConstructorStatements(structure, statements_value, initialized);
+        if (falls_through) try self.requireConstructorFieldsInitialized(structure, initialized, position);
+    }
+
+    fn validateConstructorStatements(
+        self: *Analyzer,
+        structure: *const StructureSymbol,
+        statements_value: []const Statement,
+        initialized: []bool,
+    ) AnalyzeError!bool {
+        for (statements_value) |statement_value| {
+            const falls_through = try self.validateConstructorStatement(structure, statement_value, initialized);
+            if (!falls_through) return false;
+        }
+        return true;
+    }
+
+    fn validateConstructorStatement(
+        self: *Analyzer,
+        structure: *const StructureSymbol,
+        statement_value: Statement,
+        initialized: []bool,
+    ) AnalyzeError!bool {
+        switch (statement_value) {
+            .print => |value| try self.validateConstructorExpression(structure, value, initialized),
+            .assertion => |assertion_value| {
+                try self.validateConstructorExpression(structure, assertion_value.condition, initialized);
+                try self.validateConstructorExpression(structure, assertion_value.message, initialized);
+            },
+            .panic_statement => |panic_value| {
+                try self.validateConstructorExpression(structure, panic_value.message, initialized);
+                return false;
+            },
+            .variable_declaration => |declaration| try self.validateConstructorExpression(structure, declaration.initializer, initialized),
+            .assignment => |assignment_value| {
+                const assigned_field = if (assignment_value.operator == .assign)
+                    directSelfFieldIndex(structure, assignment_value.target)
+                else
+                    null;
+                if (assigned_field) |field_index| {
+                    try self.validateConstructorExpression(structure, assignment_value.value.?, initialized);
+                    initialized[field_index] = true;
+                } else {
+                    try self.validateConstructorExpression(structure, assignment_value.target, initialized);
+                    if (assignment_value.value) |value| try self.validateConstructorExpression(structure, value, initialized);
+                }
+            },
+            .if_statement => |if_value| {
+                try self.validateConstructorCondition(structure, if_value.condition, initialized);
+                var fallthrough_states: std.ArrayList([]bool) = .empty;
+
+                const body_state = try self.allocator.dupe(bool, initialized);
+                if (try self.validateConstructorStatements(structure, if_value.body, body_state)) {
+                    try fallthrough_states.append(self.allocator, body_state);
+                }
+                for (if_value.alternatives) |alternative| {
+                    try self.validateConstructorCondition(structure, alternative.condition, initialized);
+                    const alternative_state = try self.allocator.dupe(bool, initialized);
+                    if (try self.validateConstructorStatements(structure, alternative.body, alternative_state)) {
+                        try fallthrough_states.append(self.allocator, alternative_state);
+                    }
+                }
+                if (if_value.else_body) |else_body| {
+                    const else_state = try self.allocator.dupe(bool, initialized);
+                    if (try self.validateConstructorStatements(structure, else_body, else_state)) {
+                        try fallthrough_states.append(self.allocator, else_state);
+                    }
+                } else {
+                    try fallthrough_states.append(self.allocator, try self.allocator.dupe(bool, initialized));
+                }
+                if (fallthrough_states.items.len == 0) return false;
+                for (initialized, 0..) |*field_initialized, field_index| {
+                    field_initialized.* = true;
+                    for (fallthrough_states.items) |state| field_initialized.* = field_initialized.* and state[field_index];
+                }
+            },
+            .while_statement => |while_value| {
+                try self.validateConstructorCondition(structure, while_value.condition, initialized);
+                const body_state = try self.allocator.dupe(bool, initialized);
+                _ = try self.validateConstructorStatements(structure, while_value.body, body_state);
+            },
+            .for_statement => |for_value| {
+                switch (for_value.source) {
+                    .collection => |collection| try self.validateConstructorExpression(structure, collection, initialized),
+                    .integer_range => |range| {
+                        try self.validateConstructorExpression(structure, range.start, initialized);
+                        try self.validateConstructorExpression(structure, range.end, initialized);
+                    },
+                }
+                const body_state = try self.allocator.dupe(bool, initialized);
+                _ = try self.validateConstructorStatements(structure, for_value.body, body_state);
+            },
+            .break_statement, .continue_statement => return false,
+            .return_statement => |value| {
+                if (value) |return_value| try self.validateConstructorExpression(structure, return_value, initialized);
+                try self.requireConstructorFieldsInitialized(structure, initialized, if (value) |return_value| return_value.position else structure.position);
+                return false;
+            },
+            .expression_statement => |value| try self.validateConstructorExpression(structure, value, initialized),
+        }
+        return true;
+    }
+
+    fn validateConstructorCondition(
+        self: *Analyzer,
+        structure: *const StructureSymbol,
+        condition: Statement.Condition,
+        initialized: []const bool,
+    ) AnalyzeError!void {
+        switch (condition) {
+            .expression => |value| try self.validateConstructorExpression(structure, value, initialized),
+            .binding => |binding| try self.validateConstructorExpression(structure, binding.source, initialized),
+        }
+    }
+
+    fn validateConstructorExpression(
+        self: *Analyzer,
+        structure: *const StructureSymbol,
+        expression_value: *const Expression,
+        initialized: []const bool,
+    ) AnalyzeError!void {
+        switch (expression_value.value) {
+            .integer, .floating, .boolean, .null, .string, .cascade_target, .variable, .optional_unwrap => {},
+            .self, .owner_self => if (!allFieldsInitialized(initialized)) {
+                return self.fail(expression_value.position, "'self' cannot escape before every class field is initialized");
+            },
+            .string_length => |value| try self.validateConstructorExpression(structure, value, initialized),
+            .sequence_literal => |values| for (values) |value| try self.validateConstructorExpression(structure, value, initialized),
+            .collection_method => |call| {
+                try self.validateConstructorExpression(structure, call.object, initialized);
+                for (call.arguments) |argument| try self.validateConstructorExpression(structure, argument, initialized);
+            },
+            .cascade => |cascade_value| {
+                try self.validateConstructorExpression(structure, cascade_value.object, initialized);
+                for (cascade_value.operations) |operation| switch (operation) {
+                    .method_call => |call| try self.validateConstructorExpression(structure, call, initialized),
+                    .field_assignment => |assignment_value| try self.validateConstructorExpression(structure, assignment_value.value, initialized),
+                };
+            },
+            .call => |call| for (call.arguments) |argument| try self.validateConstructorExpression(structure, argument, initialized),
+            .value_call => |call| {
+                try self.validateConstructorExpression(structure, call.callee, initialized);
+                if (call.owner) |owner| try self.validateConstructorExpression(structure, owner, initialized);
+                for (call.arguments) |argument| try self.validateConstructorExpression(structure, argument, initialized);
+            },
+            .lambda => |lambda| if (lambda.captures_self and !allFieldsInitialized(initialized)) {
+                return self.fail(expression_value.position, "a constructor lambda cannot capture 'self' before every class field is initialized");
+            },
+            .method_call => |call| {
+                if (call.object.value == .self) {
+                    if (!allFieldsInitialized(initialized)) return self.fail(call.position, "an instance method cannot be called before every class field is initialized");
+                } else try self.validateConstructorExpression(structure, call.object, initialized);
+                for (call.arguments) |argument| try self.validateConstructorExpression(structure, argument, initialized);
+            },
+            .class_initializer => |initializer| for (initializer.arguments) |argument| try self.validateConstructorExpression(structure, argument, initialized),
+            .structure_initializer => |initializer| for (initializer.fields) |field| try self.validateConstructorExpression(structure, field, initialized),
+            .member_access, .bound_function => |member| {
+                if (member.object.value == .self) {
+                    const field_index = generatedFieldIndex(structure, member.generated_name) orelse return;
+                    if (!initialized[field_index]) {
+                        const message = try std.fmt.allocPrint(self.allocator, "field '{s}' is read before it is initialized", .{structure.fields[field_index].source_name});
+                        return self.fail(expression_value.position, message);
+                    }
+                } else try self.validateConstructorExpression(structure, member.object, initialized);
+            },
+            .adapt_function => |value| try self.validateConstructorExpression(structure, value, initialized),
+            .optional_wrap => |value| try self.validateConstructorExpression(structure, value, initialized),
+            .safe_access => |access| {
+                try self.validateConstructorExpression(structure, access.receiver, initialized);
+                try self.validateConstructorExpression(structure, access.end, initialized);
+            },
+            .index_access => |access| {
+                try self.validateConstructorExpression(structure, access.object, initialized);
+                try self.validateConstructorExpression(structure, access.index, initialized);
+            },
+            .slice_access => |access| {
+                try self.validateConstructorExpression(structure, access.object, initialized);
+                try self.validateConstructorExpression(structure, access.start, initialized);
+                try self.validateConstructorExpression(structure, access.end, initialized);
+            },
+            .unary => |unary| try self.validateConstructorExpression(structure, unary.operand, initialized),
+            .binary => |binary| {
+                try self.validateConstructorExpression(structure, binary.left, initialized);
+                try self.validateConstructorExpression(structure, binary.right, initialized);
+            },
+            .conversion => |conversion| try self.validateConstructorExpression(structure, conversion.operand, initialized),
+        }
+    }
+
+    fn requireConstructorFieldsInitialized(
+        self: *Analyzer,
+        structure: *const StructureSymbol,
+        initialized: []const bool,
+        position: Source.Position,
+    ) AnalyzeError!void {
+        for (initialized, 0..) |field_initialized, field_index| {
+            if (field_initialized) continue;
+            const message = try std.fmt.allocPrint(
+                self.allocator,
+                "constructor of class '{s}' leaves field '{s}' without a value",
+                .{ structure.source_name, structure.fields[field_index].source_name },
+            );
+            return self.fail(position, message);
+        }
     }
 
     fn statements(
@@ -1080,7 +1424,7 @@ pub const Analyzer = struct {
         const root = assignmentRoot(ast.target) orelse return self.fail(ast.position, "invalid assignment target");
         switch (root) {
             .self => {
-                if (self.current_method_index == null) return self.fail(ast.position, "'self' is only available inside a method");
+                if (self.current_method_index == null and !self.current_constructor) return self.fail(ast.position, "'self' is only available inside a method or constructor");
                 if (ast.target.value == .self) return self.fail(ast.position, "cannot assign to 'self'");
                 if (self.current_self_state.mutable_borrow or self.current_self_state.immutable_borrows != 0) {
                     return self.fail(ast.position, "cannot mutate 'self' while one of its collections is iterated");
@@ -1506,6 +1850,7 @@ pub const Analyzer = struct {
             .lambda => |lambda| self.lambdaExpression(lambda, scope, null),
             .method_call => |call| self.methodCallExpression(call, scope),
             .cascade => |cascade| self.cascadeExpression(cascade, scope, null),
+            .class_initializer => |initializer| self.classInitializerExpression(initializer, scope),
             .structure_initializer => |initializer| self.structureInitializerExpression(initializer, scope),
             .member_access => |member| self.memberAccessExpression(member, scope),
             .safe_member_access => |member| self.safeMemberAccessExpression(member, scope),
@@ -1718,6 +2063,30 @@ pub const Analyzer = struct {
         };
     }
 
+    fn intrinsicDefaultExpression(
+        self: *Analyzer,
+        type_value: Type,
+        position: Source.Position,
+    ) AnalyzeError!?*Expression {
+        if (!self.hasIntrinsicDefault(type_value)) return null;
+        return try self.defaultExpression(type_value, position);
+    }
+
+    fn hasIntrinsicDefault(self: *const Analyzer, type_value: Type) bool {
+        return switch (type_value) {
+            .void, .reference, .function, .null => false,
+            .int, .int8, .int16, .int32, .uint8, .uint16, .uint32, .uint64, .float, .float64, .bool, .str, .list, .fixed_array, .optional => true,
+            .structure => |structure_type| intrinsic: {
+                if (structure_type.is_class) break :intrinsic false;
+                const structure = self.findStructureByGeneratedName(structure_type.generated_name) orelse break :intrinsic false;
+                for (structure.fields) |field| {
+                    if (field.default_value == null and !self.hasIntrinsicDefault(field.type)) break :intrinsic false;
+                }
+                break :intrinsic true;
+            },
+        };
+    }
+
     fn variableExpression(
         self: *Analyzer,
         position: Source.Position,
@@ -1747,7 +2116,7 @@ pub const Analyzer = struct {
     }
 
     fn selfExpression(self: *Analyzer, position: Source.Position) AnalyzeError!*Expression {
-        const structure_index = self.current_structure_index orelse return self.fail(position, "'self' is only available inside a method");
+        const structure_index = self.current_structure_index orelse return self.fail(position, "'self' is only available inside a method or constructor");
         if (self.current_self_state.mutable_borrow) return self.fail(position, "cannot access 'self' while one of its collections is mutably iterated");
         const structure = self.structures.items[structure_index];
         if (self.current_lambda) |_| {
@@ -2143,6 +2512,10 @@ pub const Analyzer = struct {
                 .statements = body,
                 .captures = try context.captures.toOwnedSlice(self.allocator),
                 .captures_self = context.captures_self,
+                .self_is_class = if (self.current_structure_index) |structure_index|
+                    self.structures.items[structure_index].is_class
+                else
+                    false,
             } },
         });
     }
@@ -2159,6 +2532,7 @@ pub const Analyzer = struct {
             for (structure.fields) |field| {
                 if (std.mem.eql(u8, field.source_name, call.name) and field.type == .function) {
                     try self.requireFieldAccess(structure_index, structure, field, call.name_position);
+                    if (call.object.value == .self and self.current_method_index != null) self.current_method_direct_mutation = true;
                     const callee = try self.newExpression(.{
                         .type = field.type,
                         .position = call.name_position,
@@ -2635,6 +3009,47 @@ pub const Analyzer = struct {
         return best.?;
     }
 
+    fn resolveConstructorOverload(
+        self: *Analyzer,
+        class_name: []const u8,
+        position: Source.Position,
+        arguments: []const *Ast.Expression,
+        scope: *const Scope,
+        candidates: []const ConstructorCandidate,
+    ) AnalyzeError!ConstructorCandidate {
+        var best: ?ConstructorCandidate = null;
+        var best_scores: ?[]const u8 = null;
+        var ambiguous: std.ArrayList(ConstructorCandidate) = .empty;
+        for (candidates) |candidate| {
+            const scores = try self.overloadScores(arguments, scope, candidate.symbol.parameter_types, candidate.symbol.parameter_is_mutable_references);
+            if (scores == null) continue;
+            if (best == null) {
+                best = candidate;
+                best_scores = scores.?;
+                continue;
+            }
+            if (overloadBetter(scores.?, best_scores.?)) {
+                best = candidate;
+                best_scores = scores.?;
+                ambiguous.clearRetainingCapacity();
+            } else if (!overloadBetter(best_scores.?, scores.?)) {
+                if (ambiguous.items.len == 0) try ambiguous.append(self.allocator, best.?);
+                try ambiguous.append(self.allocator, candidate);
+            }
+        }
+        if (best == null) {
+            const signatures = try constructorSignatures(self.allocator, class_name, candidates);
+            const message = try std.fmt.allocPrint(self.allocator, "no compatible constructor for '{s}'; visible constructors: {s}", .{ class_name, signatures });
+            return self.fail(position, message);
+        }
+        if (ambiguous.items.len != 0) {
+            const signatures = try constructorSignatures(self.allocator, class_name, ambiguous.items);
+            const message = try std.fmt.allocPrint(self.allocator, "ambiguous constructor call for '{s}'; matching constructors: {s}", .{ class_name, signatures });
+            return self.fail(position, message);
+        }
+        return best.?;
+    }
+
     fn overloadScores(
         self: *Analyzer,
         arguments: []const *Ast.Expression,
@@ -2802,6 +3217,14 @@ pub const Analyzer = struct {
             return self.fail(initializer.name_position, message);
         };
         const structure_index = self.findStructureIndexByGeneratedName(structure.generated_name).?;
+        if (structure.is_class and structure.constructors.len != 0) {
+            const message = try std.fmt.allocPrint(
+                self.allocator,
+                "class '{s}' declares custom constructors and cannot use a named field initializer",
+                .{structure.source_name},
+            );
+            return self.fail(initializer.name_position, message);
+        }
         for (initializer.fields, 0..) |field, field_index| {
             var known: ?StructureFieldSymbol = null;
             for (structure.fields) |expected_field| {
@@ -2861,6 +3284,83 @@ pub const Analyzer = struct {
             .value = .{ .structure_initializer = .{
                 .generated_name = structure.generated_name,
                 .fields = try values.toOwnedSlice(self.allocator),
+            } },
+        });
+    }
+
+    fn classInitializerExpression(
+        self: *Analyzer,
+        initializer: Ast.Expression.ClassInitializer,
+        scope: *const Scope,
+    ) AnalyzeError!*Expression {
+        const structure = self.findStructure(initializer.name) orelse {
+            const message = try std.fmt.allocPrint(self.allocator, "unknown class '{s}'", .{initializer.name});
+            return self.fail(initializer.name_position, message);
+        };
+        if (!structure.is_class) unreachable;
+        if (structure.constructors.len == 0) {
+            if (initializer.arguments.len != 0) {
+                const message = try std.fmt.allocPrint(self.allocator, "class '{s}' requires named fields such as 'field:value'", .{structure.source_name});
+                return self.fail(initializer.name_position, message);
+            }
+            return self.structureInitializerExpression(.{
+                .name = initializer.name,
+                .name_position = initializer.name_position,
+                .fields = &.{},
+            }, scope);
+        }
+
+        const structure_index = self.findStructureIndexByGeneratedName(structure.generated_name).?;
+        var candidates: std.ArrayList(ConstructorCandidate) = .empty;
+        var inaccessible: ?ConstructorSymbol = null;
+        for (structure.constructors, 0..) |constructor_symbol, index| {
+            if (self.memberVisibleFromCurrentContext(structure_index, constructor_symbol.visibility)) {
+                try candidates.append(self.allocator, .{ .symbol = constructor_symbol, .index = index });
+            } else {
+                inaccessible = constructor_symbol;
+            }
+        }
+        if (candidates.items.len == 0) {
+            const constructor_symbol = inaccessible.?;
+            const message = switch (constructor_symbol.visibility) {
+                .private_access => try std.fmt.allocPrint(self.allocator, "constructor of class '{s}' is private", .{structure.source_name}),
+                .subclass => try std.fmt.allocPrint(self.allocator, "constructor of class '{s}' is accessible only from that class and its descendants", .{structure.source_name}),
+                .public_access => unreachable,
+            };
+            return self.fail(initializer.name_position, message);
+        }
+        const resolved = try self.resolveConstructorOverload(structure.source_name, initializer.name_position, initializer.arguments, scope, candidates.items);
+        const constructor_symbol = resolved.symbol;
+        var arguments: std.ArrayList(*Expression) = .empty;
+        var lifetime_depth: usize = 0;
+        for (initializer.arguments, constructor_symbol.parameter_types, constructor_symbol.parameter_is_mutable_references, constructor_symbol.parameter_stored, 0..) |argument, expected_type, is_mutable_reference, is_stored, index| {
+            var value = if (is_mutable_reference)
+                try self.mutableReferenceArgument(argument, scope, expected_type)
+            else
+                try self.expressionForExpected(argument, scope, expected_type);
+            value = try self.coerce(value, expected_type);
+            if (!typeEqual(value.type, expected_type)) {
+                const message = try std.fmt.allocPrint(self.allocator, "argument {d} of constructor '{s}' expects '{s}', found '{s}'", .{ index + 1, structure.source_name, typeName(expected_type), typeName(value.type) });
+                return self.fail(argument.position, message);
+            }
+            if (is_stored and value.lifetime_depth != 0) {
+                return self.fail(argument.position, "capturing callback cannot be passed to a constructor parameter whose value escapes the call");
+            }
+            try arguments.append(self.allocator, value);
+            lifetime_depth = @max(lifetime_depth, value.lifetime_depth);
+            self.releaseTransientBorrow(value);
+        }
+        return self.newExpression(.{
+            .type = .{ .structure = .{
+                .source_name = structure.source_name,
+                .generated_name = structure.generated_name,
+                .is_class = true,
+            } },
+            .position = initializer.name_position,
+            .lifetime_depth = lifetime_depth,
+            .value = .{ .class_initializer = .{
+                .generated_name = structure.generated_name,
+                .arguments = try arguments.toOwnedSlice(self.allocator),
             } },
         });
     }
@@ -3159,6 +3659,7 @@ pub const Analyzer = struct {
 
     fn validateMethodCalls(self: *Analyzer, program: Program) AnalyzeError!void {
         for (program.structures) |structure| {
+            for (structure.constructors) |constructor_value| try self.validateStatements(constructor_value.statements);
             for (structure.methods) |method_value| try self.validateStatements(method_value.statements);
         }
         for (program.functions) |function_value| try self.validateStatements(function_value.statements);
@@ -3275,6 +3776,7 @@ pub const Analyzer = struct {
                     .field_assignment => |field_assignment| try self.validateExpression(field_assignment.value),
                 };
             },
+            .class_initializer => |initializer| for (initializer.arguments) |argument| try self.validateExpression(argument),
             .structure_initializer => |initializer| for (initializer.fields) |field| try self.validateExpression(field),
             .member_access => |member| try self.validateExpression(member.object),
             .bound_function => |member| try self.validateExpression(member.object),
@@ -3363,7 +3865,7 @@ pub const Analyzer = struct {
         };
         switch (root) {
             .self => {
-                if (self.current_method_index == null) return self.fail(unary.operator_position, "'self' is only available inside a method");
+                if (self.current_method_index == null and !self.current_constructor) return self.fail(unary.operator_position, "'self' is only available inside a method or constructor");
                 self.current_method_direct_mutation = true;
             },
             .variable => |name| {
@@ -3674,6 +4176,25 @@ pub const Analyzer = struct {
     }
 };
 
+fn allFieldsInitialized(initialized: []const bool) bool {
+    for (initialized) |field_initialized| if (!field_initialized) return false;
+    return true;
+}
+
+fn generatedFieldIndex(structure: *const StructureSymbol, generated_name: []const u8) ?usize {
+    for (structure.fields, 0..) |field, index| {
+        if (std.mem.eql(u8, field.generated_name, generated_name)) return index;
+    }
+    return null;
+}
+
+fn directSelfFieldIndex(structure: *const StructureSymbol, target: *const Expression) ?usize {
+    if (target.value != .member_access) return null;
+    const member = target.value.member_access;
+    if (member.object.value != .self) return null;
+    return generatedFieldIndex(structure, member.generated_name);
+}
+
 fn findInCurrentScope(scope: *const Scope, name: []const u8) ?*const Symbol {
     for (scope.symbols.items) |*symbol| {
         if (std.mem.eql(u8, symbol.source_name, name)) return symbol;
@@ -3929,6 +4450,10 @@ fn astExpressionUsesIdentifier(expression_value: *const Ast.Expression, name: []
             for (initializer.fields) |field| if (astExpressionUsesIdentifier(field.value, name)) break :uses true;
             break :uses false;
         },
+        .class_initializer => |initializer| uses: {
+            for (initializer.arguments) |argument| if (astExpressionUsesIdentifier(argument, name)) break :uses true;
+            break :uses false;
+        },
         .cascade => |cascade| astExpressionUsesIdentifier(cascade.object, name),
         .lambda => false,
         else => false,
@@ -4130,6 +4655,19 @@ fn methodSignatures(allocator: Allocator, candidates: []const MethodCandidate) !
     return output.toOwnedSlice(allocator);
 }
 
+fn constructorSignatures(
+    allocator: Allocator,
+    class_name: []const u8,
+    candidates: []const ConstructorCandidate,
+) ![]const u8 {
+    var output: std.ArrayList(u8) = .empty;
+    for (candidates, 0..) |candidate, index| {
+        if (index != 0) try output.appendSlice(allocator, ", ");
+        try appendSignature(allocator, &output, lastNameSegment(class_name), candidate.symbol.parameter_types, candidate.symbol.parameter_is_mutable_references);
+    }
+    return output.toOwnedSlice(allocator);
+}
+
 fn isNativeReturnType(value: Type) bool {
     return switch (value) {
         .void, .int, .int8, .int16, .int32, .uint8, .uint16, .uint32, .uint64, .float, .float64, .bool => true,
@@ -4299,7 +4837,7 @@ const AssignmentRoot = union(enum) {
 
 fn isCascadeOwnedTemporary(expression: *const Ast.Expression) bool {
     return switch (expression.value) {
-        .call, .method_call, .structure_initializer, .sequence_literal => true,
+        .call, .method_call, .class_initializer, .structure_initializer, .sequence_literal => true,
         .member_access => |member| isCascadeOwnedTemporary(member.object),
         .index_access => |access| isCascadeOwnedTemporary(access.object),
         .slice_access => true,
@@ -4587,6 +5125,62 @@ test "class members are private by default and pub exposes them" {
     try expectResolvedSemanticError(
         "class Vault { value:int = 1 } func main() { var vault = Vault()..value = 2 }",
         "field 'value' is private in class 'Vault'",
+    );
+}
+
+test "class constructors overload and establish private state" {
+    const Parser = @import("Parser.zig").Parser;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var parser = Parser.init(allocator,
+        \\class Player { pub health:int = 100 }
+        \\class Match {
+        \\    owner:Player
+        \\    count:int = 1
+        \\    pub init(owner:Player) { self.owner = owner }
+        \\    pub init(owner:Player, count:int) { self.owner = owner; self.count = count }
+        \\    pub func get_owner() Player { return self.owner }
+        \\    pub func get_count() int { return self.count }
+        \\}
+        \\func main() { var first = Match(Player()); var second = Match(Player(), 2); print(second.get_count()) }
+    );
+    var analyzer = Analyzer.init(allocator);
+    const program = try analyzer.analyze(try resolveSingleTestProgram(allocator, try parser.parse()));
+    try std.testing.expectEqual(@as(usize, 2), program.structures[1].constructors.len);
+    try std.testing.expect(program.functions[0].statements[0].variable_declaration.initializer.value == .class_initializer);
+
+    try expectResolvedSemanticError(
+        "class Session { token:str; pub init(token:str) { self.token = token } } func main() { var session = Session() }",
+        "no compatible constructor for 'Session'; visible constructors: Session(str)",
+    );
+    try expectResolvedSemanticError(
+        "class Session { pub token:str; pub init(token:str) { self.token = token } } func main() { var session = Session(token:\"abc\") }",
+        "class 'Session' declares custom constructors and cannot use a named field initializer",
+    );
+    try expectResolvedSemanticError(
+        "class Session { token:str; init(token:str) { self.token = token } } func main() { var session = Session(\"abc\") }",
+        "constructor of class 'Session' is private",
+    );
+}
+
+test "class constructors require complete initialization on every path" {
+    try expectResolvedSemanticError(
+        "class Player {} class Match { owner:Player; pub init(owner:Player, assign:bool) { if assign { self.owner = owner } } } func main() {}",
+        "constructor of class 'Match' leaves field 'owner' without a value",
+    );
+    try expectResolvedSemanticError(
+        "class Player {} class Match { owner:Player; pub init(owner:Player) { print(self.owner == owner); self.owner = owner } } func main() {}",
+        "field 'owner' is read before it is initialized",
+    );
+    try expectResolvedSemanticError(
+        "class Player {} class Match { owner:Player; pub init(owner:Player) { self.inspect(); self.owner = owner } func inspect() {} } func main() {}",
+        "an instance method cannot be called before every class field is initialized",
+    );
+    try expectResolvedSemanticError(
+        "class Player {} class Match { owner:Player; pub init(owner:Player) { var alias = self; self.owner = owner } } func main() {}",
+        "'self' cannot escape before every class field is initialized",
     );
 }
 

@@ -819,6 +819,32 @@
     }
   },
   {
+    "type": "constructor_definition",
+    "named": true,
+    "fields": {
+      "body": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "block",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "parameter_list",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "conversion_expression",
     "named": true,
     "fields": {
@@ -2197,6 +2223,10 @@
       "required": false,
       "types": [
         {
+          "type": "constructor_definition",
+          "named": true
+        },
+        {
           "type": "function_definition",
           "named": true
         },
@@ -2788,6 +2818,10 @@
   },
   {
     "type": "in",
+    "named": false
+  },
+  {
+    "type": "init",
     "named": false
   },
   {

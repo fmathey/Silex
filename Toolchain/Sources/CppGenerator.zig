@@ -211,7 +211,7 @@ pub fn generateWithSources(
         \\inline std::size_t silexLiveObjects = 0;
         \\
         \\struct SilexObject {
-        \\    std::size_t references = 0;
+        \\    std::size_t references = 1;
         \\    bool collecting = false;
         \\    virtual void silexTrace(const SilexTraceVisitor& visit) const = 0;
         \\    virtual void silexClear() = 0;
@@ -279,9 +279,16 @@ pub fn generateWithSources(
         \\template <typename T, typename... Arguments>
         \\SilexRef<T> silexMake(Arguments&&... arguments) {
         \\    T* object = new T(std::forward<Arguments>(arguments)...);
-        \\    object->references = 1;
         \\    ++silexLiveObjects;
         \\    return SilexRef<T>::adopt(object);
+        \\}
+        \\
+        \\template <typename T>
+        \\SilexRef<std::remove_const_t<T>> silexShare(T* object) {
+        \\    using Value = std::remove_const_t<T>;
+        \\    Value* mutableObject = const_cast<Value*>(object);
+        \\    ++mutableObject->references;
+        \\    return SilexRef<Value>::adopt(mutableObject);
         \\}
         \\
         \\template <typename T>
@@ -775,9 +782,17 @@ pub fn generateWithSources(
             try appendCppType(allocator, &output, field.type);
             try output.append(allocator, ' ');
             try output.appendSlice(allocator, field.generated_name);
+            if (structure.constructors.len != 0) {
+                if (field.initializer) |initializer| {
+                    try output.appendSlice(allocator, " = ");
+                    try generateExpression(allocator, &output, initializer);
+                } else {
+                    try output.appendSlice(allocator, "{}");
+                }
+            }
             try output.appendSlice(allocator, ";\n");
         }
-        if (structure.is_class) {
+        if (structure.is_class and structure.constructors.len == 0) {
             try output.appendSlice(allocator, "\n    ");
             try output.appendSlice(allocator, structure.generated_name);
             try output.append(allocator, '(');
@@ -799,7 +814,12 @@ pub fn generateWithSources(
                 try output.appendSlice(allocator, " {}\n");
             }
         }
-        if (structure.fields.len > 0 and structure.methods.len > 0) try output.append(allocator, '\n');
+        for (structure.constructors) |constructor| {
+            try output.appendSlice(allocator, "\n    ");
+            try generateConstructorSignature(allocator, &output, structure.generated_name, constructor, false);
+            try output.appendSlice(allocator, ";\n");
+        }
+        if (structure.fields.len > 0 and (structure.constructors.len > 0 or structure.methods.len > 0)) try output.append(allocator, '\n');
         for (structure.methods) |method| {
             try output.appendSlice(allocator, "    ");
             try generateMethodSignature(allocator, &output, method, null, false);
@@ -853,6 +873,13 @@ pub fn generateWithSources(
     }
     if (program.functions.len > 1) try output.append(allocator, '\n');
     for (program.structures) |structure| {
+        for (structure.constructors) |constructor| {
+            try generateConstructorSignature(allocator, &output, structure.generated_name, constructor, true);
+            try output.appendSlice(allocator, " {\n");
+            try generateCapturedParameterBindings(allocator, &output, constructor.parameters, 1);
+            try generateStatements(allocator, &output, constructor.statements, 1, false);
+            try output.appendSlice(allocator, "}\n\n");
+        }
         for (structure.methods) |method| {
             try generateMethodSignature(allocator, &output, method, structure.generated_name, true);
             try output.appendSlice(allocator, " {\n");
@@ -915,6 +942,32 @@ fn generateMethodSignature(
     }
     try output.append(allocator, ')');
     if (!method.is_mutating) try output.appendSlice(allocator, " const");
+}
+
+fn generateConstructorSignature(
+    allocator: Allocator,
+    output: *std.ArrayList(u8),
+    owner_name: []const u8,
+    constructor: Semantic.Constructor,
+    include_names: bool,
+) !void {
+    try output.appendSlice(allocator, owner_name);
+    if (include_names) {
+        try output.appendSlice(allocator, "::");
+        try output.appendSlice(allocator, owner_name);
+    }
+    try output.append(allocator, '(');
+    for (constructor.parameters, 0..) |parameter, index| {
+        if (index != 0) try output.appendSlice(allocator, ", ");
+        try appendCppType(allocator, output, parameter.type);
+        if (parameter.is_mutable_reference) try output.append(allocator, '&');
+        if (include_names) {
+            try output.append(allocator, ' ');
+            try output.appendSlice(allocator, parameter.generated_name);
+            if (parameter.capture_box.*) try output.appendSlice(allocator, "Input");
+        }
+    }
+    try output.append(allocator, ')');
 }
 
 fn generateFunctionSignature(allocator: Allocator, output: *std.ArrayList(u8), function: Semantic.Function, include_names: bool) !void {
@@ -1603,7 +1656,10 @@ fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expressi
             try output.appendSlice(allocator, variable.generated_name);
             if (variable.capture_box.*) try output.appendSlice(allocator, "->value");
         },
-        .self => try output.appendSlice(allocator, "*this"),
+        .self => if (isClassType(expression.type))
+            try output.appendSlice(allocator, "silexShare(this)")
+        else
+            try output.appendSlice(allocator, "*this"),
         .owner_self => try output.appendSlice(allocator, "silexOwner"),
         .call => |call| {
             if (call.is_native) {
@@ -1621,7 +1677,16 @@ fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expressi
         .value_call => |call| {
             try generateExpression(allocator, output, call.callee);
             try output.append(allocator, '(');
-            if (call.owner) |owner| try generateExpression(allocator, output, owner);
+            if (call.owner) |owner| {
+                if (owner.value == .self) {
+                    try output.appendSlice(allocator, "*this");
+                } else if (owner.value == .owner_self) {
+                    try output.appendSlice(allocator, "silexOwner");
+                } else {
+                    if (isClassType(owner.type)) try output.append(allocator, '*');
+                    try generateExpression(allocator, output, owner);
+                }
+            }
             for (call.arguments, 0..) |argument, index| {
                 if (index != 0 or call.owner != null) try output.appendSlice(allocator, ", ");
                 try generateExpression(allocator, output, argument);
@@ -1669,16 +1734,31 @@ fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expressi
                 try output.appendSlice(allocator, ", ");
                 try output.appendSlice(allocator, capture.generated_name);
             }
+            if (lambda.captures_self and lambda.self_is_class) {
+                try output.appendSlice(allocator, ", silexShare(this)");
+            }
             try output.append(allocator, ')');
         },
         .method_call => |call| {
-            if (call.object.value != .self) {
+            if (call.object.value == .owner_self) {
+                try output.appendSlice(allocator, "silexOwner.");
+            } else if (call.object.value != .self) {
                 try generateExpression(allocator, output, call.object);
                 try output.appendSlice(allocator, if (isClassType(call.object.type)) "->" else ".");
             }
             try output.appendSlice(allocator, call.generated_name);
             try output.append(allocator, '(');
             for (call.arguments, 0..) |argument, index| {
+                if (index != 0) try output.appendSlice(allocator, ", ");
+                try generateExpression(allocator, output, argument);
+            }
+            try output.append(allocator, ')');
+        },
+        .class_initializer => |initializer| {
+            try output.appendSlice(allocator, "silexMake<");
+            try output.appendSlice(allocator, initializer.generated_name);
+            try output.appendSlice(allocator, ">(");
+            for (initializer.arguments, 0..) |argument, index| {
                 if (index != 0) try output.appendSlice(allocator, ", ");
                 try generateExpression(allocator, output, argument);
             }
@@ -1700,7 +1780,9 @@ fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expressi
             try output.append(allocator, if (isClassType(expression.type)) ')' else '}');
         },
         .member_access => |member| {
-            if (member.object.value != .self) {
+            if (member.object.value == .owner_self) {
+                try output.appendSlice(allocator, "silexOwner.");
+            } else if (member.object.value != .self) {
                 try generateExpression(allocator, output, member.object);
                 try output.appendSlice(allocator, if (isClassType(member.object.type)) "->" else ".");
             }

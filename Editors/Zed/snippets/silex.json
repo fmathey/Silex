@@ -268,6 +268,15 @@
     ],
     "description": "Expose a class method"
   },
+  "Public class constructor": {
+    "prefix": "pubinit",
+    "body": [
+      "pub init(${1}) {",
+      "    $0",
+      "}"
+    ],
+    "description": "Declare a public class constructor"
+  },
   "Subclass class member": {
     "prefix": "sub",
     "body": [
@@ -283,6 +292,15 @@
       "}"
     ],
     "description": "Expose a class method to future descendants"
+  },
+  "Subclass class constructor": {
+    "prefix": "subinit",
+    "body": [
+      "sub init(${1}) {",
+      "    $0",
+      "}"
+    ],
+    "description": "Declare a constructor for the class and its future descendants"
   },
   "Default struct field": {
     "prefix": "field",

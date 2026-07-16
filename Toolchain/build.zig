@@ -375,6 +375,11 @@ pub fn build(b: *std.Build) void {
     invalid_class_default_variable_command.expectExitCode(1);
     invalid_class_default_variable_command.expectStdErrEqual("Tests/InvalidClassDefaultVariable.sx:4:9: error: class 'Player' requires an initializer\n");
 
+    const invalid_missing_class_constructor_command = b.addRunArtifact(executable);
+    invalid_missing_class_constructor_command.addArgs(&.{ "compile", "Tests/InvalidMissingClassConstructor.sx" });
+    invalid_missing_class_constructor_command.expectExitCode(1);
+    invalid_missing_class_constructor_command.expectStdErrEqual("Tests/InvalidMissingClassConstructor.sx:10:19: error: no compatible constructor for 'Session'; visible constructors: Session(str)\n");
+
     const invalid_private_class_field_command = b.addRunArtifact(executable);
     invalid_private_class_field_command.addArgs(&.{ "compile", "Tests/InvalidPrivateClassField.sx" });
     invalid_private_class_field_command.expectExitCode(1);
@@ -1124,6 +1129,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&invalid_implicit_class_iteration_command.step);
     test_step.dependOn(&invalid_class_missing_field_command.step);
     test_step.dependOn(&invalid_class_default_variable_command.step);
+    test_step.dependOn(&invalid_missing_class_constructor_command.step);
     test_step.dependOn(&invalid_private_class_field_command.step);
     test_step.dependOn(&invalid_private_class_method_command.step);
     test_step.dependOn(&invalid_sub_class_field_command.step);
@@ -1525,7 +1531,7 @@ pub fn build(b: *std.Build) void {
     const modules_command = b.addRunArtifact(executable);
     modules_command.step.dependOn(previous_integer_error_step);
     modules_command.addArgs(&.{ "run", "Smokes/Modules/silex.json" });
-    modules_command.expectStdOutEqual(hostText(b, "true\ntrue\ntrue\n1\n1\n2\nmodules\n"));
+    modules_command.expectStdOutEqual(hostText(b, "true\ntrue\ntrue\n1\n4\n1\n2\nmodules\n"));
 
     const local_imports_command = b.addRunArtifact(executable);
     local_imports_command.step.dependOn(&modules_command.step);

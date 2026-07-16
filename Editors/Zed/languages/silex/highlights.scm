@@ -23,6 +23,8 @@
 (function_definition
   name: (identifier) @function.definition)
 
+(constructor_definition "init" @function.definition)
+
 (lambda_expression "func" @keyword)
 (function_type "func" @type.builtin)
 (function_type_parameter mutable_reference: "&" @type)
@@ -110,6 +112,7 @@
   "return"
   "struct"
   "class"
+  "init"
   "func"
 ] @keyword
 
