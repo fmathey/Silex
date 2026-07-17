@@ -1,11 +1,11 @@
 struct Position {
-    x:int
-    y:int
+    var x:int
+    var y:int
 }
 
 struct Player {
-    name:str
-    position:Position
+    var name:str
+    var position:Position
 }
 
 func main() {

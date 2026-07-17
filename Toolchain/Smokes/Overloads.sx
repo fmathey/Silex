@@ -1,5 +1,5 @@
 struct Meter {
-    value:int
+    var value:int
 
     func measure() int {
         return self.value

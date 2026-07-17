@@ -6,7 +6,7 @@ collection keeps the same instance instead of copying its fields.
 
 ```sx
 class Player {
-    health:int = 100
+    var health:int = 100
 
     pub func take_damage(amount:int) {
         self.health -= amount
@@ -24,7 +24,9 @@ print(first.get_health()) // 90
 ```
 
 Without a custom constructor, classes use the same named initializer and member
-syntax as structures. Every field without a declared default must be supplied.
+syntax as structures. Named fields initialize `let` and `var` alike; an omitted
+field uses its declared default, then its type's intrinsic value. Every field
+starts with `let` or `var`.
 Construction is explicit: a non-optional declaration such as
 `var player:Player` is invalid, because a class has no intrinsic instance.
 `var player:Player?` is valid and starts as `null` under the ordinary
@@ -37,8 +39,8 @@ receives `self` implicitly:
 
 ```sx
 class Session {
-    token:str
-    attempts:int = 1
+    var token:str
+    var attempts:int = 1
 
     pub init(token:str) {
         self.token = token
@@ -63,11 +65,15 @@ rules. A constructor is private without a marker, `sub` for the declaring class
 and future descendants, and `pub` for ordinary callers. It cannot be invoked as
 an instance method or return a value.
 
-Before the constructor body, fields receive their declared default or their
-type's intrinsic value when one exists. A field with neither must be assigned
-on every normal path. An uninitialized field cannot be read, and `self` cannot
-escape or receive an instance-method call until every field is initialized.
-A bare `return` is valid only after that point.
+Before the constructor body, every `var` field receives its declared default or
+its type's intrinsic value when one exists. A `var` field with neither must be
+assigned on every normal path. A `let` field with a declared default is already
+initialized and cannot be assigned in the body. A `let` field without a default
+starts uninitialized even when its type has an intrinsic value; every
+constructor of the declaring class must assign it exactly once on every normal
+path. An uninitialized field cannot be read, and `self` cannot escape or receive
+an instance-method call until every field is initialized. A bare `return` is
+valid only after that point.
 
 Declaring any `init` closes the named field initializer for that class. Every
 construction must then select a visible constructor; defaults do not synthesize
@@ -75,7 +81,7 @@ missing overloads:
 
 ```sx
 class Session {
-    token:str
+    var token:str
 
     pub init(token:str) {
         self.token = token
@@ -99,7 +105,7 @@ object:
 
 ```sx
 class Entity {
-    sub position:int
+    sub var position:int
 
     sub init(position:int) {
         self.position = position
@@ -111,7 +117,7 @@ class Entity {
 }
 
 class Player : Entity {
-    name:str
+    var name:str
 
     pub init(name:str, position:int) : super(position) {
         self.name = name
@@ -130,7 +136,9 @@ base with positional overload rules. A private base constructor is not
 accessible. Omitting the suffix means `: super()` and is valid only when the
 base has an accessible zero-argument construction. The complete base is built
 before the child's declared field values and constructor body. Base
-constructors are never inherited as constructors of the child.
+constructors are never inherited as constructors of the child. Only the
+constructor of the class that declares a `let` field may initialize it; a child
+may read an inherited `sub let` field but cannot replace it.
 
 When a base has no custom constructor, `super()` uses its historical field
 construction only if every required base field has a declared or intrinsic
@@ -215,14 +223,17 @@ Every class field and method is private by default. A private member is
 accessible from methods of its declaring class, including through another
 instance of that same class, but not from other code in the module.
 
+For a field, visibility precedes mutability: `pub var name:str`,
+`sub let generation:int`, or the private form `let id:int`.
+
 `pub` exposes a member everywhere the class is visible. `sub` reserves a member
 for its declaring class and descendants:
 
 ```sx
 pub class Session {
-    secret:str = ""
-    sub generation:int = 0
-    pub token:str
+    var secret:str = ""
+    sub var generation:int = 0
+    pub var token:str
 
     pub func reset_from(other:Session) {
         self.secret = other.secret
@@ -248,15 +259,15 @@ custom constructor. Structure members remain public by default; `pub` and
 
 ## Bindings and shared mutation
 
-A class reference always uses `var`. Another reference can mutate the same
-instance without assigning the local name, so it cannot satisfy `let`'s
-independent-value guarantee. This restriction is recursive: an optional,
-structure, array, list, or function value that can reach a class also uses
-`var`.
+A class reference always uses `var`, whether it is a local binding or a field.
+Another reference can mutate the same instance without assigning the local name,
+so it cannot satisfy `let`'s independent-value guarantee. This restriction is
+recursive: an optional, structure, array, list, or function value that can reach
+a class also uses `var`.
 
 ```sx
 struct Selection {
-    player:Player?
+    var player:Player?
 }
 
 var selection = Selection(player:Player())
@@ -298,7 +309,7 @@ A class may declare one automatic `drop` block for native resources:
 
 ```sx
 class Texture {
-    handle:SDL.Texture
+    var handle:SDL.Texture
 
     pub init(renderer:Renderer) {
         self.handle = SDL.create_texture(renderer.get_handle())

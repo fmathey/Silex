@@ -1,6 +1,6 @@
 struct Position {
-    x:int
-    y:int
+    var x:int
+    var y:int
 }
 
 func main() void {

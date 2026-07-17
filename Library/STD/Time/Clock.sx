@@ -1,10 +1,10 @@
 pub struct Clock {
-    last_microseconds:int
-    pending_seconds:float
-    total_seconds:float
-    time_scale:float = 1.0
-    initialized:bool
-    paused:bool
+    var last_microseconds:int
+    var pending_seconds:float
+    var total_seconds:float
+    var time_scale:float = 1.0
+    var initialized:bool
+    var paused:bool
 
     func tick() float {
         if self.paused {

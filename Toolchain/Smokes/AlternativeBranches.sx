@@ -1,5 +1,5 @@
 struct Probe {
-    count:int
+    var count:int
 
     func check(result:bool) bool {
         self.count += 1

@@ -22,7 +22,7 @@ Type annotations have no spaces around `:`:
 
 ```sx
 struct WindowSession {
-    frame_count:int
+    var frame_count:int
 }
 ```
 

@@ -1122,6 +1122,7 @@ fn collectSemanticInfo(
                 if (depth != 1 or parentheses != 0) continue;
                 var declaration_index = member_index;
                 var visibility: Ast.MemberVisibility = if (is_class) .private_access else .public_access;
+                var has_field_mutability = false;
                 if (tokens[declaration_index].tag == .keyword_override) {
                     declaration_index += 1;
                     member_index += 1;
@@ -1130,6 +1131,13 @@ fn collectSemanticInfo(
                     (tokens[declaration_index].tag == .keyword_pub or tokens[declaration_index].tag == .keyword_sub))
                 {
                     visibility = if (tokens[declaration_index].tag == .keyword_pub) .public_access else .subclass;
+                    declaration_index += 1;
+                    member_index += 1;
+                }
+                if (declaration_index < tokens.len and
+                    (tokens[declaration_index].tag == .keyword_let or tokens[declaration_index].tag == .keyword_var))
+                {
+                    has_field_mutability = true;
                     declaration_index += 1;
                     member_index += 1;
                 }
@@ -1146,7 +1154,7 @@ fn collectSemanticInfo(
                         .detail = "Silex method",
                         .visibility = visibility,
                     });
-                } else if (declaration.tag == .identifier and declaration_index + 2 < tokens.len and
+                } else if (has_field_mutability and declaration.tag == .identifier and declaration_index + 2 < tokens.len and
                     tokens[declaration_index + 1].tag == .colon and isTypeToken(tokens[declaration_index + 2].tag))
                 {
                     try info.members.append(allocator, .{
@@ -2240,7 +2248,7 @@ test "member completion exposes STD Time stopwatch methods" {
 test "member completion only includes members of the receiver structure" {
     const source =
         \\struct Move {
-        \\    speed:float = 100
+        \\    var speed:float = 100
         \\}
         \\func main() void {
         \\    var move:Move
@@ -2257,9 +2265,9 @@ test "member completion only includes members of the receiver structure" {
 test "member completion infers an explicit generic structure initializer" {
     const source =
         \\struct Vec3<T> {
-        \\    x:T
-        \\    y:T
-        \\    z:T
+        \\    var x:T
+        \\    var y:T
+        \\    var z:T
         \\    func reset() {}
         \\}
         \\func main() {
@@ -2278,9 +2286,9 @@ test "member completion infers an explicit generic structure initializer" {
 test "member completion resolves a local generic type alias initializer" {
     const source =
         \\struct Vec3<T> {
-        \\    x:T
-        \\    y:T
-        \\    z:T
+        \\    var x:T
+        \\    var y:T
+        \\    var z:T
         \\    func reset() {}
         \\}
         \\use Vec3<int> as Vec3i
@@ -2300,7 +2308,7 @@ test "member completion resolves a local generic type alias initializer" {
 test "member completion resolves generic and aliased type annotations" {
     const source =
         \\struct Vec3<T> {
-        \\    x:T
+        \\    var x:T
         \\    func reset() {}
         \\}
         \\use Vec3<int> as Vec3i
@@ -2325,12 +2333,12 @@ test "member completion resolves generic and aliased type annotations" {
 test "member completion resolves an aliased generic structure field" {
     const source =
         \\struct Vec3<T> {
-        \\    x:T
+        \\    var x:T
         \\    func reset() {}
         \\}
         \\use Vec3<int> as Vec3i
         \\struct Transform {
-        \\    position:Vec3i
+        \\    var position:Vec3i
         \\}
         \\func main() {
         \\    var transform = Transform()
@@ -2383,9 +2391,9 @@ test "member completion preserves collection aliases" {
 test "member completion recognizes class declarations" {
     const source =
         \\class Player {
-        \\    secret:int = 1
-        \\    sub energy:int = 50
-        \\    pub health:int = 100
+        \\    var secret:int = 1
+        \\    sub var energy:int = 50
+        \\    pub var health:int = 100
         \\    func reset() {}
         \\}
         \\func main() {
@@ -2402,7 +2410,7 @@ test "member completion recognizes class declarations" {
 test "member completion infers positional class construction and inherited methods" {
     const source =
         \\class Animal {
-        \\    sub name:str
+        \\    sub var name:str
         \\    sub init(name:str) { self.name = name }
         \\    pub func get_name() str { return self.name }
         \\}
@@ -2425,9 +2433,9 @@ test "member completion infers positional class construction and inherited metho
 test "self completion includes private sub and public class members" {
     const source =
         \\class Player {
-        \\    secret:int = 1
-        \\    sub energy:int = 50
-        \\    pub health:int = 100
+        \\    var secret:int = 1
+        \\    sub var energy:int = 50
+        \\    pub var health:int = 100
         \\    func reset() {
         \\        print(self.)
         \\    }
@@ -2445,7 +2453,7 @@ test "self completion includes private sub and public class members" {
 test "self completion resolves fields and methods of the enclosing structure" {
     const source =
         \\struct Counter {
-        \\    value:int
+        \\    var value:int
         \\
         \\    func current() int {
         \\        return self.
@@ -2489,7 +2497,7 @@ test "signature help recognizes explicit generic arguments" {
 test "cascade completion resolves a receiver on the preceding line" {
     const source =
         \\struct Move {
-        \\    speed:float = 100
+        \\    var speed:float = 100
         \\}
         \\func main() void {
         \\    var move:Move
@@ -2506,7 +2514,7 @@ test "cascade completion resolves a receiver on the preceding line" {
 test "compact cascade completion keeps the first receiver" {
     const source =
         \\struct Move {
-        \\    speed:float = 100
+        \\    var speed:float = 100
         \\    func reset() void {}
         \\}
         \\func main() void {
@@ -2559,7 +2567,7 @@ test "first dot of an indented cascade does not offer global completions" {
 test "cascade completion resolves an inferred structure initializer" {
     const source =
         \\struct Move {
-        \\    speed:float = 100
+        \\    var speed:float = 100
         \\    func stop() void {}
         \\}
         \\func main() void {

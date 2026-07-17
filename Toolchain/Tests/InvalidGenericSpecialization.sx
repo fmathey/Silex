@@ -1,6 +1,6 @@
 struct Interval<T> {
-    minimum:T
-    maximum:T
+    var minimum:T
+    var maximum:T
 
     func contains(value:T) bool {
         return value >= self.minimum && value <= self.maximum

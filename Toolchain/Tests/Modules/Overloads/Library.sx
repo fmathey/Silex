@@ -1,5 +1,5 @@
 pub struct Value {
-    count:int
+    var count:int
 }
 
 pub func measure() int {

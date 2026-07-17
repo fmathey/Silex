@@ -2457,8 +2457,8 @@ test "generate recursive structural equality" {
     const allocator = arena.allocator();
 
     var parser = Parser.init(allocator,
-        \\struct Position { x:int y:int }
-        \\struct Player { name:str position:Position }
+        \\struct Position { var x:int var y:int }
+        \\struct Player { var name:str var position:Position }
         \\func main() void {
         \\    print(Player(name:"Ada", position:Position(x:10, y:20)) == Player(name:"Ada", position:Position(x:10, y:20)))
         \\}
@@ -2647,7 +2647,7 @@ test "generate value structs and member access" {
     const allocator = arena.allocator();
 
     var parser = Parser.init(allocator,
-        \\struct Position { x:int; y:int }
+        \\struct Position { var x:int; var y:int }
         \\func main() void { var position = Position(y:20, x:10); position.x = 12; print(position.x) }
     );
     var analyzer = Semantic.Analyzer.init(allocator);
@@ -2668,7 +2668,7 @@ test "generate class references identity access and cycle tracing" {
     const allocator = arena.allocator();
 
     var parser = Parser.init(allocator,
-        \\class Node { next:Node? = null; pub func clear() { self.next = null } }
+        \\class Node { var next:Node? = null; pub func clear() { self.next = null } }
         \\func main() { var first = Node(); var alias = first; alias.clear(); assert(first == alias) }
     );
     var analyzer = Semantic.Analyzer.init(allocator);
@@ -2710,7 +2710,7 @@ test "generate inferred const and mutating methods" {
 
     var parser = Parser.init(allocator,
         \\struct Counter {
-        \\    value:int
+        \\    var value:int
         \\    func current() int { return self.value }
         \\    func increment() void { self.value = self.value + 1 }
         \\}

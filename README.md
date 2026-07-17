@@ -5,9 +5,9 @@ language aims for concise, familiar syntax.
 
 ```sx
 struct Rover {
-    name:str
-    energy:int
-    trail:int[]
+    let name:str
+    var energy:int
+    var trail:int[]
 
     func travel(cost:int) int {
         self.energy -= cost

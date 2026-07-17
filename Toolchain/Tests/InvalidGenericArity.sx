@@ -1,6 +1,6 @@
 struct Pair<First, Second> {
-    first:First
-    second:Second
+    var first:First
+    var second:Second
 }
 
 func main() {

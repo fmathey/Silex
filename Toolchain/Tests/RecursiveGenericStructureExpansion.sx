@@ -1,9 +1,9 @@
 struct Box<T> {
-    value:T
+    var value:T
 }
 
 struct Expand<T> {
-    value:Expand<Box<T>>?
+    var value:Expand<Box<T>>?
 }
 
 func main() {

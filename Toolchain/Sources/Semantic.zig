@@ -362,6 +362,7 @@ pub const StructureField = struct {
     generated_name: []const u8,
     type: Type,
     visibility: Ast.MemberVisibility,
+    mutability: Ast.Mutability,
     initializer: ?*Expression,
 };
 
@@ -417,6 +418,7 @@ pub const Receiver = union(enum) {
         name: []const u8,
         control_binding: bool,
     },
+    immutable_field: []const u8,
     borrowed: []const u8,
     temporary,
     cascade_temporary,
@@ -550,7 +552,14 @@ const StructureFieldSymbol = struct {
     position: Source.Position,
     ast_initializer: ?*Ast.Expression,
     visibility: Ast.MemberVisibility,
+    mutability: Ast.Mutability,
     default_value: ?*Expression = null,
+};
+
+const FieldInitialization = enum {
+    uninitialized,
+    maybe_initialized,
+    initialized,
 };
 
 pub const Analyzer = struct {
@@ -587,12 +596,15 @@ pub const Analyzer = struct {
                 .generated_name = field.generated_name,
                 .type = field.type,
                 .visibility = field.visibility,
+                .mutability = field.mutability,
                 .initializer = if (symbol.constructors.len == 0)
                     field.default_value
                 else if (field.default_value) |default_value|
                     default_value
+                else if (field.mutability == .mutable)
+                    try self.intrinsicDefaultExpression(field.type, field.position)
                 else
-                    try self.intrinsicDefaultExpression(field.type, field.position),
+                    null,
             });
             var constructors: std.ArrayList(Constructor) = .empty;
             for (ast_structure.constructors, symbol.constructors) |ast_constructor, constructor_symbol| {
@@ -718,9 +730,13 @@ pub const Analyzer = struct {
                     .position = field.position,
                     .ast_initializer = field.initializer,
                     .visibility = field.visibility,
+                    .mutability = field.mutability,
                 });
             }
             self.structures.items[structure_index].fields = try fields.toOwnedSlice(self.allocator);
+            for (self.structures.items[structure_index].fields) |field| {
+                if (field.mutability == .immutable) try self.requireIndependentLetType(field.type, field.position);
+            }
 
             var constructors: std.ArrayList(ConstructorSymbol) = .empty;
             for (ast_structure.constructors) |ast_constructor| {
@@ -1317,9 +1333,13 @@ pub const Analyzer = struct {
         position: Source.Position,
     ) AnalyzeError!void {
         const structure = &self.structures.items[structure_index];
-        const initialized = try self.allocator.alloc(bool, structure.fields.len);
+        const initialized = try self.allocator.alloc(FieldInitialization, structure.fields.len);
         for (structure.fields, 0..) |field, index| {
-            initialized[index] = field.default_value != null or self.hasIntrinsicDefault(field.type);
+            initialized[index] = if (field.default_value != null or
+                (field.mutability == .mutable and self.hasIntrinsicDefault(field.type)))
+                .initialized
+            else
+                .uninitialized;
         }
         const falls_through = try self.validateConstructorStatements(structure, statements_value, initialized);
         if (falls_through) try self.requireConstructorFieldsInitialized(structure, initialized, position);
@@ -1329,7 +1349,7 @@ pub const Analyzer = struct {
         self: *Analyzer,
         structure: *const StructureSymbol,
         statements_value: []const Statement,
-        initialized: []bool,
+        initialized: []FieldInitialization,
     ) AnalyzeError!bool {
         for (statements_value) |statement_value| {
             const falls_through = try self.validateConstructorStatement(structure, statement_value, initialized);
@@ -1342,7 +1362,7 @@ pub const Analyzer = struct {
         self: *Analyzer,
         structure: *const StructureSymbol,
         statement_value: Statement,
-        initialized: []bool,
+        initialized: []FieldInitialization,
     ) AnalyzeError!bool {
         switch (statement_value) {
             .print => |value| try self.validateConstructorExpression(structure, value, initialized),
@@ -1362,7 +1382,19 @@ pub const Analyzer = struct {
                     null;
                 if (assigned_field) |field_index| {
                     try self.validateConstructorExpression(structure, assignment_value.value.?, initialized);
-                    initialized[field_index] = true;
+                    const field = structure.fields[field_index];
+                    if (field.mutability == .immutable) switch (initialized[field_index]) {
+                        .uninitialized => {},
+                        .initialized => {
+                            const message = try std.fmt.allocPrint(self.allocator, "field '{s}' is initialized more than once", .{field.source_name});
+                            return self.fail(assignment_value.position, message);
+                        },
+                        .maybe_initialized => {
+                            const message = try std.fmt.allocPrint(self.allocator, "field '{s}' may be initialized more than once", .{field.source_name});
+                            return self.fail(assignment_value.position, message);
+                        },
+                    };
+                    initialized[field_index] = .initialized;
                 } else {
                     try self.validateConstructorExpression(structure, assignment_value.target, initialized);
                     if (assignment_value.value) |value| try self.validateConstructorExpression(structure, value, initialized);
@@ -1370,36 +1402,50 @@ pub const Analyzer = struct {
             },
             .if_statement => |if_value| {
                 try self.validateConstructorCondition(structure, if_value.condition, initialized);
-                var fallthrough_states: std.ArrayList([]bool) = .empty;
+                var fallthrough_states: std.ArrayList([]FieldInitialization) = .empty;
 
-                const body_state = try self.allocator.dupe(bool, initialized);
+                const body_state = try self.allocator.dupe(FieldInitialization, initialized);
                 if (try self.validateConstructorStatements(structure, if_value.body, body_state)) {
                     try fallthrough_states.append(self.allocator, body_state);
                 }
                 for (if_value.alternatives) |alternative| {
                     try self.validateConstructorCondition(structure, alternative.condition, initialized);
-                    const alternative_state = try self.allocator.dupe(bool, initialized);
+                    const alternative_state = try self.allocator.dupe(FieldInitialization, initialized);
                     if (try self.validateConstructorStatements(structure, alternative.body, alternative_state)) {
                         try fallthrough_states.append(self.allocator, alternative_state);
                     }
                 }
                 if (if_value.else_body) |else_body| {
-                    const else_state = try self.allocator.dupe(bool, initialized);
+                    const else_state = try self.allocator.dupe(FieldInitialization, initialized);
                     if (try self.validateConstructorStatements(structure, else_body, else_state)) {
                         try fallthrough_states.append(self.allocator, else_state);
                     }
                 } else {
-                    try fallthrough_states.append(self.allocator, try self.allocator.dupe(bool, initialized));
+                    try fallthrough_states.append(self.allocator, try self.allocator.dupe(FieldInitialization, initialized));
                 }
                 if (fallthrough_states.items.len == 0) return false;
                 for (initialized, 0..) |*field_initialized, field_index| {
-                    field_initialized.* = true;
-                    for (fallthrough_states.items) |state| field_initialized.* = field_initialized.* and state[field_index];
+                    var saw_uninitialized = false;
+                    var saw_initialized = false;
+                    for (fallthrough_states.items) |state| switch (state[field_index]) {
+                        .uninitialized => saw_uninitialized = true,
+                        .initialized => saw_initialized = true,
+                        .maybe_initialized => {
+                            saw_uninitialized = true;
+                            saw_initialized = true;
+                        },
+                    };
+                    field_initialized.* = if (saw_uninitialized and saw_initialized)
+                        .maybe_initialized
+                    else if (saw_initialized)
+                        .initialized
+                    else
+                        .uninitialized;
                 }
             },
             .while_statement => |while_value| {
                 try self.validateConstructorCondition(structure, while_value.condition, initialized);
-                const body_state = try self.allocator.dupe(bool, initialized);
+                const body_state = try self.allocator.dupe(FieldInitialization, initialized);
                 _ = try self.validateConstructorStatements(structure, while_value.body, body_state);
             },
             .for_statement => |for_value| {
@@ -1410,7 +1456,7 @@ pub const Analyzer = struct {
                         try self.validateConstructorExpression(structure, range.end, initialized);
                     },
                 }
-                const body_state = try self.allocator.dupe(bool, initialized);
+                const body_state = try self.allocator.dupe(FieldInitialization, initialized);
                 _ = try self.validateConstructorStatements(structure, for_value.body, body_state);
             },
             .break_statement, .continue_statement => return false,
@@ -1428,7 +1474,7 @@ pub const Analyzer = struct {
         self: *Analyzer,
         structure: *const StructureSymbol,
         condition: Statement.Condition,
-        initialized: []const bool,
+        initialized: []const FieldInitialization,
     ) AnalyzeError!void {
         switch (condition) {
             .expression => |value| try self.validateConstructorExpression(structure, value, initialized),
@@ -1440,7 +1486,7 @@ pub const Analyzer = struct {
         self: *Analyzer,
         structure: *const StructureSymbol,
         expression_value: *const Expression,
-        initialized: []const bool,
+        initialized: []const FieldInitialization,
     ) AnalyzeError!void {
         switch (expression_value.value) {
             .integer, .floating, .boolean, .null, .string, .cascade_target, .variable, .optional_unwrap => {},
@@ -1481,7 +1527,7 @@ pub const Analyzer = struct {
             .member_access, .bound_function => |member| {
                 if (member.object.value == .self) {
                     const field_index = generatedFieldIndex(structure, member.generated_name) orelse return;
-                    if (!initialized[field_index]) {
+                    if (initialized[field_index] != .initialized) {
                         const message = try std.fmt.allocPrint(self.allocator, "field '{s}' is read before it is initialized", .{structure.fields[field_index].source_name});
                         return self.fail(expression_value.position, message);
                     }
@@ -1514,11 +1560,11 @@ pub const Analyzer = struct {
     fn requireConstructorFieldsInitialized(
         self: *Analyzer,
         structure: *const StructureSymbol,
-        initialized: []const bool,
+        initialized: []const FieldInitialization,
         position: Source.Position,
     ) AnalyzeError!void {
         for (initialized, 0..) |field_initialized, field_index| {
-            if (field_initialized) continue;
+            if (field_initialized == .initialized) continue;
             const message = try std.fmt.allocPrint(
                 self.allocator,
                 "constructor of class '{s}' leaves field '{s}' without a value",
@@ -1754,6 +1800,19 @@ pub const Analyzer = struct {
             try self.memberAccessExpressionRaw(ast.target.value.member_access, scope, false)
         else
             try self.expression(ast.target, scope);
+
+        if (self.immutableFieldInPlace(target)) |field_candidate| {
+            const direct_constructor_initialization = self.current_constructor and
+                ast.operator == .assign and
+                target.value == .member_access and
+                target.value.member_access.object.value == .self and
+                self.current_structure_index.? == field_candidate.structure_index and
+                field_candidate.symbol.ast_initializer == null;
+            if (!direct_constructor_initialization) {
+                const message = try std.fmt.allocPrint(self.allocator, "cannot mutate let field '{s}'", .{field_candidate.symbol.source_name});
+                return self.fail(ast.position, message);
+            }
+        }
 
         var value: ?*Expression = null;
         if (ast.value) |ast_value| value = try self.expressionForExpected(ast_value, scope, target.type);
@@ -2843,6 +2902,7 @@ pub const Analyzer = struct {
         if (object.type == .structure and object.type.structure.is_class and receiver == .temporary) {
             receiver = .mutable;
         }
+        if (self.immutableFieldInPlace(object)) |field_candidate| receiver = .{ .immutable_field = field_candidate.symbol.source_name };
         return self.methodCallExpressionWithObject(call, object, scope, receiver, false);
     }
 
@@ -2859,6 +2919,7 @@ pub const Analyzer = struct {
                 call,
                 object,
                 scope,
+                receiver,
                 allow_temporary_collection_mutation,
             ),
             .structure => {},
@@ -3013,11 +3074,12 @@ pub const Analyzer = struct {
             .position = cascade.object.position,
             .value = .cascade_target,
         });
-        const ordinary_receiver = receiverFor(
+        var ordinary_receiver = receiverFor(
             cascade.object,
             scope,
             self.current_self_state.mutable_borrow or self.current_self_state.immutable_borrows != 0,
         );
+        if (self.immutableFieldInPlace(object)) |field_candidate| ordinary_receiver = .{ .immutable_field = field_candidate.symbol.source_name };
         const owns_temporary = isCascadeOwnedTemporary(cascade.object);
         const receiver: Receiver = if (ordinary_receiver == .temporary and owns_temporary)
             .cascade_temporary
@@ -3038,6 +3100,10 @@ pub const Analyzer = struct {
                 try operations.append(self.allocator, .{ .method_call = resolved });
             },
             .field_assignment => |field_assignment| {
+                if (self.immutableFieldInPlace(object)) |field_candidate| {
+                    const message = try std.fmt.allocPrint(self.allocator, "cannot mutate through let field '{s}'", .{field_candidate.symbol.source_name});
+                    return self.fail(field_assignment.name_position, message);
+                }
                 try self.requireMutableCascadeReceiver(
                     cascade.object,
                     scope,
@@ -3061,6 +3127,10 @@ pub const Analyzer = struct {
                 const declaring_structure = &self.structures.items[field_candidate.structure_index];
                 const field = field_candidate.symbol;
                 try self.requireFieldAccess(field_candidate.structure_index, declaring_structure, field, field_assignment.name_position);
+                if (field.mutability == .immutable) {
+                    const message = try std.fmt.allocPrint(self.allocator, "cannot mutate let field '{s}'", .{field.source_name});
+                    return self.fail(field_assignment.name_position, message);
+                }
                 var value = try self.expressionForExpected(field_assignment.value, scope, field.type);
                 value = try self.coerce(value, field.type);
                 if (!typeEqual(value.type, field.type)) {
@@ -3130,6 +3200,7 @@ pub const Analyzer = struct {
         call: Ast.Expression.MethodCall,
         object: *Expression,
         scope: *const Scope,
+        receiver: Receiver,
         allow_temporary_mutation: bool,
     ) AnalyzeError!*Expression {
         const operation: Expression.CollectionMethod.Operation = if (std.mem.eql(u8, call.name, "count"))
@@ -3188,7 +3259,7 @@ pub const Analyzer = struct {
         switch (operation) {
             .count, .is_empty => {},
             else => if (!allow_temporary_mutation or assignmentRoot(call.object) != null)
-                try self.requireMutableCollectionReceiver(call.object, scope, call.name_position, call.name),
+                try self.requireMutableCollectionReceiver(call.object, object, scope, receiver, call.name_position, call.name),
         }
 
         var resolved_operation = operation;
@@ -3279,10 +3350,20 @@ pub const Analyzer = struct {
     fn requireMutableCollectionReceiver(
         self: *Analyzer,
         ast_object: *const Ast.Expression,
+        object: *const Expression,
         scope: *const Scope,
+        receiver: Receiver,
         position: Source.Position,
         method_name: []const u8,
     ) AnalyzeError!void {
+        if (receiver == .immutable_field) {
+            const message = try std.fmt.allocPrint(self.allocator, "cannot mutate through let field '{s}'", .{receiver.immutable_field});
+            return self.fail(position, message);
+        }
+        if (self.immutableFieldInPlace(object)) |field_candidate| {
+            const message = try std.fmt.allocPrint(self.allocator, "cannot mutate through let field '{s}'", .{field_candidate.symbol.source_name});
+            return self.fail(position, message);
+        }
         const root = assignmentRoot(ast_object) orelse return self.fail(position, "cannot call mutating collection method on a temporary value");
         switch (root) {
             .self => {
@@ -3554,6 +3635,37 @@ pub const Analyzer = struct {
         return null;
     }
 
+    fn findFieldByGeneratedName(self: *const Analyzer, structure_index: usize, name: []const u8) ?FieldCandidate {
+        var declaring_index: ?usize = structure_index;
+        while (declaring_index) |index| {
+            const structure = self.structures.items[index];
+            for (structure.fields) |field| {
+                if (std.mem.eql(u8, field.generated_name, name)) return .{
+                    .symbol = field,
+                    .structure_index = index,
+                };
+            }
+            declaring_index = structure.base_index;
+        }
+        return null;
+    }
+
+    fn immutableFieldInPlace(self: *const Analyzer, expression_value: *const Expression) ?FieldCandidate {
+        return switch (expression_value.value) {
+            .member_access, .bound_function => |member| field: {
+                if (self.immutableFieldInPlace(member.object)) |candidate| break :field candidate;
+                if (member.object.type != .structure) break :field null;
+                const structure_index = self.findStructureIndexByGeneratedName(member.object.type.structure.generated_name) orelse break :field null;
+                const candidate = self.findFieldByGeneratedName(structure_index, member.generated_name) orelse break :field null;
+                break :field if (candidate.symbol.mutability == .immutable) candidate else null;
+            },
+            .index_access => |access| self.immutableFieldInPlace(access.object),
+            .slice_access => |access| self.immutableFieldInPlace(access.object),
+            .unary => |unary| self.immutableFieldInPlace(unary.operand),
+            else => null,
+        };
+    }
+
     fn implicitBaseInitialization(self: *Analyzer, structure_index: usize) AnalyzeError!ImplicitBaseInitialization {
         const structure = self.structures.items[structure_index];
         const base_index = structure.base_index orelse return .{ .available = true, .initializer = null };
@@ -3721,14 +3833,17 @@ pub const Analyzer = struct {
                 try self.expressionForExpected(field.value, scope, expected_field.type)
             else if (expected_field.default_value) |default_value|
                 default_value
-            else if (structure.is_class) {
-                const message = try std.fmt.allocPrint(
-                    self.allocator,
-                    "class '{s}' requires field '{s}'",
-                    .{ structure.source_name, expected_field.source_name },
-                );
-                return self.fail(initializer.name_position, message);
-            } else try self.defaultExpression(expected_field.type, initializer.name_position);
+            else if (structure.is_class)
+                try self.intrinsicDefaultExpression(expected_field.type, initializer.name_position) orelse {
+                    const message = try std.fmt.allocPrint(
+                        self.allocator,
+                        "class '{s}' requires field '{s}'",
+                        .{ structure.source_name, expected_field.source_name },
+                    );
+                    return self.fail(initializer.name_position, message);
+                }
+            else
+                try self.defaultExpression(expected_field.type, initializer.name_position);
             value = try self.coerce(value, expected_field.type);
             if (!typeEqual(value.type, expected_field.type)) {
                 const message = try typeMismatchMessage(self.allocator, expected_field.type, value.type);
@@ -3906,19 +4021,20 @@ pub const Analyzer = struct {
             .lifetime_depth = receiver.lifetime_depth,
             .value = .{ .optional_unwrap = .{ .generated_name = "silexOptionalValue", .capture_box = &never_capture_box } },
         });
-        const end = if (member.arguments) |arguments|
-            try self.methodCallExpressionWithObject(.{
+        const end = if (member.arguments) |arguments| method: {
+            var method_receiver = receiverFor(member.object, scope, false);
+            if (self.immutableFieldInPlace(receiver)) |field_candidate| method_receiver = .{ .immutable_field = field_candidate.symbol.source_name };
+            break :method try self.methodCallExpressionWithObject(.{
                 .object = member.object,
                 .name = member.name,
                 .name_position = member.name_position,
                 .arguments = arguments,
-            }, unwrapped, scope, receiverFor(member.object, scope, false), false)
-        else
-            try self.memberAccessExpressionWithObject(.{
-                .object = member.object,
-                .name = member.name,
-                .name_position = member.name_position,
-            }, unwrapped, scope, true);
+            }, unwrapped, scope, method_receiver, false);
+        } else try self.memberAccessExpressionWithObject(.{
+            .object = member.object,
+            .name = member.name,
+            .name_position = member.name_position,
+        }, unwrapped, scope, true);
         const result_type = if (end.type == .void or end.type == .optional)
             end.type
         else
@@ -4242,6 +4358,10 @@ pub const Analyzer = struct {
                             try std.fmt.allocPrint(self.allocator, "cannot call mutating method '{s}' on immutable value '{s}'", .{ call.source_name, receiver.name });
                         return self.fail(call.position, message);
                     },
+                    .immutable_field => |name| {
+                        const message = try std.fmt.allocPrint(self.allocator, "cannot call mutating method '{s}' through let field '{s}'", .{ call.source_name, name });
+                        return self.fail(call.position, message);
+                    },
                     .borrowed => |name| {
                         const message = try std.fmt.allocPrint(self.allocator, "cannot mutate borrowed variable '{s}'", .{name});
                         return self.fail(call.position, message);
@@ -4380,6 +4500,10 @@ pub const Analyzer = struct {
                 .value = .{ .variable = .{ .generated_name = symbol.generated_name, .capture_box = &symbol.state.capture_box } },
             });
         } else try self.expression(unary.operand, scope);
+        if (self.immutableFieldInPlace(operand)) |field_candidate| {
+            const message = try std.fmt.allocPrint(self.allocator, "cannot pass let field '{s}' with '&'", .{field_candidate.symbol.source_name});
+            return self.fail(unary.operator_position, message);
+        }
         if (!typeEqual(operand.type, expected_type)) return operand;
         return self.newExpression(.{
             .type = operand.type,
@@ -4412,6 +4536,10 @@ pub const Analyzer = struct {
             return self.fail(unary.operator_position, message);
         }
         const operand = try self.expression(unary.operand, scope);
+        if (mutable) if (self.immutableFieldInPlace(operand)) |field_candidate| {
+            const message = try std.fmt.allocPrint(self.allocator, "cannot mutably borrow let field '{s}'", .{field_candidate.symbol.source_name});
+            return self.fail(unary.operator_position, message);
+        };
         const target = try self.allocator.create(Type);
         target.* = operand.type;
         const borrow = Borrow{ .root = symbol.state, .mutable = mutable };
@@ -4696,8 +4824,8 @@ pub const Analyzer = struct {
     }
 };
 
-fn allFieldsInitialized(initialized: []const bool) bool {
-    for (initialized) |field_initialized| if (!field_initialized) return false;
+fn allFieldsInitialized(initialized: []const FieldInitialization) bool {
+    for (initialized) |field_initialized| if (field_initialized != .initialized) return false;
     return true;
 }
 
@@ -5467,6 +5595,93 @@ fn expectResolvedSemanticError(source: []const u8, expected_message: []const u8)
     try std.testing.expectEqualStrings(expected_message, analyzer.diagnostic.?.message);
 }
 
+fn expectSemanticSuccess(source: []const u8) !void {
+    const Parser = @import("Parser.zig").Parser;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var parser = Parser.init(allocator, source);
+    var analyzer = Analyzer.init(allocator);
+    _ = analyzer.analyze(try resolveSingleTestProgram(allocator, try parser.parse())) catch |failure| {
+        if (analyzer.diagnostic) |diagnostic| std.debug.print("unexpected semantic error: {s}\n", .{diagnostic.message});
+        return failure;
+    };
+}
+
+test "field mutability controls direct and nested mutation" {
+    try expectSemanticSuccess(
+        \\struct Counter { var value:int; func bump() { self.value += 1 } }
+        \\struct State { let id:int; var counter:Counter }
+        \\func main() { var state = State(id:1, counter:Counter(value:0)); state.counter.bump() }
+    );
+    try expectResolvedSemanticError(
+        "struct State { let id:int } func main() { var state = State(id:1); state.id = 2 }",
+        "cannot mutate let field 'id'",
+    );
+    try expectResolvedSemanticError(
+        "struct Counter { var value:int } struct State { let counter:Counter } func main() { var state = State(counter:Counter(value:0)); state.counter.value = 1 }",
+        "cannot mutate let field 'counter'",
+    );
+    try expectResolvedSemanticError(
+        "struct Counter { var value:int; func bump() { self.value += 1 } } struct State { let counter:Counter } func main() { var state = State(counter:Counter(value:0)); state.counter.bump() }",
+        "cannot call mutating method 'bump' through let field 'counter'",
+    );
+    try expectResolvedSemanticError(
+        "struct State { let values:int[] } func main() { var state = State(values:[]); state.values.append(1) }",
+        "cannot mutate through let field 'values'",
+    );
+    try expectResolvedSemanticError(
+        "struct Counter { var value:int; func bump() { self.value += 1 } } struct State { let counter:Counter? } func main() { var state = State(counter:Counter(value:0)); state.counter?.bump() }",
+        "cannot call mutating method 'bump' through let field 'counter'",
+    );
+    try expectResolvedSemanticError(
+        "struct State { let values:int[]? } func main() { var state = State(values:[]); state.values?.append(1) }",
+        "cannot mutate through let field 'values'",
+    );
+}
+
+test "let class fields initialize exactly once in their declaring constructor" {
+    try expectSemanticSuccess(
+        \\class User {
+        \\    let id:int
+        \\    pub var name:str
+        \\    pub init(id:int, name:str) { self.id = id; self.name = name }
+        \\}
+        \\func main() { var user = User(1, "Ada"); user.name = "Grace" }
+    );
+    try expectSemanticError(
+        "class User { let id:int; pub init(id:int) { self.id = id; self.id = id } } func main() {}",
+        "field 'id' is initialized more than once",
+    );
+    try expectSemanticError(
+        "class User { let id:int; pub init(assign:bool) { if assign { self.id = 1 } } } func main() {}",
+        "constructor of class 'User' leaves field 'id' without a value",
+    );
+    try expectSemanticError(
+        "class User { let id:int; pub init(assign:bool) { if assign { self.id = 1 } self.id = 2 } } func main() {}",
+        "field 'id' may be initialized more than once",
+    );
+    try expectSemanticError(
+        "class User { let id:int = 1; pub init() { self.id = 2 } } func main() {}",
+        "cannot mutate let field 'id'",
+    );
+    try expectSemanticError(
+        "class Base { sub let id:int; sub init(id:int) { self.id = id } } class Child : Base { pub init() : super(1) { self.id = 2 } } func main() {}",
+        "cannot mutate let field 'id'",
+    );
+}
+
+test "let fields require recursively independent types" {
+    try expectSemanticError(
+        "class Player {} struct Team { let player:Player } func main() {}",
+        "type 'Player' is not an independent value and cannot be bound with 'let'; use 'var'",
+    );
+    try expectSemanticError(
+        "struct Handler { let callback:func() } func main() {}",
+        "type 'func' is not an independent value and cannot be bound with 'let'; use 'var'",
+    );
+}
+
 fn resolveSingleTestProgram(allocator: Allocator, program: Ast.Program) !Ast.Program {
     const Modules = @import("Modules.zig");
     const project = @import("Project.zig").Project{
@@ -5533,8 +5748,8 @@ test "let accepts recursively independent values" {
     const allocator = arena.allocator();
 
     var parser = Parser.init(allocator,
-        \\struct Position { x:int; y:int }
-        \\struct Snapshot { positions:Position[]; selected:Position? }
+        \\struct Position { var x:int; var y:int }
+        \\struct Snapshot { var positions:Position[]; var selected:Position? }
         \\func main() {
         \\    let origin = Position()
         \\    let snapshot = Snapshot(positions:[origin], selected:origin)
@@ -5553,14 +5768,14 @@ test "let rejects function values directly and through fields" {
         "type 'func' is not an independent value and cannot be bound with 'let'; use 'var'",
     );
     try expectResolvedSemanticError(
-        \\struct Handler { callback:func() }
+        \\struct Handler { var callback:func() }
         \\func main() { let handler = Handler(callback:func() {}); }
     ,
         "type 'Handler' is not an independent value because field 'callback' reaches 'func'; use 'var'",
     );
     try expectResolvedSemanticError(
-        \\struct Handler { callbacks:func()[] }
-        \\struct Screen { handler:Handler? }
+        \\struct Handler { var callbacks:func()[] }
+        \\struct Screen { var handler:Handler? }
         \\func main() { let screen = Screen(handler:null); }
     ,
         "type 'Screen' is not an independent value because field 'handler.callbacks' reaches 'func'; use 'var'",
@@ -5574,7 +5789,7 @@ test "classes have shared-reference types and are never independent let values" 
     const allocator = arena.allocator();
 
     var parser = Parser.init(allocator,
-        \\class Player { pub health:int = 100 }
+        \\class Player { pub var health:int = 100 }
         \\func main() { var player = Player(); var alias = player; alias.health -= 1 }
     );
     var analyzer = Analyzer.init(allocator);
@@ -5612,8 +5827,8 @@ test "class members are private by default and pub exposes them" {
 
     var parser = Parser.init(allocator,
         \\class Vault {
-        \\    value:int = 40
-        \\    sub offset:int = 2
+        \\    var value:int = 40
+        \\    sub var offset:int = 2
         \\    func total() int { return self.value + self.offset }
         \\    pub func read() int { return self.total() }
         \\    pub func copy_from(other:Vault) { self.value = other.value }
@@ -5627,7 +5842,7 @@ test "class members are private by default and pub exposes them" {
     try std.testing.expectEqual(Ast.MemberVisibility.public_access, program.structures[0].methods[1].visibility);
 
     try expectResolvedSemanticError(
-        "class Vault { value:int = 1 } func main() { var vault = Vault(); print(vault.value) }",
+        "class Vault { var value:int = 1 } func main() { var vault = Vault(); print(vault.value) }",
         "field 'value' is private in class 'Vault'",
     );
     try expectResolvedSemanticError(
@@ -5635,15 +5850,15 @@ test "class members are private by default and pub exposes them" {
         "method 'reset' is private in class 'Vault'",
     );
     try expectResolvedSemanticError(
-        "class Vault { sub value:int = 1 } func main() { var vault = Vault(); print(vault.value) }",
+        "class Vault { sub var value:int = 1 } func main() { var vault = Vault(); print(vault.value) }",
         "field 'value' is accessible only from class 'Vault' and its descendants",
     );
     try expectResolvedSemanticError(
-        "class Vault { value:int } func main() { var vault = Vault(value:1) }",
+        "class Vault { var value:int } func main() { var vault = Vault(value:1) }",
         "field 'value' is private in class 'Vault'",
     );
     try expectResolvedSemanticError(
-        "class Vault { callback:(func())? = null } func main() { var vault = Vault(); print(vault.callback == null) }",
+        "class Vault { var callback:(func())? = null } func main() { var vault = Vault(); print(vault.callback == null) }",
         "field 'callback' is private in class 'Vault'",
     );
     try expectResolvedSemanticError(
@@ -5651,7 +5866,7 @@ test "class members are private by default and pub exposes them" {
         "method 'reset' is private in class 'Vault'",
     );
     try expectResolvedSemanticError(
-        "class Vault { value:int = 1 } func main() { var vault = Vault()..value = 2 }",
+        "class Vault { var value:int = 1 } func main() { var vault = Vault()..value = 2 }",
         "field 'value' is private in class 'Vault'",
     );
 }
@@ -5663,10 +5878,10 @@ test "class constructors overload and establish private state" {
     const allocator = arena.allocator();
 
     var parser = Parser.init(allocator,
-        \\class Player { pub health:int = 100 }
+        \\class Player { pub var health:int = 100 }
         \\class Match {
-        \\    owner:Player
-        \\    count:int = 1
+        \\    var owner:Player
+        \\    var count:int = 1
         \\    pub init(owner:Player) { self.owner = owner }
         \\    pub init(owner:Player, count:int) { self.owner = owner; self.count = count }
         \\    pub func get_owner() Player { return self.owner }
@@ -5680,34 +5895,34 @@ test "class constructors overload and establish private state" {
     try std.testing.expect(program.functions[0].statements[0].variable_declaration.initializer.value == .class_initializer);
 
     try expectResolvedSemanticError(
-        "class Session { token:str; pub init(token:str) { self.token = token } } func main() { var session = Session() }",
+        "class Session { var token:str; pub init(token:str) { self.token = token } } func main() { var session = Session() }",
         "no compatible constructor for 'Session'; visible constructors: Session(str)",
     );
     try expectResolvedSemanticError(
-        "class Session { pub token:str; pub init(token:str) { self.token = token } } func main() { var session = Session(token:\"abc\") }",
+        "class Session { pub var token:str; pub init(token:str) { self.token = token } } func main() { var session = Session(token:\"abc\") }",
         "class 'Session' declares custom constructors and cannot use a named field initializer",
     );
     try expectResolvedSemanticError(
-        "class Session { token:str; init(token:str) { self.token = token } } func main() { var session = Session(\"abc\") }",
+        "class Session { var token:str; init(token:str) { self.token = token } } func main() { var session = Session(\"abc\") }",
         "constructor of class 'Session' is private",
     );
 }
 
 test "class constructors require complete initialization on every path" {
     try expectResolvedSemanticError(
-        "class Player {} class Match { owner:Player; pub init(owner:Player, assign:bool) { if assign { self.owner = owner } } } func main() {}",
+        "class Player {} class Match { var owner:Player; pub init(owner:Player, assign:bool) { if assign { self.owner = owner } } } func main() {}",
         "constructor of class 'Match' leaves field 'owner' without a value",
     );
     try expectResolvedSemanticError(
-        "class Player {} class Match { owner:Player; pub init(owner:Player) { print(self.owner == owner); self.owner = owner } } func main() {}",
+        "class Player {} class Match { var owner:Player; pub init(owner:Player) { print(self.owner == owner); self.owner = owner } } func main() {}",
         "field 'owner' is read before it is initialized",
     );
     try expectResolvedSemanticError(
-        "class Player {} class Match { owner:Player; pub init(owner:Player) { self.inspect(); self.owner = owner } func inspect() {} } func main() {}",
+        "class Player {} class Match { var owner:Player; pub init(owner:Player) { self.inspect(); self.owner = owner } func inspect() {} } func main() {}",
         "an instance method cannot be called before every class field is initialized",
     );
     try expectResolvedSemanticError(
-        "class Player {} class Match { owner:Player; pub init(owner:Player) { var alias = self; self.owner = owner } } func main() {}",
+        "class Player {} class Match { var owner:Player; pub init(owner:Player) { var alias = self; self.owner = owner } } func main() {}",
         "'self' cannot escape before every class field is initialized",
     );
 }
@@ -5720,7 +5935,7 @@ test "class drop can read private state but cannot return" {
 
     var parser = Parser.init(allocator,
         \\class Texture {
-        \\    handle:int = 1
+        \\    var handle:int = 1
         \\    drop { print(self.handle) }
         \\}
         \\func main() { var texture = Texture() }
@@ -5743,13 +5958,13 @@ test "class inheritance constructs one base and converts references upward" {
 
     var parser = Parser.init(allocator,
         \\class Entity {
-        \\    id:int
-        \\    sub position:int
+        \\    var id:int
+        \\    sub var position:int
         \\    sub init(id:int, position:int) { self.id = id; self.position = position }
         \\    pub func move(delta:int) { self.position += delta }
         \\}
         \\class Player : Entity {
-        \\    name:str
+        \\    var name:str
         \\    pub init(id:int, name:str, position:int) : super(id, position) { self.name = name }
         \\    pub func copy_position(other:Entity) { self.position = other.position }
         \\}
@@ -5770,7 +5985,7 @@ test "class inheritance constructs one base and converts references upward" {
     try std.testing.expect(program.functions[1].statements[1].variable_declaration.initializer.value == .conversion);
 
     try expectResolvedSemanticError(
-        "class Base { value:int; sub init() {} } class Child : Base { value:int; pub init() : super() {} } func main() {}",
+        "class Base { var value:int; sub init() {} } class Child : Base { var value:int; pub init() : super() {} } func main() {}",
         "field 'value' in class 'Child' collides with an inherited field",
     );
     try expectResolvedSemanticError(
@@ -5778,7 +5993,7 @@ test "class inheritance constructs one base and converts references upward" {
         "method 'hidden' is private in class 'Base'",
     );
     try expectResolvedSemanticError(
-        "class Base { hidden:int } class Child : Base { pub init() {} pub func reveal() int { return self.hidden } } func main() {}",
+        "class Base { var hidden:int } class Child : Base { pub init() {} pub func reveal() int { return self.hidden } } func main() {}",
         "field 'hidden' is private in class 'Base'",
     );
     try expectResolvedSemanticError(
@@ -5806,7 +6021,7 @@ test "class inheritance constructs one base and converts references upward" {
         "base type 'Value' is not a class",
     );
     try expectResolvedSemanticError(
-        "class Dependency {} class Base { dependency:Dependency } class Child : Base { pub init() {} } func main() {}",
+        "class Dependency {} class Base { var dependency:Dependency } class Child : Base { pub init() {} } func main() {}",
         "base class 'Base' cannot be constructed with 'super()'",
     );
     try expectResolvedSemanticError(
@@ -5972,7 +6187,7 @@ test "local variable may share a structure field name" {
 
     var parser = Parser.init(allocator,
         \\struct Counter {
-        \\    value:int
+        \\    var value:int
         \\    func combined() int {
         \\        let value = 1
         \\        return self.value + value
@@ -6204,8 +6419,8 @@ test "resolve structural equality recursively" {
     const allocator = arena.allocator();
 
     var parser = Parser.init(allocator,
-        \\struct Position { x:int; y:int }
-        \\struct Player { name:str; position:Position }
+        \\struct Position { var x:int; var y:int }
+        \\struct Player { var name:str; var position:Position }
         \\func main() void {
         \\    let first = Player(name:"Ada", position:Position(x:10, y:20))
         \\    let copy = Player(name:"Ada", position:Position(x:10, y:20))
@@ -6287,7 +6502,7 @@ test "implicit control bindings keep let semantics" {
         "type 'func' is not an independent value and cannot be bound with 'let'; use 'var'",
     );
     try expectResolvedSemanticError(
-        "struct Counter { value:int; func bump() { self.value += 1 } } func main() { var source:Counter? = Counter(value:0); if counter = source { counter.bump() } }",
+        "struct Counter { var value:int; func bump() { self.value += 1 } } func main() { var source:Counter? = Counter(value:0); if counter = source { counter.bump() } }",
         "cannot mutate immutable control binding 'counter'; use 'var' in the header",
     );
 }
@@ -6331,7 +6546,7 @@ test "reject storing a callback beyond a captured block" {
     const allocator = arena.allocator();
     var parser = Parser.init(allocator,
         \\struct Foo {
-        \\    callback:func()
+        \\    var callback:func()
         \\    func set_callback(callback:func()) { self.callback = callback }
         \\}
         \\func main() {
@@ -6376,7 +6591,7 @@ test "reject equality of function values" {
 
 test "reject extracting an owner callback beyond its owner" {
     try expectSemanticError(
-        \\struct Foo { callback:func() }
+        \\struct Foo { var callback:func() }
         \\func invalid(foo:Foo) func() { return foo.callback }
         \\func main() {}
     ,

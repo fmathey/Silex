@@ -365,11 +365,6 @@ pub fn build(b: *std.Build) void {
     invalid_implicit_class_iteration_command.expectExitCode(1);
     invalid_implicit_class_iteration_command.expectStdErrEqual("Tests/InvalidImplicitClassIteration.sx:5:9: error: type 'Player' is not an independent value and cannot be bound with 'let'; use 'var'\n");
 
-    const invalid_class_missing_field_command = b.addRunArtifact(executable);
-    invalid_class_missing_field_command.addArgs(&.{ "compile", "Tests/InvalidClassMissingField.sx" });
-    invalid_class_missing_field_command.expectExitCode(1);
-    invalid_class_missing_field_command.expectStdErrEqual("Tests/InvalidClassMissingField.sx:7:17: error: class 'WindowState' requires field 'title'\n");
-
     const invalid_class_default_variable_command = b.addRunArtifact(executable);
     invalid_class_default_variable_command.addArgs(&.{ "compile", "Tests/InvalidClassDefaultVariable.sx" });
     invalid_class_default_variable_command.expectExitCode(1);
@@ -613,7 +608,7 @@ pub fn build(b: *std.Build) void {
     recursive_generic_structure_expansion_command.addArgs(&.{ "compile", "Tests/RecursiveGenericStructureExpansion.sx" });
     recursive_generic_structure_expansion_command.expectExitCode(1);
     recursive_generic_structure_expansion_command.expectStdErrEqual(
-        "Tests/RecursiveGenericStructureExpansion.sx:6:5: error: generic struct 'Expand' recursively expands with different type arguments\n",
+        "Tests/RecursiveGenericStructureExpansion.sx:6:9: error: generic struct 'Expand' recursively expands with different type arguments\n",
     );
 
     const missing_generic_function_arguments_command = b.addRunArtifact(executable);
@@ -739,7 +734,7 @@ pub fn build(b: *std.Build) void {
     invalid_field_default_command.addArgs(&.{ "compile", "Tests/InvalidFieldDefault.sx" });
     invalid_field_default_command.expectExitCode(1);
     invalid_field_default_command.expectStdErrEqual(
-        "Tests/InvalidFieldDefault.sx:2:18: error: default field value must be a literal or named initializer of type 'int'\n",
+        "Tests/InvalidFieldDefault.sx:2:22: error: default field value must be a literal or named initializer of type 'int'\n",
     );
 
     const invalid_compound_assignment_command = b.addRunArtifact(executable);
@@ -1211,11 +1206,59 @@ pub fn build(b: *std.Build) void {
     invalid_public_include_path_command.expectExitCode(1);
     invalid_public_include_path_command.expectStdErrMatch("silex: invalid module manifest for module 'Main'");
 
+    const missing_field_mutability_command = b.addRunArtifact(executable);
+    missing_field_mutability_command.addArgs(&.{ "compile", "Tests/MissingFieldMutability.sx" });
+    missing_field_mutability_command.expectExitCode(1);
+    missing_field_mutability_command.expectStdErrEqual(
+        "Tests/MissingFieldMutability.sx:2:5: error: expected 'let' or 'var' before field name\n",
+    );
+
+    const invalid_let_field_mutation_command = b.addRunArtifact(executable);
+    invalid_let_field_mutation_command.addArgs(&.{ "compile", "Tests/InvalidLetFieldMutation.sx" });
+    invalid_let_field_mutation_command.expectExitCode(1);
+    invalid_let_field_mutation_command.expectStdErrEqual(
+        "Tests/InvalidLetFieldMutation.sx:7:5: error: cannot mutate let field 'x'\n",
+    );
+
+    const invalid_nested_let_field_mutation_command = b.addRunArtifact(executable);
+    invalid_nested_let_field_mutation_command.addArgs(&.{ "compile", "Tests/InvalidNestedLetFieldMutation.sx" });
+    invalid_nested_let_field_mutation_command.expectExitCode(1);
+    invalid_nested_let_field_mutation_command.expectStdErrEqual(
+        "Tests/InvalidNestedLetFieldMutation.sx:15:19: error: cannot call mutating method 'increment' through let field 'counter'\n",
+    );
+
+    const invalid_let_field_double_initialization_command = b.addRunArtifact(executable);
+    invalid_let_field_double_initialization_command.addArgs(&.{ "compile", "Tests/InvalidLetFieldDoubleInitialization.sx" });
+    invalid_let_field_double_initialization_command.expectExitCode(1);
+    invalid_let_field_double_initialization_command.expectStdErrEqual(
+        "Tests/InvalidLetFieldDoubleInitialization.sx:6:9: error: field 'id' is initialized more than once\n",
+    );
+
+    const invalid_let_field_missing_initialization_command = b.addRunArtifact(executable);
+    invalid_let_field_missing_initialization_command.addArgs(&.{ "compile", "Tests/InvalidLetFieldMissingInitialization.sx" });
+    invalid_let_field_missing_initialization_command.expectExitCode(1);
+    invalid_let_field_missing_initialization_command.expectStdErrEqual(
+        "Tests/InvalidLetFieldMissingInitialization.sx:4:9: error: constructor of class 'User' leaves field 'id' without a value\n",
+    );
+
+    const invalid_let_field_independence_command = b.addRunArtifact(executable);
+    invalid_let_field_independence_command.addArgs(&.{ "compile", "Tests/InvalidLetFieldIndependence.sx" });
+    invalid_let_field_independence_command.expectExitCode(1);
+    invalid_let_field_independence_command.expectStdErrEqual(
+        "Tests/InvalidLetFieldIndependence.sx:4:9: error: type 'Player' is not an independent value and cannot be bound with 'let'; use 'var'\n",
+    );
+
     const test_step = b.step("test", "Run the toolchain tests");
     test_step.dependOn(b.getInstallStep());
     test_step.dependOn(&test_command.step);
     test_step.dependOn(&semantic_test_command.step);
     test_step.dependOn(&lsp_test_command.step);
+    test_step.dependOn(&missing_field_mutability_command.step);
+    test_step.dependOn(&invalid_let_field_mutation_command.step);
+    test_step.dependOn(&invalid_nested_let_field_mutation_command.step);
+    test_step.dependOn(&invalid_let_field_double_initialization_command.step);
+    test_step.dependOn(&invalid_let_field_missing_initialization_command.step);
+    test_step.dependOn(&invalid_let_field_independence_command.step);
     test_step.dependOn(&invalid_command.step);
     test_step.dependOn(&missing_module_subcommand_command.step);
     test_step.dependOn(&missing_module_init_path_command.step);
@@ -1261,7 +1304,6 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&invalid_class_reference_command.step);
     test_step.dependOn(&invalid_implicit_class_conditional_command.step);
     test_step.dependOn(&invalid_implicit_class_iteration_command.step);
-    test_step.dependOn(&invalid_class_missing_field_command.step);
     test_step.dependOn(&invalid_class_default_variable_command.step);
     test_step.dependOn(&invalid_missing_class_constructor_command.step);
     test_step.dependOn(&invalid_inheritance_cycle_command.step);
@@ -1576,9 +1618,13 @@ pub fn build(b: *std.Build) void {
     structure_equality_command.addArgs(&.{ "run", "Smokes/StructureEquality.sx" });
     structure_equality_command.expectStdOutEqual(hostText(b, "true\ntrue\ntrue\ntrue\n"));
 
+    const field_mutability_command = b.addRunArtifact(executable);
+    field_mutability_command.step.dependOn(&structure_equality_command.step);
+    field_mutability_command.addArgs(&.{ "run", "Smokes/FieldMutability.sx" });
+
     const integer_semantics_output = "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n";
     const integer_semantics_command = b.addRunArtifact(executable);
-    integer_semantics_command.step.dependOn(&structure_equality_command.step);
+    integer_semantics_command.step.dependOn(&field_mutability_command.step);
     integer_semantics_command.addArgs(&.{ "run", "Smokes/IntegerSemantics.sx" });
     integer_semantics_command.expectStdOutEqual(hostText(b, integer_semantics_output));
 

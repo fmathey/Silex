@@ -1,7 +1,7 @@
 struct Component {
-    position:int64
-    velocity:int64
-    acceleration:int64
+    var position:int64
+    var velocity:int64
+    var acceleration:int64
 
     func update() {
         self.velocity += self.acceleration

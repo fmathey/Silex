@@ -1,7 +1,7 @@
 class Player {}
 
 struct Team {
-    players:Player[]
+    var players:Player[]
 }
 
 func main() {

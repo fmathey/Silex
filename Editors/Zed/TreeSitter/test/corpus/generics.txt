@@ -3,13 +3,13 @@ Generic structures
 ==================
 
 struct Pair<T> {
-    first:T
-    second:T
+    var first:T
+    var second:T
 }
 
 struct Entry<Key, Value> {
-    key:Key
-    value:Value
+    var key:Key
+    var value:Value
 }
 
 func main() {
@@ -241,9 +241,9 @@ Transparent type aliases
 ========================
 
 struct Vec3<T> {
-    x:T
-    y:T
-    z:T
+    var x:T
+    var y:T
+    var z:T
 }
 
 use Vec3<int> as Vec3i

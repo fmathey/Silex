@@ -3,7 +3,7 @@ Class drop block
 ================
 
 class Texture {
-    handle:int
+    var handle:int
 
     drop {
         print(self.handle)

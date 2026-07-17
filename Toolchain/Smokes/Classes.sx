@@ -1,5 +1,5 @@
 class Player {
-    pub health:int = 100
+    pub var health:int = 100
 
     pub func take_damage(amount:int) {
         self.health -= amount
@@ -7,26 +7,26 @@ class Player {
 }
 
 class Node {
-    pub next:Node? = null
-    pub links:Node[] = []
+    pub var next:Node? = null
+    pub var links:Node[] = []
 }
 
 class CallbackNode {
-    pub value:int
-    pub callback:func()
+    pub var value:int
+    pub var callback:func()
 }
 
 struct NodeSlot {
-    node:WrappedNode?
+    var node:WrappedNode?
 }
 
 class WrappedNode {
-    pub slot:NodeSlot = NodeSlot(node:null)
+    pub var slot:NodeSlot = NodeSlot(node:null)
 }
 
 class Vault {
-    value:int = 40
-    sub offset:int = 2
+    var value:int = 40
+    sub var offset:int = 2
 
     sub func subtotal() int {
         return self.value + self.offset
@@ -46,8 +46,8 @@ class Vault {
 }
 
 class Session {
-    token:str
-    attempts:int = 1
+    var token:str
+    var attempts:int = 1
 
     pub init(token:str) {
         self.token = token
@@ -68,8 +68,8 @@ class Session {
 }
 
 class Match {
-    owner:Player
-    score:int
+    var owner:Player
+    var score:int
 
     pub init(owner:Player) {
         self.owner = owner
@@ -81,7 +81,7 @@ class Match {
 }
 
 class ConstructorCycle {
-    next:ConstructorCycle?
+    var next:ConstructorCycle?
 
     pub init() {
         self.next = self
@@ -89,8 +89,8 @@ class ConstructorCycle {
 }
 
 class ConstructorCallback {
-    value:int = 7
-    callback:func()
+    var value:int = 7
+    var callback:func()
 
     pub init() {
         self.callback = func() {}
@@ -103,7 +103,7 @@ class ConstructorCallback {
 }
 
 struct Holder {
-    player:Player
+    var player:Player
 }
 
 func damage(player:Player, amount:int) Player {

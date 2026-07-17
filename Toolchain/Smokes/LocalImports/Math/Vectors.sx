@@ -1,17 +1,17 @@
 pub struct Vec2 {
-    x:float
-    y:float
+    var x:float
+    var y:float
 }
 
 pub struct Vec3 {
-    x:float
-    y:float
-    z:float
+    var x:float
+    var y:float
+    var z:float
 }
 
 pub struct Vec4 {
-    x:float
-    y:float
-    z:float
-    w:float
+    var x:float
+    var y:float
+    var z:float
+    var w:float
 }

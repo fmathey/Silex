@@ -1,5 +1,5 @@
 struct Player {
-    health:int = false
+    var health:int = false
 }
 
 func main() void {}

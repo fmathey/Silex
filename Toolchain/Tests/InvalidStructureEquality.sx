@@ -1,9 +1,9 @@
 struct Position {
-    x:int
+    var x:int
 }
 
 struct Velocity {
-    x:int
+    var x:int
 }
 
 func main() void {

@@ -7,7 +7,7 @@ func pass_through(values:int[]) int[] {
 }
 
 struct Player {
-    items:uint[]
+    var items:uint[]
 
     func add_items(items:&uint[]) {
         self.items.append(items)

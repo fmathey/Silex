@@ -8,9 +8,9 @@ pub use Window.Event as WindowEvent
 
 pub struct Session {}
 pub class Window {
-  id: int
-  sub state: int
-  pub title: str
+  var id: int
+  sub var state: int
+  pub var title: str
   pub func show() {}
 }
 

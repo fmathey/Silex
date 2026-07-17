@@ -1,6 +1,6 @@
 struct Position {
-    x:int
-    y:int
+    var x:int
+    var y:int
 
     func total() int {
         return self.x + self.y
@@ -17,12 +17,12 @@ struct Position {
 }
 
 struct Player {
-    name:str
-    position:Position
+    var name:str
+    var position:Position
 }
 
 struct Signal {
-    value:int = 7
+    var value:int = 7
 }
 
 func main() {

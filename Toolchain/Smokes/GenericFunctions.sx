@@ -1,5 +1,5 @@
 struct Box<T> {
-    value:T
+    var value:T
 
     func copied() T {
         return identity<T>(self.value)

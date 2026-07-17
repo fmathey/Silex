@@ -1,7 +1,7 @@
 pub struct Stopwatch {
-    last_microseconds:int
-    elapsed_seconds:float
-    running:bool
+    var last_microseconds:int
+    var elapsed_seconds:float
+    var running:bool
 
     func start() {
         if self.running {

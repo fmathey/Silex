@@ -1,5 +1,5 @@
 struct Box<T> {
-    value:T
+    var value:T
 }
 
 use Box<int, str> as InvalidBox

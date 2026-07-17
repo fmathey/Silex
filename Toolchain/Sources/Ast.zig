@@ -451,6 +451,7 @@ pub const StructureField = struct {
     type: TypeName,
     initializer: ?*Expression,
     visibility: MemberVisibility,
+    mutability: Mutability,
 };
 
 pub const Parameter = struct {

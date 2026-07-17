@@ -566,8 +566,8 @@ Defaults and compound assignments
 =============================
 
 struct Settings {
-    count:int
-    name:str = "Silex"
+    var count:int
+    var name:str = "Silex"
 }
 
 func main() {
@@ -647,8 +647,8 @@ Struct initialization and fields
 =============================
 
 struct Position {
-    x:int
-    y:int
+    var x:int
+    var y:int
 }
 
 func main() {
@@ -708,7 +708,7 @@ Struct methods and self
 =============================
 
 struct Counter {
-    value:int
+    var value:int
 
     func current() int {
         return self.value
@@ -803,8 +803,8 @@ Float literals and promotion
 =============================
 
 struct Motion {
-    position:float
-    speed:float = 1.5
+    var position:float
+    var speed:float = 1.5
 }
 
 func main() {
@@ -937,7 +937,7 @@ Optional values and safe access
 ============================
 
 struct Profile {
-    value:int?
+    var value:int?
 }
 
 func find() Profile? {

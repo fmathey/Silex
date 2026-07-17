@@ -1,5 +1,5 @@
 struct Numbers {
-    values:int[]
+    var values:int[]
 
     func double_values() {
         for var value in self.values {

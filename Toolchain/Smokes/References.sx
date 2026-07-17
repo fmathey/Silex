@@ -12,7 +12,7 @@ func reset_first(values:int[]) {
 }
 
 struct Rover {
-    energy:int
+    var energy:int
 }
 
 func main() {

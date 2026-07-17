@@ -1,17 +1,17 @@
 pub struct Session {
-    active:bool = true
+    var active:bool = true
 }
 
 pub struct Pair<T> {
-    first:T
-    second:T
+    var first:T
+    var second:T
 }
 
 pub use Pair<int> as IntPair
 pub use int[] as Integers
 
 pub class Meter {
-    value:int
+    var value:int
 
     sub init(value:int) {
         self.value = value

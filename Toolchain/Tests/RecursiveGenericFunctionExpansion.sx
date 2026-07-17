@@ -1,5 +1,5 @@
 struct Box<T> {
-    value:T
+    var value:T
 }
 
 func expand<T>(value:T) {

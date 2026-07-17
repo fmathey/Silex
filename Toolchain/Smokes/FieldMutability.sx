@@ -1,0 +1,55 @@
+struct Settings {
+    let limit:int
+    var count:int
+}
+
+class Generation {
+    sub let value:int
+
+    sub init(value:int) {
+        self.value = value
+    }
+
+    pub func get_value() int {
+        return self.value
+    }
+}
+
+class User : Generation {
+    let id:int
+    pub var name:str
+    pub let enabled:bool = true
+
+    pub init(id:int, name:str) : super(1) {
+        self.id = id
+        self.name = name
+    }
+
+    pub func get_id() int {
+        return self.id
+    }
+}
+
+class Label {
+    pub let text:str
+    pub let ready:bool
+}
+
+func main() {
+    var settings = Settings(limit:10, count:1)
+    settings.count = 2
+    let frozen = Settings(limit:20, count:3)
+    var user = User(7, "Ada")
+    user.name = "Grace"
+    var label = Label(text:"ready")
+
+    assert(settings.limit == 10, "let struct field is initialized")
+    assert(settings.count == 2, "var struct field is mutable")
+    assert(frozen.count == 3, "let structure remains readable")
+    assert(user.get_id() == 7, "constructor initializes let class field")
+    assert(user.name == "Grace", "var class field is mutable")
+    assert(user.enabled, "let class field default is initialized")
+    assert(user.get_value() == 1, "base constructor owns inherited let initialization")
+    assert(label.text == "ready", "named initializer sets let class field")
+    assert(!label.ready, "named initializer uses intrinsic let field value")
+}

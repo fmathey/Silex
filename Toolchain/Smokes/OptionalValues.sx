@@ -1,6 +1,6 @@
 struct Position {
-    x:int
-    y:int
+    var x:int
+    var y:int
 
     func translate(delta:int) {
         self.x += delta
@@ -13,7 +13,7 @@ struct Position {
 }
 
 struct Probe {
-    evaluations:int
+    var evaluations:int
 
     func receive(present:bool) Position? {
         self.evaluations += 1
@@ -27,7 +27,7 @@ struct Probe {
 }
 
 struct Profile {
-    position:Position?
+    var position:Position?
 }
 
 func find_position(present:bool) Position? {

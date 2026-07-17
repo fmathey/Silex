@@ -3,7 +3,7 @@ Class constructors
 ==================
 
 class Session {
-    token:str
+    var token:str
 
     pub init(token:str) {
         self.token = token

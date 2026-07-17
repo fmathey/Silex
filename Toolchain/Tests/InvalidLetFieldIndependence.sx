@@ -1,0 +1,7 @@
+class Player {}
+
+struct Team {
+    let player:Player
+}
+
+func main() {}

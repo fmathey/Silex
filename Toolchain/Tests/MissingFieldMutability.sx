@@ -1,5 +1,5 @@
 struct Position {
-    pub var x:int
+    x:int
 }
 
 func main() {}

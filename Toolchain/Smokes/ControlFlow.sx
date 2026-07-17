@@ -1,9 +1,9 @@
 struct Configuration {
-    strict:bool
+    var strict:bool
 }
 
 struct Holder {
-    values:int[]
+    var values:int[]
 }
 
 func accepts(configuration:Configuration) bool {

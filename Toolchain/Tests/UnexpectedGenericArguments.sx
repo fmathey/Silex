@@ -1,5 +1,5 @@
 struct Box {
-    value:int
+    var value:int
 }
 
 func main() {

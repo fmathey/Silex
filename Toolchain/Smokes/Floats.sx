@@ -1,6 +1,6 @@
 struct Motion {
-    position:float
-    speed:float = 1.5
+    var position:float
+    var speed:float = 1.5
 
     func advance(delta:float) {
         self.position += self.speed * delta

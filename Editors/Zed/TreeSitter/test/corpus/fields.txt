@@ -1,0 +1,44 @@
+================
+Field mutability
+================
+
+struct State {
+    let id:int
+    var count:int
+}
+
+class User {
+    let id:int
+    pub var name:str
+    sub let generation:int = 1
+}
+
+---
+
+(source_file
+  (structure_definition
+    (identifier)
+    (structure_field
+      (identifier)
+      (type
+        (builtin_type)))
+    (structure_field
+      (identifier)
+      (type
+        (builtin_type))))
+  (structure_definition
+    (identifier)
+    (structure_field
+      (identifier)
+      (type
+        (builtin_type)))
+    (structure_field
+      (identifier)
+      (type
+        (builtin_type)))
+    (structure_field
+      (identifier)
+      (type
+        (builtin_type))
+      (expression
+        (integer_literal)))))

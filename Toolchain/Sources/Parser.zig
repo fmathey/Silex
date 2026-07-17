@@ -206,7 +206,13 @@ pub const Parser = struct {
             if (self.current.tag == .identifier and std.mem.eql(u8, self.current.lexeme, "native")) {
                 return self.fail("native functions must be declared at module level");
             }
-            if (self.current.tag != .identifier) return self.fail("expected field name");
+            if (self.current.tag != .keyword_let and self.current.tag != .keyword_var) {
+                if (self.current.tag == .identifier) return self.fail("expected 'let' or 'var' before field name");
+                return self.fail("expected field declaration starting with 'let' or 'var'");
+            }
+            const field_mutability: Ast.Mutability = if (self.current.tag == .keyword_let) .immutable else .mutable;
+            try self.advance();
+            if (self.current.tag != .identifier) return self.fail("expected field name after 'let' or 'var'");
             const field_name = self.current.lexeme;
             const field_position = self.current.position;
             try self.advance();
@@ -223,6 +229,7 @@ pub const Parser = struct {
                 .type = field_type,
                 .initializer = initializer,
                 .visibility = visibility,
+                .mutability = field_mutability,
             });
             try self.expectStatementTerminator();
         }
@@ -1769,7 +1776,7 @@ test "parse named invocation and member assignment" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     var parser = Parser.init(arena.allocator(),
-        \\struct Position { x:int; y:int }
+        \\struct Position { var x:int; var y:int }
         \\func main() void { var position = Position(y:20, x:10); position.x = 12 }
     );
     const program = try parser.parse();
@@ -1777,28 +1784,42 @@ test "parse named invocation and member assignment" {
     try std.testing.expectEqual(@as(usize, 1), program.structures.len);
     try std.testing.expectEqualStrings("Position", program.structures[0].name);
     try std.testing.expectEqual(@as(usize, 2), program.structures[0].fields.len);
+    try std.testing.expectEqual(Ast.Mutability.mutable, program.structures[0].fields[0].mutability);
     const invocation = program.functions[0].statements[0].variable_declaration.initializer.?.value.call;
     try std.testing.expectEqual(@as(usize, 0), invocation.arguments.len);
     try std.testing.expectEqual(@as(usize, 2), invocation.named_fields.?.len);
     try std.testing.expect(program.functions[0].statements[1].assignment.target.value == .member_access);
 }
 
+test "require and preserve structure field mutability" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var parser = Parser.init(arena.allocator(), "struct State { let id:int; var count:int }");
+    const program = try parser.parse();
+    try std.testing.expectEqual(Ast.Mutability.immutable, program.structures[0].fields[0].mutability);
+    try std.testing.expectEqual(Ast.Mutability.mutable, program.structures[0].fields[1].mutability);
+
+    var invalid = Parser.init(arena.allocator(), "struct State { count:int }");
+    try std.testing.expectError(error.InvalidSource, invalid.parse());
+    try std.testing.expectEqualStrings("expected 'let' or 'var' before field name", invalid.diagnostic.?.message);
+}
+
 test "reject invalid invocation argument forms" {
     const cases = [_]struct { source: []const u8, message: []const u8 }{
         .{
-            .source = "struct Position { x:int } func main() { let value = Position(1, x:2) }",
+            .source = "struct Position { var x:int } func main() { let value = Position(1, x:2) }",
             .message = "cannot mix positional arguments and named fields",
         },
         .{
-            .source = "struct Position { x:int } func main() { let value = Position(x:) }",
+            .source = "struct Position { var x:int } func main() { let value = Position(x:) }",
             .message = "expected value after ':'",
         },
         .{
-            .source = "struct Position { x:int } func main() { let value = Position(x:1 }",
+            .source = "struct Position { var x:int } func main() { let value = Position(x:1 }",
             .message = "expected ')' after invocation",
         },
         .{
-            .source = "struct Position { x:int } func main() { let value = Position { x:1 } }",
+            .source = "struct Position { var x:int } func main() { let value = Position { x:1 } }",
             .message = "structure initializers use 'Type(...)', not 'Type { ... }'",
         },
     };
@@ -1815,7 +1836,7 @@ test "parse defaults and compound assignments" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     var parser = Parser.init(arena.allocator(),
-        \\struct Counter { value:int = 2 }
+        \\struct Counter { var value:int = 2 }
         \\func main() void { var counter:Counter; counter.value += 3; counter.value-- }
     );
     const program = try parser.parse();
@@ -1848,8 +1869,8 @@ test "parse class declarations with the structure member grammar" {
     defer arena.deinit();
     var parser = Parser.init(arena.allocator(),
         \\pub class Player {
-        \\    pub health:int = 100
-        \\    sub velocity:int = 0
+        \\    pub var health:int = 100
+        \\    sub var velocity:int = 0
         \\    pub func damage(amount:int) { self.health -= amount }
         \\}
         \\func main() {}
@@ -1871,7 +1892,7 @@ test "parse visible overloaded class constructors" {
     defer arena.deinit();
     var parser = Parser.init(arena.allocator(),
         \\class Session {
-        \\    token:str
+        \\    var token:str
         \\    pub init() { self.token = "" }
         \\    sub init(token:str) { self.token = token }
         \\}
@@ -1889,7 +1910,7 @@ test "parse one class drop block" {
     defer arena.deinit();
     var parser = Parser.init(arena.allocator(),
         \\class Texture {
-        \\    handle:int = 1
+        \\    var handle:int = 1
         \\    drop { print(self.handle) }
         \\}
         \\func main() {}
@@ -1952,7 +1973,7 @@ test "reject constructors on structs" {
 test "reject class visibility modifiers on struct members" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    var parser = Parser.init(arena.allocator(), "struct Position { pub x:int } func main() {}");
+    var parser = Parser.init(arena.allocator(), "struct Position { pub var x:int } func main() {}");
     try std.testing.expectError(error.InvalidSource, parser.parse());
     try std.testing.expectEqualStrings(
         "struct members are already public and do not accept visibility modifiers",
@@ -2191,7 +2212,7 @@ test "parse method and field cascade operations" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     var parser = Parser.init(arena.allocator(),
-        \\struct Point { x:int }
+        \\struct Point { var x:int }
         \\func main() void {
         \\    var point = Point(x:0)..x = 10..move(1, 2)
         \\}
@@ -2346,12 +2367,12 @@ test "parse generic structure declarations types and invocations" {
     defer arena.deinit();
     var parser = Parser.init(arena.allocator(),
         \\struct Pair<T> {
-        \\    first:T
-        \\    second:T
+        \\    var first:T
+        \\    var second:T
         \\}
         \\struct Entry<Key, Value> {
-        \\    key:Key
-        \\    value:Value
+        \\    var key:Key
+        \\    var value:Value
         \\}
         \\func main() {
         \\    let pair:Pair<int> = Pair<int>(first:1, second:2)
@@ -2376,7 +2397,7 @@ test "parse generic structure declarations types and invocations" {
 test "reject duplicate generic structure parameters" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    var parser = Parser.init(arena.allocator(), "struct Pair<T, T> { value:T }");
+    var parser = Parser.init(arena.allocator(), "struct Pair<T, T> { var value:T }");
     try std.testing.expectError(error.InvalidSource, parser.parse());
     try std.testing.expectEqualStrings("type parameter is already declared", parser.diagnostic.?.message);
 }

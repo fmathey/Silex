@@ -1,7 +1,7 @@
 native func native_seed() int
 
 pub struct Generator {
-    state:int
+    var state:int
 
     func get_int() int {
         var value:uint

@@ -66,11 +66,12 @@ increment(&count)
 print(count) // 2
 ```
 
-`&` accepts a mutable variable, field, or indexed element:
+`&` accepts a mutable variable, `var` field, or indexed element that is not
+reached through a `let` field:
 
 ```sx
 struct Rover {
-    energy:int
+    var energy:int
 }
 
 var rover = Rover(energy:10)
@@ -79,7 +80,8 @@ increment(&rover.energy)
 increment(&values[0])
 ```
 
-A `let`, including one of its fields or elements, cannot be passed with `&`.
+A `let` binding or field, including any nested field or element reached through
+it, cannot be passed with `&`.
 Several `&` arguments may name the same place at runtime. They are temporary
 aliases for the duration of that call, and writes follow the function body's
 normal execution order.

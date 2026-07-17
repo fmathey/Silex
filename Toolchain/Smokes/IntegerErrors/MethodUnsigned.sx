@@ -1,5 +1,5 @@
 struct Player {
-    health:uint8 = 10
+    var health:uint8 = 10
 
     func take_damage(amount:uint8) {
         self.health -= amount

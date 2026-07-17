@@ -1,5 +1,5 @@
 class Probe {
-    label:str
+    var label:str
 
     pub init(label:str) {
         self.label = label
@@ -11,7 +11,7 @@ class Probe {
 }
 
 class CycleProbe {
-    pub next:CycleProbe? = null
+    pub var next:CycleProbe? = null
 
     drop {
         print("cycle")

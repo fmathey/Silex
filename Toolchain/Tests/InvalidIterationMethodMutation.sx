@@ -1,5 +1,5 @@
 struct Bucket {
-    values:int[]
+    var values:int[]
 
     func clear_values() void {
         self.values.clear()

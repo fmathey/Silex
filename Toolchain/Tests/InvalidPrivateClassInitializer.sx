@@ -1,5 +1,5 @@
 class Vault {
-    value:int
+    var value:int
 }
 
 func main() {

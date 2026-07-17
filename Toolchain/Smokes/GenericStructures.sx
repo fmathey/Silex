@@ -1,6 +1,6 @@
 struct Pair<T> {
-    first:T
-    second:T
+    var first:T
+    var second:T
 
     func get_first() T {
         return self.first
@@ -12,16 +12,16 @@ struct Pair<T> {
 }
 
 struct Entry<Key, Value> {
-    key:Key
-    value:Value
+    var key:Key
+    var value:Value
 }
 
 struct Box<T> {
-    value:T
+    var value:T
 }
 
 class Player {
-    pub name:str
+    pub var name:str
 }
 
 func main() {

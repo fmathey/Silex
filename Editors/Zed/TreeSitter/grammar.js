@@ -93,6 +93,7 @@ module.exports = grammar({
 
     structure_field: ($) =>
       seq(
+        field("mutability", choice("let", "var")),
         field("name", $.identifier),
         ":",
         field("type", $.type),

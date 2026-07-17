@@ -1,0 +1,10 @@
+class User {
+    let id:int
+
+    pub init(id:int) {
+        self.id = id
+        self.id = id
+    }
+}
+
+func main() {}

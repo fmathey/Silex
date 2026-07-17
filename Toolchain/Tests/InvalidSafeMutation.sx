@@ -1,5 +1,5 @@
 struct Position {
-    x:int
+    var x:int
 
     func translate(delta:int) {
         self.x += delta

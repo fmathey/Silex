@@ -1,5 +1,5 @@
 struct Handler {
-    callback:func()
+    var callback:func()
 }
 
 func main() {

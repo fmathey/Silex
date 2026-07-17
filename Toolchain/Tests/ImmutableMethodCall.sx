@@ -1,5 +1,5 @@
 struct Counter {
-    value:int
+    var value:int
 
     func increment() void {
         self.apply()

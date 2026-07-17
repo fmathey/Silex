@@ -1,0 +1,8 @@
+struct Position {
+    let x:int
+}
+
+func main() {
+    var position = Position(x:1)
+    position.x = 2
+}

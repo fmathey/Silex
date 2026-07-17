@@ -1,4 +1,4 @@
-struct Position { x:int }
+struct Position { var x:int }
 
 func main() {
     let position = Position { x:1 }

@@ -1,6 +1,6 @@
 class Entity {
-    id:int
-    sub position:int
+    var id:int
+    sub var position:int
 
     sub init(id:int, position:int) {
         self.id = id
@@ -33,7 +33,7 @@ class Entity {
 }
 
 class Player : Entity {
-    name:str
+    var name:str
 
     pub init(id:int, name:str, position:int) : super(id, position) {
         self.name = name
@@ -57,7 +57,7 @@ class Player : Entity {
 }
 
 class ElitePlayer : Player {
-    rank:int
+    var rank:int
 
     pub init(id:int, name:str, position:int, rank:int) : super(id, name, position) {
         self.rank = rank
@@ -69,7 +69,7 @@ class ElitePlayer : Player {
 }
 
 class EntityHolder {
-    entity:Entity
+    var entity:Entity
 
     pub init(entity:Entity) {
         self.entity = entity
@@ -105,7 +105,7 @@ class TickBase {
 }
 
 class TickChild : TickBase {
-    count:int = 0
+    var count:int = 0
 
     override pub func tick() {
         self.count += 1
@@ -117,7 +117,7 @@ class TickChild : TickBase {
 }
 
 class DefaultBase {
-    sub generation:int = 7
+    sub var generation:int = 7
 
     pub func get_generation() int {
         return self.generation
@@ -125,11 +125,11 @@ class DefaultBase {
 }
 
 class DefaultChild : DefaultBase {
-    pub label:str
+    pub var label:str
 }
 
 class IntrinsicBase {
-    sub count:int
+    sub var count:int
 
     pub func get_count() int {
         return self.count
@@ -166,7 +166,7 @@ class OrderedChild : OrderedBase {
 }
 
 class NodeBase {
-    next:NodeBase? = null
+    var next:NodeBase? = null
 
     sub init() {}
 

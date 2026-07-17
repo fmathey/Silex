@@ -2,12 +2,13 @@
 
 A `struct` is a nominal value type with typed fields and optional field
 defaults. Its fields and methods are public by default; class-only member
-markers `pub` and `sub` are not written in a structure.
+markers `pub` and `sub` are not written in a structure. Every field starts
+with `let` or `var`; the older `name:type` form is invalid.
 
 ```sx
 struct Position {
-    x:int
-    y:int = 10
+    var x:int
+    var y:int = 10
 }
 
 let origin = Position()
@@ -40,13 +41,13 @@ explicit type argument per parameter:
 
 ```sx
 struct Pair<T> {
-    first:T
-    second:T
+    var first:T
+    var second:T
 }
 
 struct Entry<Key, Value> {
-    key:Key
-    value:Value
+    var key:Key
+    var value:Value
 }
 
 let coordinates = Pair<int>(first:10, second:20)
@@ -71,7 +72,7 @@ not redeclare them:
 
 ```sx
 struct Box<T> {
-    value:T
+    var value:T
 
     func get() T {
         return self.value
@@ -93,10 +94,15 @@ specializations, or compile-time values. Generic classes and methods with their
 own type parameters are not currently part of the language. Free generic
 functions are described in [Functions](Functions.md).
 
-Fields of a `var` structure may be changed, including through nested paths. A
-`let` structure is fully immutable and is accepted only when all its fields are
-recursively independent values. A structure containing a function value or a
-class reference must therefore use `var`.
+A `var` field can be changed only through a mutable receiver. A structure
+binding declared with `var` therefore permits writes to its `var` fields, while
+a binding declared with `let` remains fully immutable. A `let` field cannot be
+assigned or mutated through a nested path after construction, including by a
+mutating method on a contained structure or collection.
+
+Both a `let` binding and a `let` field require a recursively independent value.
+A function value, class reference, or container that reaches either one must
+therefore be declared with `var`.
 Structures compare by value when they have the same declared type, except when
 they contain a function value directly or recursively; such values are not
 comparable. A function field has no intrinsic default and must be supplied by
@@ -110,7 +116,7 @@ through recursive calls; a mutating method requires a `var` receiver.
 
 ```sx
 struct Counter {
-    value:int
+    var value:int
 
     func increment() {
         self.value += 1
@@ -130,8 +136,8 @@ address to the original instance.
 
 ```sx
 struct Counter {
-    count:int
-    callback:func()
+    var count:int
+    var callback:func()
 
     func bind() {
         self.callback = func() { self.count += 1 }

@@ -23,8 +23,8 @@ func mutate(callback:func(&int)) {
 }
 
 struct Counter {
-    count:int
-    callback:func()
+    var count:int
+    var callback:func()
 
     func bind() {
         self.callback = func() {
@@ -38,7 +38,7 @@ struct Counter {
 }
 
 struct Damage {
-    callback:func(int)
+    var callback:func(int)
 
     func set_callback(callback:func(int)) {
         self.callback = callback
