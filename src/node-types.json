@@ -1176,6 +1176,10 @@
           "named": true
         },
         {
+          "type": "try_expression",
+          "named": true
+        },
+        {
           "type": "unary_expression",
           "named": true
         }
@@ -1204,6 +1208,10 @@
         },
         {
           "type": "super_method_expression",
+          "named": true
+        },
+        {
+          "type": "try_expression",
           "named": true
         }
       ]
@@ -2734,6 +2742,22 @@
     }
   },
   {
+    "type": "try_expression",
+    "named": true,
+    "fields": {
+      "operand": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "expression",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "type",
     "named": true,
     "fields": {},
@@ -3434,6 +3458,10 @@
   },
   {
     "type": "true",
+    "named": false
+  },
+  {
+    "type": "try",
     "named": false
   },
   {

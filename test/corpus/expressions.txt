@@ -27,6 +27,41 @@ func main() {
                   (expression
                     (integer_literal)))))))))))
 
+======================
+Try prefix precedence
+======================
+
+func main() {
+    let value = try read() + 1
+    try save()
+}
+
+---
+
+(source_file
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (block
+      (statement
+        (variable_declaration
+          (identifier)
+          (expression
+            (binary_expression
+              (expression
+                (try_expression
+                  (expression
+                    (invocation_expression
+                      (identifier)))))
+              (expression
+                (integer_literal))))))
+      (statement
+        (expression_statement
+          (try_expression
+            (expression
+              (invocation_expression
+                (identifier)))))))))
+
 ====================
 Remainder precedence
 ====================

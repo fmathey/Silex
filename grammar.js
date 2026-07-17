@@ -332,6 +332,7 @@ module.exports = grammar({
 
     expression_statement: ($) =>
       choice(
+        $.try_expression,
         $.invocation_expression,
         $.super_method_expression,
         $.safe_member_expression,
@@ -419,6 +420,7 @@ module.exports = grammar({
     expression: ($) =>
       choice(
         $.binary_expression,
+        $.try_expression,
         $.unary_expression,
         $.borrow_expression,
         $.conversion_expression,
@@ -903,6 +905,9 @@ module.exports = grammar({
 
     unary_expression: ($) =>
       prec(PREC.unary, seq(field("operator", choice("!", "-")), field("operand", $.expression))),
+
+    try_expression: ($) =>
+      prec(PREC.unary, seq("try", field("operand", $.expression))),
 
     borrow_expression: ($) => prec(PREC.unary, seq(field("operator", "&"), field("operand", $.expression))),
 
