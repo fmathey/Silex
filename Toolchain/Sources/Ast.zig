@@ -28,6 +28,7 @@ pub const UnaryOperator = enum {
 };
 
 pub const TypeName = union(enum) {
+    void,
     int,
     int8,
     int16,

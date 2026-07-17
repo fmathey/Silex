@@ -193,7 +193,12 @@ module.exports = grammar({
       ),
     type_parameter: ($) => field("name", $.identifier),
     type_argument_list: ($) =>
-      seq("<", $.type, repeat(seq(",", $.type)), ">"),
+      seq(
+        "<",
+        choice($.type, $.void_type),
+        repeat(seq(",", choice($.type, $.void_type))),
+        ">",
+      ),
     generic_type: ($) =>
       prec(
         PREC.member,

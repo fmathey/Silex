@@ -1,0 +1,25 @@
+pub enum ParseError {
+    empty
+    invalid_character(str)
+}
+
+pub struct SaveError {
+    let message:str
+}
+
+pub func parse_port(text:str) Result<int, ParseError> {
+    if text.count() == 0 {
+        return Result<int, ParseError>.failure(ParseError.empty())
+    }
+    if text == "bad" {
+        return Result<int, ParseError>.failure(ParseError.invalid_character(text))
+    }
+    return Result<int, ParseError>.success(8080)
+}
+
+pub func save(allowed:bool) Result<void, SaveError> {
+    if allowed {
+        return Result<void, SaveError>.success()
+    }
+    return Result<void, SaveError>.failure(SaveError(message:"denied"))
+}

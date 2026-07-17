@@ -1145,8 +1145,17 @@
           "value": "<"
         },
         {
-          "type": "SYMBOL",
-          "name": "type"
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "type"
+            },
+            {
+              "type": "SYMBOL",
+              "name": "void_type"
+            }
+          ]
         },
         {
           "type": "REPEAT",
@@ -1158,8 +1167,17 @@
                 "value": ","
               },
               {
-                "type": "SYMBOL",
-                "name": "type"
+                "type": "CHOICE",
+                "members": [
+                  {
+                    "type": "SYMBOL",
+                    "name": "type"
+                  },
+                  {
+                    "type": "SYMBOL",
+                    "name": "void_type"
+                  }
+                ]
               }
             ]
           }

@@ -1,0 +1,44 @@
+use ResultChecks.Core.ParseError
+use ResultChecks.Core.SaveError
+use ResultChecks.Core.parse_port
+use ResultChecks.Core.save
+
+use Result<int, ParseError> as ParseResult
+
+func increment_port(text:str) ParseResult {
+    return match parse_port(text) {
+        success(port) => Result<int, ParseError>.success(port + 1)
+        failure(error) => Result<int, ParseError>.failure(error)
+    }
+}
+
+func main() {
+    match increment_port("8080") {
+        success(port) => { print(port) }
+        failure(error) => { print("unexpected") }
+    }
+    match increment_port("bad") {
+        success(port) => { print(port) }
+        failure(error) => {
+            print(match error {
+                empty => "empty"
+                invalid_character(character) => character
+            })
+        }
+    }
+    match save(true) {
+        success => { print("saved") }
+        failure(error) => { print(error.message) }
+    }
+    match save(false) {
+        success => { print("unexpected") }
+        failure(error) => { print(error.message) }
+    }
+    var callback = Result<func(), ParseError>.success(func() {
+        print("callback")
+    })
+    match callback {
+        success(var action) => { action() }
+        failure(error) => { print("unexpected") }
+    }
+}

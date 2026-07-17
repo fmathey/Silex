@@ -525,6 +525,7 @@ fn appendSignatureHelp(
 
 fn appendAstTypeName(allocator: Allocator, output: *std.ArrayList(u8), type_name: Ast.TypeName) !void {
     switch (type_name) {
+        .void => try output.appendSlice(allocator, "void"),
         .int => try output.appendSlice(allocator, "int"),
         .int8 => try output.appendSlice(allocator, "int8"),
         .int16 => try output.appendSlice(allocator, "int16"),
@@ -1041,7 +1042,7 @@ fn memberCompletionItems(
 
     if (receiver_path == null) {
         const enum_name = enumConstructorBeforeMember(info, tokens.items, source, cursor_offset) orelse return null;
-        return try enumCompletionItems(allocator, info, enum_name, false);
+        return try enumCompletionItems(allocator, info, enum_name, false, false);
     }
     const path = receiver_path.?;
 
@@ -1074,7 +1075,13 @@ fn memberCompletionItems(
     switch (receiver_type) {
         .list => return try collectionCompletionItems(allocator, true),
         .fixed_array => return try collectionCompletionItems(allocator, false),
-        .enumeration => |name| return try enumCompletionItems(allocator, info, name, static_selection),
+        .enumeration => |name| return try enumCompletionItems(
+            allocator,
+            info,
+            name,
+            static_selection,
+            static_selection and resultVoidStaticSelection(source, cursor_offset),
+        ),
         .structure => {},
     }
 
@@ -1104,13 +1111,16 @@ fn enumCompletionItems(
     info: SemanticInfo,
     enum_name: []const u8,
     static_selection: bool,
+    result_void_success: bool,
 ) ![]const CompletionItem {
     var items: std.ArrayList(CompletionItem) = .empty;
     if (static_selection) {
         for (info.enum_variants.items) |variant| {
             if (!std.mem.eql(u8, variant.enumeration, enum_name) or
                 containsCompletion(items.items, variant.name)) continue;
-            const insertion = if (variant.has_associated_values)
+            const has_associated_values = variant.has_associated_values and
+                !(result_void_success and std.mem.eql(u8, variant.name, "success"));
+            const insertion = if (has_associated_values)
                 try std.fmt.allocPrint(allocator, "{s}($0)", .{variant.name})
             else
                 try std.fmt.allocPrint(allocator, "{s}()", .{variant.name});
@@ -1120,7 +1130,7 @@ fn enumCompletionItems(
                 .detail = "Silex enum variant",
                 .insertText = insertion,
                 .filterText = variant.name,
-                .insertTextFormat = if (variant.has_associated_values) 2 else null,
+                .insertTextFormat = if (has_associated_values) 2 else null,
             });
         }
         return try items.toOwnedSlice(allocator);
@@ -1163,6 +1173,17 @@ fn collectSemanticInfo(
     tokens: []const LexerModule.Token,
     info: *SemanticInfo,
 ) !void {
+    try info.enums.append(allocator, .{ .name = "Result", .has_raw_value = false });
+    try info.enum_variants.append(allocator, .{
+        .enumeration = "Result",
+        .name = "success",
+        .has_associated_values = true,
+    });
+    try info.enum_variants.append(allocator, .{
+        .enumeration = "Result",
+        .name = "failure",
+        .has_associated_values = true,
+    });
     try collectImportedStructures(allocator, io, source, project_root, tokens, info);
     try collectLocalTypeAliases(allocator, tokens, info);
     try collectLocalEnums(allocator, tokens, info);
@@ -1855,6 +1876,7 @@ fn collectPublicStructureMembers(
 
 fn astTypeName(type_name: Ast.TypeName) []const u8 {
     return switch (type_name) {
+        .void => "void",
         .int => "int",
         .int8 => "int8",
         .int16 => "int16",
@@ -2025,6 +2047,45 @@ fn memberReceiverPath(
         try path.append(allocator, segment);
     }
     return try path.toOwnedSlice(allocator);
+}
+
+fn resultVoidStaticSelection(source: []const u8, cursor_offset: usize) bool {
+    var prefix_start = @min(cursor_offset, source.len);
+    while (prefix_start > 0 and isIdentifierContinue(source[prefix_start - 1])) prefix_start -= 1;
+    if (prefix_start == 0 or source[prefix_start - 1] != '.') return false;
+
+    var type_end = prefix_start - 1;
+    while (type_end > 0 and std.ascii.isWhitespace(source[type_end - 1])) type_end -= 1;
+    if (type_end == 0 or source[type_end - 1] != '>') return false;
+
+    var depth: usize = 0;
+    var generic_start: ?usize = null;
+    var index = type_end;
+    while (index > 0) {
+        index -= 1;
+        if (source[index] == '>') {
+            depth += 1;
+        } else if (source[index] == '<') {
+            if (depth == 0) return false;
+            depth -= 1;
+            if (depth == 0) {
+                generic_start = index;
+                break;
+            }
+        }
+    }
+    const argument_start = generic_start orelse return false;
+
+    var name_end = argument_start;
+    while (name_end > 0 and std.ascii.isWhitespace(source[name_end - 1])) name_end -= 1;
+    var name_start = name_end;
+    while (name_start > 0 and isIdentifierContinue(source[name_start - 1])) name_start -= 1;
+    if (!std.mem.eql(u8, source[name_start..name_end], "Result")) return false;
+
+    const arguments = std.mem.trim(u8, source[argument_start + 1 .. type_end - 1], " \t\r\n");
+    if (!std.mem.startsWith(u8, arguments, "void")) return false;
+    const remainder = std.mem.trimStart(u8, arguments["void".len..], " \t\r\n");
+    return remainder.len != 0 and remainder[0] == ',';
 }
 
 fn terminalCascadeReceiverEnd(source: []const u8, member_operator_start: usize) ?usize {
@@ -2339,6 +2400,7 @@ const language_completions = [_]CompletionItem{
     .{ .label = "true", .kind = 14, .detail = "Silex keyword" },
     .{ .label = "false", .kind = 14, .detail = "Silex keyword" },
     .{ .label = "print", .kind = 3, .detail = "Silex builtin" },
+    .{ .label = "Result", .kind = 7, .detail = "Silex intrinsic type" },
     .{ .label = "void", .kind = 7, .detail = "Silex type" },
     .{ .label = "bool", .kind = 7, .detail = "Silex type" },
     .{ .label = "int", .kind = 7, .detail = "Silex type" },
@@ -2905,6 +2967,34 @@ test "enum completion recognizes generic declarations and specializations" {
     try std.testing.expect(syntaxDiagnostic(arena.allocator(),
         \\enum Outcome<T, E> { success(T); failure(E) }
         \\func main() { let value = Outcome<int, str>.success(42) }
+    ) == null);
+}
+
+test "Result completion distinguishes value and void success" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const source =
+        \\enum SaveError { denied }
+        \\func main() {
+        \\    Result<int, SaveError>.
+        \\    Result<void, SaveError>.
+        \\}
+    ;
+    const value_items = try completionItems(allocator, std.testing.io, source, .{ .line = 2, .character = 27 });
+    try std.testing.expectEqualStrings("success($0)", findCompletion(value_items, "success").?.insertText.?);
+    try std.testing.expectEqualStrings("failure($0)", findCompletion(value_items, "failure").?.insertText.?);
+
+    const void_items = try completionItems(allocator, std.testing.io, source, .{ .line = 3, .character = 28 });
+    try std.testing.expectEqualStrings("success()", findCompletion(void_items, "success").?.insertText.?);
+    try std.testing.expectEqualStrings("failure($0)", findCompletion(void_items, "failure").?.insertText.?);
+
+    const global_items = try completionItems(allocator, std.testing.io, "func main() {}", null);
+    try std.testing.expect(containsCompletion(global_items, "Result"));
+    try std.testing.expect(syntaxDiagnostic(allocator,
+        \\enum SaveError { denied }
+        \\func save() Result<void, SaveError> { return Result<void, SaveError>.success() }
+        \\func main() {}
     ) == null);
 }
 

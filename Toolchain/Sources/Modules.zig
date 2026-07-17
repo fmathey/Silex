@@ -171,6 +171,9 @@ pub const Resolver = struct {
         is_public: bool,
         position: Source.Position,
     ) !void {
+        if ((kind == .structure or kind == .type_alias) and std.mem.eql(u8, source_name, "Result")) {
+            return self.fail(position, "name 'Result' is reserved");
+        }
         for (self.declarations.items) |existing| {
             if (existing.kind == .type_alias) continue;
             if (existing.module_index == module_index and std.mem.eql(u8, existing.source_name, source_name)) {
@@ -205,6 +208,9 @@ pub const Resolver = struct {
                     return self.fail(import_value.position, message);
                 }
                 const qualifier = import_value.alias orelse import_value.path;
+                if (import_value.alias != null and std.mem.eql(u8, qualifier, "Result")) {
+                    return self.fail(import_value.position, "name 'Result' is reserved");
+                }
                 for (imports.items) |existing| {
                     if (std.mem.eql(u8, existing.qualifier, qualifier)) {
                         const message = try std.fmt.allocPrint(self.allocator, "import qualifier '{s}' is already declared", .{qualifier});
@@ -451,6 +457,7 @@ pub const Resolver = struct {
     }
 
     fn validateIntroducedName(self: *Resolver, file: *const FileInfo, name: []const u8, position: Source.Position) !void {
+        if (std.mem.eql(u8, name, "Result")) return self.fail(position, "name 'Result' is reserved");
         for (file.uses.items) |existing| if (std.mem.eql(u8, existing.local_name, name)) {
             const message = try std.fmt.allocPrint(self.allocator, "name '{s}' is already introduced by use", .{name});
             return self.fail(position, message);
@@ -602,6 +609,8 @@ pub const Resolver = struct {
         return switch (value) {
             .structure => |name| if (self.isCurrentTypeParameter(name))
                 .{ .type_parameter = name }
+            else if (std.mem.eql(u8, name, "Result"))
+                value
             else if (try self.visibleTypeAlias(position.file, name)) |alias|
                 try self.resolveAliasType(alias)
             else
@@ -610,9 +619,15 @@ pub const Resolver = struct {
                 if (self.isCurrentTypeParameter(generic.name)) {
                     return self.fail(position, "a type parameter cannot accept type arguments");
                 }
-                const declaration = try self.resolveName(position.file, generic.name, .structure, position);
                 var arguments: std.ArrayList(Ast.TypeName) = .empty;
                 for (generic.arguments) |argument| try arguments.append(self.allocator, try self.transformType(argument, position));
+                if (std.mem.eql(u8, generic.name, "Result")) {
+                    break :generic_type .{ .generic_structure = .{
+                        .name = "Result",
+                        .arguments = try arguments.toOwnedSlice(self.allocator),
+                    } };
+                }
+                const declaration = try self.resolveName(position.file, generic.name, .structure, position);
                 break :generic_type .{ .generic_structure = .{
                     .name = declaration.canonical_name,
                     .arguments = try arguments.toOwnedSlice(self.allocator),
@@ -735,6 +750,18 @@ pub const Resolver = struct {
                 }
             },
             .generic_structure => |generic| {
+                if (std.mem.eql(u8, generic.name, "Result")) {
+                    if (generic.arguments.len != 2) {
+                        const message = try std.fmt.allocPrint(
+                            self.allocator,
+                            "generic enum 'Result' expects 2 type arguments, found {d}",
+                            .{generic.arguments.len},
+                        );
+                        return self.fail(position, message);
+                    }
+                    for (generic.arguments) |argument| try self.validateAliasedType(argument, position);
+                    return;
+                }
                 const declaration = self.findDeclarationByCanonicalName(generic.name, .structure) orelse {
                     const message = try std.fmt.allocPrint(self.allocator, "unknown generic struct '{s}'", .{generic.name});
                     return self.fail(position, message);
@@ -1631,6 +1658,7 @@ fn declarationPositions(allocator: Allocator, declarations: []const *const Decla
 
 fn typeNameToReturnType(value: Ast.TypeName) Ast.ReturnType {
     return switch (value) {
+        .void => .void,
         .int => .int,
         .int8 => .int8,
         .int16 => .int16,

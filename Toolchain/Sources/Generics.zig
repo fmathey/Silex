@@ -24,6 +24,25 @@ const EnumSpecialization = struct {
     state: State,
 };
 
+const result_type_parameters = [_]Ast.TypeParameter{
+    .{ .name = "T", .position = .{ .line = 1, .column = 1 } },
+    .{ .name = "E", .position = .{ .line = 1, .column = 1 } },
+};
+const result_success_types = [_]Ast.TypeName{.{ .type_parameter = "T" }};
+const result_failure_types = [_]Ast.TypeName{.{ .type_parameter = "E" }};
+const result_variants = [_]Ast.EnumVariant{
+    .{ .name = "success", .position = .{ .line = 1, .column = 1 }, .associated_types = &result_success_types },
+    .{ .name = "failure", .position = .{ .line = 1, .column = 1 }, .associated_types = &result_failure_types },
+};
+const intrinsic_result = Ast.Enum{
+    .is_public = true,
+    .position = .{ .line = 1, .column = 1 },
+    .name = "Result",
+    .name_position = .{ .line = 1, .column = 1 },
+    .type_parameters = &result_type_parameters,
+    .variants = &result_variants,
+};
+
 const FunctionSpecialization = struct {
     template_position: Source.Position,
     name: []const u8,
@@ -77,7 +96,9 @@ pub const Specializer = struct {
         for (enum_value.variants) |variant| {
             var associated_types: std.ArrayList(Ast.TypeName) = .empty;
             for (variant.associated_types) |associated_type| {
-                try associated_types.append(self.allocator, try self.rewriteType(associated_type, bindings, variant.position));
+                const rewritten = try self.rewriteType(associated_type, bindings, variant.position);
+                if (rewritten == .void) continue;
+                try associated_types.append(self.allocator, rewritten);
             }
             try variants.append(self.allocator, .{
                 .name = variant.name,
@@ -295,7 +316,6 @@ pub const Specializer = struct {
             );
             return self.fail(position, message);
         }
-
         const name = try self.genericTypeName(template_name, arguments);
         for (self.structure_specializations.items) |specialization| {
             if (std.mem.eql(u8, specialization.name, name)) return specialization.name;
@@ -349,6 +369,13 @@ pub const Specializer = struct {
                 .{ template_name, template.type_parameters.len, if (template.type_parameters.len == 1) "" else "s", arguments.len },
             );
             return self.fail(position, message);
+        }
+        for (arguments, 0..) |argument, index| {
+            if (argument != .void) continue;
+            if (!std.mem.eql(u8, template_name, "Result")) {
+                return self.fail(position, "void cannot be used as a type argument");
+            }
+            if (index != 0) return self.fail(position, "Result error type cannot be 'void'");
         }
 
         const name = try self.genericTypeName(template_name, arguments);
@@ -708,6 +735,7 @@ pub const Specializer = struct {
     }
 
     fn findEnumTemplate(self: *const Specializer, name: []const u8) ?*const Ast.Enum {
+        if (std.mem.eql(u8, name, "Result")) return &intrinsic_result;
         for (self.program.enums) |*enum_value| {
             if (enum_value.type_parameters.len != 0 and std.mem.eql(u8, enum_value.name, name)) return enum_value;
         }
@@ -879,6 +907,7 @@ fn positionsEqual(left: Source.Position, right: Source.Position) bool {
 
 fn typeNameToReturnType(value: Ast.TypeName) Ast.ReturnType {
     return switch (value) {
+        .void => .void,
         .int => .int,
         .int8 => .int8,
         .int16 => .int16,
@@ -910,6 +939,7 @@ fn appendTypeName(
     value: Ast.TypeName,
 ) Allocator.Error!void {
     switch (value) {
+        .void => try output.appendSlice(allocator, "void"),
         .int => try output.appendSlice(allocator, "int"),
         .int8 => try output.appendSlice(allocator, "int8"),
         .int16 => try output.appendSlice(allocator, "int16"),

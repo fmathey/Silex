@@ -168,6 +168,26 @@ enum Outcome<T, E> {
         (named_type
           (type_identifier))))))
 
+========================
+Result with void success
+========================
+
+use Result<void, str> as SaveResult
+
+---
+
+(source_file
+  (use_declaration
+    (type
+      (named_type
+        (generic_type
+          (type_identifier)
+          (type_argument_list
+            (void_type)
+            (type
+              (builtin_type))))))
+    (identifier)))
+
 =================
 Generic functions
 =================

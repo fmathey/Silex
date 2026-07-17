@@ -2795,6 +2795,10 @@
         {
           "type": "type",
           "named": true
+        },
+        {
+          "type": "void_type",
+          "named": true
         }
       ]
     }

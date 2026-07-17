@@ -78,6 +78,7 @@ pub const Parser = struct {
         if (self.current.tag != .identifier) return self.fail("expected enum name");
         const name = self.current.lexeme;
         const name_position = self.current.position;
+        if (std.mem.eql(u8, name, "Result")) return self.fail("type name 'Result' is reserved");
         try self.advance();
         const type_parameters = if (self.current.tag == .less)
             try self.parseTypeParameters("enum")
@@ -173,6 +174,7 @@ pub const Parser = struct {
         try self.advance();
         if (self.current.tag != .identifier) return self.fail("expected alias after 'as'");
         const alias = self.current.lexeme;
+        if (std.mem.eql(u8, alias, "Result")) return self.fail("name 'Result' is reserved");
         try self.advance();
         return alias;
     }
@@ -197,6 +199,7 @@ pub const Parser = struct {
         if (self.current.tag != .identifier) return self.fail(if (is_class) "expected class name" else "expected struct name");
         const name = self.current.lexeme;
         const name_position = self.current.position;
+        if (std.mem.eql(u8, name, "Result")) return self.fail("type name 'Result' is reserved");
         try self.advance();
         const type_parameters = if (self.current.tag == .less) parameters: {
             if (is_class) return self.fail("generic classes are not supported");
@@ -404,6 +407,7 @@ pub const Parser = struct {
         }
         const type_name = try self.parseTypeNameAfter("expected function return type");
         return switch (type_name) {
+            .void => unreachable,
             .int => .int,
             .int8 => .int8,
             .int16 => .int16,
@@ -576,7 +580,7 @@ pub const Parser = struct {
             if (self.current.tag == .less) {
                 break :named .{ .generic_structure = .{
                     .name = name,
-                    .arguments = try self.parseTypeArguments(),
+                    .arguments = try self.parseTypeArguments(name),
                 } };
             }
             break :named .{ .structure = name };
@@ -1232,14 +1236,14 @@ pub const Parser = struct {
 
     fn parseIdentifierExpressionAfterToken(self: *Parser, token: Token) ParseError!*Ast.Expression {
         if (token.tag != .keyword_self and self.current.tag == .less and self.genericStaticMemberFollows()) {
-            const arguments = try self.parseTypeArguments();
+            const arguments = try self.parseTypeArguments(token.lexeme);
             return self.parsePostfix(try self.parseStaticMember(.{ .generic_structure = .{
                 .name = token.lexeme,
                 .arguments = arguments,
             } }, token.position));
         }
         const type_arguments = if (token.tag != .keyword_self and self.current.tag == .less and self.genericInvocationFollows())
-            try self.parseTypeArguments()
+            try self.parseTypeArguments(null)
         else
             &.{};
         var expression = if (token.tag == .keyword_self)
@@ -1312,15 +1316,16 @@ pub const Parser = struct {
             try self.advance();
             if (!safe and self.current.tag == .less and self.genericStaticMemberFollows()) {
                 const prefix = (try self.expressionPath(expression)) orelse return self.fail("a generic type qualifier must be a name");
-                const arguments = try self.parseTypeArguments();
+                const owner_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ prefix, name });
+                const arguments = try self.parseTypeArguments(owner_name);
                 expression = try self.parseStaticMember(.{ .generic_structure = .{
-                    .name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ prefix, name }),
+                    .name = owner_name,
                     .arguments = arguments,
                 } }, expression.position);
                 continue;
             }
             const type_arguments = if (!safe and self.current.tag == .less and self.genericInvocationFollows())
-                try self.parseTypeArguments()
+                try self.parseTypeArguments(null)
             else
                 &.{};
             if (self.current.tag == .left_parenthesis) {
@@ -1534,6 +1539,7 @@ pub const Parser = struct {
         var parameters: std.ArrayList(Ast.TypeParameter) = .empty;
         while (true) {
             if (self.current.tag != .identifier) return self.fail("expected type parameter name");
+            if (std.mem.eql(u8, self.current.lexeme, "Result")) return self.fail("type name 'Result' is reserved");
             for (parameters.items) |parameter| {
                 if (std.mem.eql(u8, parameter.name, self.current.lexeme)) {
                     return self.fail("type parameter is already declared");
@@ -1554,15 +1560,21 @@ pub const Parser = struct {
         return parameters.toOwnedSlice(self.allocator);
     }
 
-    fn parseTypeArguments(self: *Parser) ParseError![]const Ast.TypeName {
+    fn parseTypeArguments(self: *Parser, owner_name: ?[]const u8) ParseError![]const Ast.TypeName {
         try self.expect(.less, "expected '<'");
         if (self.current.tag == .greater or self.current.tag == .shift_right) {
             return self.fail("type arguments cannot be empty");
         }
         var arguments: std.ArrayList(Ast.TypeName) = .empty;
         while (true) {
-            if (self.current.tag == .keyword_void) return self.fail("void cannot be used as a type argument");
-            try arguments.append(self.allocator, try self.parseTypeNameAfter("expected type argument"));
+            if (self.current.tag == .keyword_void) {
+                if (owner_name == null or !std.mem.eql(u8, owner_name.?, "Result")) {
+                    return self.fail("void cannot be used as a type argument");
+                }
+                if (arguments.items.len != 0) return self.fail("Result error type cannot be 'void'");
+                try arguments.append(self.allocator, .void);
+                try self.advance();
+            } else try arguments.append(self.allocator, try self.parseTypeNameAfter("expected type argument"));
             if (self.current.tag != .comma) break;
             try self.advance();
             if (self.current.tag == .greater or self.current.tag == .shift_right) {
@@ -1597,13 +1609,13 @@ pub const Parser = struct {
 
     fn genericInvocationFollows(self: *const Parser) bool {
         var probe = self.*;
-        _ = probe.parseTypeArguments() catch return self.malformedGenericSuffixFollows(.left_parenthesis);
+        _ = probe.parseTypeArguments(null) catch return self.malformedGenericSuffixFollows(.left_parenthesis);
         return probe.current.tag == .left_parenthesis;
     }
 
     fn genericStaticMemberFollows(self: *const Parser) bool {
         var probe = self.*;
-        _ = probe.parseTypeArguments() catch return self.malformedGenericSuffixFollows(.dot);
+        _ = probe.parseTypeArguments(null) catch return self.malformedGenericSuffixFollows(.dot);
         if (probe.current.tag != .dot) return false;
         probe.advance() catch return false;
         return probe.current.tag == .identifier;
@@ -2764,16 +2776,16 @@ test "parse enums and expression and imperative matches" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     var parser = Parser.init(arena.allocator(),
-        \\enum Result { idle; value(int, str); failed(str) }
+        \\enum Verdict { idle; value(int, str); failed(str) }
         \\func main() {
-        \\    let result = Result.value(7, "ok")
+        \\    let result = Verdict.value(7, "ok")
         \\    let text = match result { idle => "idle"; value(number, text) => text; failed(error) => error }
         \\    match result { idle => {}; value(var number, let text) => { print(text) }; failed(error) => {} }
         \\}
     );
     const program = try parser.parse();
     try std.testing.expectEqual(@as(usize, 1), program.enums.len);
-    try std.testing.expectEqualStrings("Result", program.enums[0].name);
+    try std.testing.expectEqualStrings("Verdict", program.enums[0].name);
     try std.testing.expectEqual(@as(usize, 2), program.enums[0].variants[1].associated_types.len);
     const expression_match = program.functions[0].statements[1].variable_declaration.initializer.?.value.match_expression;
     try std.testing.expectEqual(@as(usize, 3), expression_match.branches.len);
@@ -2803,6 +2815,49 @@ test "parse generic enum declarations and specialized variant constructors" {
     const owner = program.functions[0].statements[0].variable_declaration.initializer.?.value.static_method_call.owner.generic_structure;
     try std.testing.expectEqualStrings("Outcome", owner.name);
     try std.testing.expectEqual(@as(usize, 2), owner.arguments.len);
+}
+
+test "parse intrinsic Result with a void success type" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var parser = Parser.init(arena.allocator(),
+        \\enum SaveError { denied }
+        \\func save() Result<void, SaveError> {
+        \\    return Result<void, SaveError>.success()
+        \\}
+        \\func main() {}
+    );
+    const program = try parser.parse();
+    const return_type = program.functions[0].return_type.generic_structure;
+    try std.testing.expectEqualStrings("Result", return_type.name);
+    try std.testing.expectEqual(Ast.TypeName.void, return_type.arguments[0]);
+    const owner = program.functions[0].statements[0].return_statement.value.?.value.static_method_call.owner.generic_structure;
+    try std.testing.expectEqual(Ast.TypeName.void, owner.arguments[0]);
+}
+
+test "reserve Result and reject void as its error type" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var error_type = Parser.init(arena.allocator(), "func main() { let value:Result<int, void> }");
+    try std.testing.expectError(error.InvalidSource, error_type.parse());
+    try std.testing.expectEqualStrings("Result error type cannot be 'void'", error_type.diagnostic.?.message);
+
+    var both_void = Parser.init(arena.allocator(), "func main() { let value:Result<void, void> }");
+    try std.testing.expectError(error.InvalidSource, both_void.parse());
+    try std.testing.expectEqualStrings("Result error type cannot be 'void'", both_void.diagnostic.?.message);
+
+    var enum_name = Parser.init(arena.allocator(), "enum Result<T, E> { success(T); failure(E) } func main() {}");
+    try std.testing.expectError(error.InvalidSource, enum_name.parse());
+    try std.testing.expectEqualStrings("type name 'Result' is reserved", enum_name.diagnostic.?.message);
+
+    var type_parameter = Parser.init(arena.allocator(), "struct Box<Result> { var value:Result } func main() {}");
+    try std.testing.expectError(error.InvalidSource, type_parameter.parse());
+    try std.testing.expectEqualStrings("type name 'Result' is reserved", type_parameter.diagnostic.?.message);
+
+    var import_alias = Parser.init(arena.allocator(), "import Library as Result\nfunc main() {}");
+    try std.testing.expectError(error.InvalidSource, import_alias.parse());
+    try std.testing.expectEqualStrings("name 'Result' is reserved", import_alias.diagnostic.?.message);
 }
 
 test "parse terminal else match branches" {

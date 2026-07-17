@@ -1,0 +1,7 @@
+enum Failure {
+    invalid
+}
+
+func main() {
+    let value = Result<int, Failure>.success()
+}

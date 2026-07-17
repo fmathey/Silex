@@ -60,8 +60,10 @@ and other generic specializations.
 
 Arguments are never inferred: annotations, function parameters and returns,
 aliases, and variant constructors use the complete specialization. `void` is a
-return type rather than a value type and cannot be an argument; a function type
-such as `func()` remains a valid argument. A specialization is checked by the
+return type rather than a value type and cannot be an argument of an ordinary
+generic enum; a function type such as `func()` remains a valid argument. The
+intrinsic `Result<void,E>` exception is described in
+[Recoverable errors](Error-Handling.md). A specialization is checked by the
 ordinary enum rules, so copying, `let`, and match binding independence depend
 on its concrete associated types.
 

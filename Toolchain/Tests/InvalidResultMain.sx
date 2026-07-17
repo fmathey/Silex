@@ -1,0 +1,7 @@
+enum Failure {
+    invalid
+}
+
+func main() Result<void, Failure> {
+    return Result<void, Failure>.success()
+}

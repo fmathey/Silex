@@ -660,6 +660,90 @@ pub fn build(b: *std.Build) void {
         "Tests/InvalidGenericEnumVoidArgument.sx:6:23: error: void cannot be used as a type argument\n",
     );
 
+    const missing_result_arguments_command = b.addRunArtifact(executable);
+    missing_result_arguments_command.addArgs(&.{ "compile", "Tests/MissingResultArguments.sx" });
+    missing_result_arguments_command.expectExitCode(1);
+    missing_result_arguments_command.expectStdErrEqual(
+        "Tests/MissingResultArguments.sx:2:9: error: generic enum 'Result' requires 2 type arguments\n",
+    );
+
+    const invalid_result_type_arity_command = b.addRunArtifact(executable);
+    invalid_result_type_arity_command.addArgs(&.{ "compile", "Tests/InvalidResultTypeArity.sx" });
+    invalid_result_type_arity_command.expectExitCode(1);
+    invalid_result_type_arity_command.expectStdErrEqual(
+        "Tests/InvalidResultTypeArity.sx:6:17: error: generic enum 'Result' expects 2 type arguments, found 1\n",
+    );
+
+    const invalid_result_success_arity_command = b.addRunArtifact(executable);
+    invalid_result_success_arity_command.addArgs(&.{ "compile", "Tests/InvalidResultSuccessArity.sx" });
+    invalid_result_success_arity_command.expectExitCode(1);
+    invalid_result_success_arity_command.expectStdErrEqual(
+        "Tests/InvalidResultSuccessArity.sx:6:38: error: variant 'Result<int, Failure>.success' expects 1 associated values, found 0\n",
+    );
+
+    const invalid_void_result_success_argument_command = b.addRunArtifact(executable);
+    invalid_void_result_success_argument_command.addArgs(&.{ "compile", "Tests/InvalidVoidResultSuccessArgument.sx" });
+    invalid_void_result_success_argument_command.expectExitCode(1);
+    invalid_void_result_success_argument_command.expectStdErrEqual(
+        "Tests/InvalidVoidResultSuccessArgument.sx:6:39: error: variant 'Result<void, Failure>.success' expects 0 associated values, found 1\n",
+    );
+
+    const invalid_result_failure_arity_command = b.addRunArtifact(executable);
+    invalid_result_failure_arity_command.addArgs(&.{ "compile", "Tests/InvalidResultFailureArity.sx" });
+    invalid_result_failure_arity_command.expectExitCode(1);
+    invalid_result_failure_arity_command.expectStdErrEqual(
+        "Tests/InvalidResultFailureArity.sx:6:38: error: variant 'Result<int, Failure>.failure' expects 1 associated values, found 0\n",
+    );
+
+    const invalid_implicit_result_conversion_command = b.addRunArtifact(executable);
+    invalid_implicit_result_conversion_command.addArgs(&.{ "compile", "Tests/InvalidImplicitResultConversion.sx" });
+    invalid_implicit_result_conversion_command.expectExitCode(1);
+    invalid_implicit_result_conversion_command.expectStdErrEqual(
+        "Tests/InvalidImplicitResultConversion.sx:6:12: error: expected 'Result<int, Failure>', found 'int'\n",
+    );
+
+    const invalid_implicit_result_error_conversion_command = b.addRunArtifact(executable);
+    invalid_implicit_result_error_conversion_command.addArgs(&.{ "compile", "Tests/InvalidImplicitResultErrorConversion.sx" });
+    invalid_implicit_result_error_conversion_command.expectExitCode(1);
+    invalid_implicit_result_error_conversion_command.expectStdErrEqual(
+        "Tests/InvalidImplicitResultErrorConversion.sx:6:12: error: expected 'Result<int, Failure>', found 'Failure'\n",
+    );
+
+    const invalid_result_void_error_command = b.addRunArtifact(executable);
+    invalid_result_void_error_command.addArgs(&.{ "compile", "Tests/InvalidResultVoidError.sx" });
+    invalid_result_void_error_command.expectExitCode(1);
+    invalid_result_void_error_command.expectStdErrEqual(
+        "Tests/InvalidResultVoidError.sx:2:27: error: Result error type cannot be 'void'\n",
+    );
+
+    const reserved_result_enum_command = b.addRunArtifact(executable);
+    reserved_result_enum_command.addArgs(&.{ "compile", "Tests/ReservedResultEnum.sx" });
+    reserved_result_enum_command.expectExitCode(1);
+    reserved_result_enum_command.expectStdErrEqual(
+        "Tests/ReservedResultEnum.sx:1:6: error: type name 'Result' is reserved\n",
+    );
+
+    const reserved_result_alias_command = b.addRunArtifact(executable);
+    reserved_result_alias_command.addArgs(&.{ "compile", "Tests/ReservedResultAlias.sx" });
+    reserved_result_alias_command.expectExitCode(1);
+    reserved_result_alias_command.expectStdErrEqual(
+        "Tests/ReservedResultAlias.sx:5:16: error: name 'Result' is reserved\n",
+    );
+
+    const invalid_result_let_independence_command = b.addRunArtifact(executable);
+    invalid_result_let_independence_command.addArgs(&.{ "compile", "Tests/InvalidResultLetIndependence.sx" });
+    invalid_result_let_independence_command.expectExitCode(1);
+    invalid_result_let_independence_command.expectStdErrEqual(
+        "Tests/InvalidResultLetIndependence.sx:6:9: error: type 'Result<func(), Failure>' is not an independent value because field 'success[1]' reaches 'func'; use 'var'\n",
+    );
+
+    const invalid_result_main_command = b.addRunArtifact(executable);
+    invalid_result_main_command.addArgs(&.{ "compile", "Tests/InvalidResultMain.sx" });
+    invalid_result_main_command.expectExitCode(1);
+    invalid_result_main_command.expectStdErrEqual(
+        "Tests/InvalidResultMain.sx:5:6: error: 'main' must have return type 'void' and no parameters\n",
+    );
+
     const missing_generic_function_arguments_command = b.addRunArtifact(executable);
     missing_generic_function_arguments_command.addArgs(&.{ "compile", "Tests/MissingGenericFunctionArguments.sx" });
     missing_generic_function_arguments_command.expectExitCode(1);
@@ -1488,6 +1572,18 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&invalid_generic_enum_independence_command.step);
     test_step.dependOn(&invalid_generic_raw_enum_command.step);
     test_step.dependOn(&invalid_generic_enum_void_argument_command.step);
+    test_step.dependOn(&missing_result_arguments_command.step);
+    test_step.dependOn(&invalid_result_type_arity_command.step);
+    test_step.dependOn(&invalid_result_success_arity_command.step);
+    test_step.dependOn(&invalid_void_result_success_argument_command.step);
+    test_step.dependOn(&invalid_result_failure_arity_command.step);
+    test_step.dependOn(&invalid_implicit_result_conversion_command.step);
+    test_step.dependOn(&invalid_implicit_result_error_conversion_command.step);
+    test_step.dependOn(&invalid_result_void_error_command.step);
+    test_step.dependOn(&reserved_result_enum_command.step);
+    test_step.dependOn(&reserved_result_alias_command.step);
+    test_step.dependOn(&invalid_result_let_independence_command.step);
+    test_step.dependOn(&invalid_result_main_command.step);
     test_step.dependOn(&missing_generic_function_arguments_command.step);
     test_step.dependOn(&unexpected_generic_function_arguments_command.step);
     test_step.dependOn(&invalid_generic_function_arity_command.step);
@@ -1673,8 +1769,13 @@ pub fn build(b: *std.Build) void {
     generic_enums_command.addArgs(&.{ "run", "Smokes/GenericEnums/silex.json" });
     generic_enums_command.expectStdOutEqual(hostText(b, "success\ninvalid\ndistinct\n2\ntrue\nconverted\nsuccess\n"));
 
+    const results_command = b.addRunArtifact(executable);
+    results_command.step.dependOn(&generic_enums_command.step);
+    results_command.addArgs(&.{ "run", "Smokes/Results/silex.json" });
+    results_command.expectStdOutEqual(hostText(b, "8081\nbad\nsaved\ndenied\ncallback\n"));
+
     const generic_functions_command = b.addRunArtifact(executable);
-    generic_functions_command.step.dependOn(&generic_enums_command.step);
+    generic_functions_command.step.dependOn(&results_command.step);
     generic_functions_command.addArgs(&.{ "run", "Smokes/GenericFunctions.sx" });
     generic_functions_command.expectStdOutEqual(hostText(b, "42\n7\nAda\nGrace\n9\nSilex\n3\n3\n4\n120\nlocal\n11\n5\ngeneric\n"));
 

@@ -89,6 +89,18 @@
     ],
     "description": "Match selected enum variants with a default branch"
   },
+  "Result match": {
+    "prefix": "matchresult",
+    "body": [
+      "match ${1:result} {",
+      "    success(${2:value}) => {",
+      "        $0",
+      "    }",
+      "    failure(${3:error}) => {}",
+      "}"
+    ],
+    "description": "Handle both variants of a Result"
+  },
   "Print": {
     "prefix": "print",
     "body": [

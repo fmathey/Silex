@@ -1,0 +1,9 @@
+enum Failure {
+    invalid
+}
+
+func compute() Result<int, Failure> {
+    return 42
+}
+
+func main() {}

@@ -9,6 +9,7 @@ files use the `.sx` extension; `silex` is the compiler command.
 - [Types and conversions](Language/Types.md)
 - [Optional values](Language/Optional-Values.md)
 - [Enums and exhaustive match](Language/Enums-and-Match.md)
+- [Recoverable errors](Language/Error-Handling.md)
 - [Collections](Language/Collections.md)
 - [Values and references](Language/Values-and-References.md)
 - [Expressions and statements](Language/Expressions.md)

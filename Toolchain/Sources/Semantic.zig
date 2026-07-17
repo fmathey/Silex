@@ -5549,6 +5549,7 @@ fn typeFromAnnotation(
     position: Source.Position,
 ) AnalyzeError!Type {
     return switch (annotation) {
+        .void => .void,
         .int => .int,
         .int8 => .int8,
         .int16 => .int16,
@@ -6358,11 +6359,11 @@ fn expectSemanticSuccess(source: []const u8) !void {
 
 test "analyze enum construction and exhaustive match" {
     try expectSemanticSuccess(
-        \\enum Result { idle; value(int); failed(str) }
-        \\func text(result:Result) str {
+        \\enum Verdict { idle; value(int); failed(str) }
+        \\func text(result:Verdict) str {
         \\    return match result { idle => "idle"; value(number) => "value"; failed(message) => message }
         \\}
-        \\func main() { let result = Result.value(7); print(text(result)) }
+        \\func main() { let result = Verdict.value(7); print(text(result)) }
     );
 }
 
