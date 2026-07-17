@@ -1,0 +1,116 @@
+==================
+Function value type and lambda
+==================
+
+func apply(value:int, callback:func(int) int) int {
+    return callback(value)
+}
+
+func main() {
+    let doubled:func(int) int = func(value:int) int {
+        return value * 2
+    }
+    print(apply(4, doubled))
+}
+
+func use_mutable(callback:func(&int)) {
+    var value = 0
+    callback(&value)
+}
+
+---
+
+(source_file
+  (function_definition
+    name: (identifier)
+    (parameter_list
+      (parameter
+        name: (identifier)
+        type: (type
+          (builtin_type)))
+      (parameter
+        name: (identifier)
+        type: (type
+          (function_type
+            (function_type_parameter
+              type: (type
+                (builtin_type)))
+            (type
+              (builtin_type))))))
+    return_type: (type
+      (builtin_type))
+    body: (block
+      (statement
+        (return_statement
+          value: (expression
+            (invocation_expression
+              target: (identifier)
+              (expression
+                (identifier))))))))
+  (function_definition
+    name: (identifier)
+    (parameter_list)
+    body: (block
+      (statement
+        (variable_declaration
+          name: (identifier)
+          (type_annotation
+            type: (type
+              (function_type
+                (function_type_parameter
+                  type: (type
+                    (builtin_type)))
+                (type
+                  (builtin_type)))))
+          initializer: (expression
+            (lambda_expression
+              (parameter_list
+                (parameter
+                  name: (identifier)
+                  type: (type
+                    (builtin_type))))
+              return_type: (type
+                (builtin_type))
+              body: (block
+                (statement
+                  (return_statement
+                    value: (expression
+                      (binary_expression
+                        left: (expression
+                          (identifier))
+                        right: (expression
+                          (integer_literal)))))))))))
+      (statement
+        (print_statement
+          function: (identifier)
+          argument: (expression
+            (invocation_expression
+              target: (identifier)
+              (expression
+                (integer_literal))
+              (expression
+                (identifier))))))))
+  (function_definition
+    name: (identifier)
+    (parameter_list
+      (parameter
+        name: (identifier)
+        type: (type
+          (function_type
+            (function_type_parameter
+              type: (type
+                (builtin_type)))))))
+    body: (block
+      (statement
+        (variable_declaration
+          name: (identifier)
+          initializer: (expression
+            (integer_literal))))
+      (statement
+        (expression_statement
+          (invocation_expression
+            target: (identifier)
+            (expression
+              (borrow_expression
+                operand: (expression
+                  (identifier))))))))))

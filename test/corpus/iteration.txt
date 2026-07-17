@@ -1,0 +1,249 @@
+=============================
+Collection iteration
+=============================
+
+func main() {
+    let values:int[] = [1, 2, 3]
+    for value in values {
+        if value == 2 {
+            continue
+        }
+        print(value)
+        break
+    }
+    var mutable:int[] = [1]
+    for var value in mutable {
+        value += 1
+    }
+}
+
+---
+
+(source_file
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (block
+      (statement
+        (variable_declaration
+          (identifier)
+          (type_annotation
+            (type
+              (array_type
+                (builtin_type))))
+          (expression
+            (sequence_literal
+              (expression
+                (integer_literal))
+              (expression
+                (integer_literal))
+              (expression
+                (integer_literal))))))
+      (statement
+        (for_statement
+          (identifier)
+          (expression
+            (identifier))
+          (block
+            (statement
+              (if_statement
+                (expression
+                  (binary_expression
+                    (expression
+                      (identifier))
+                    (expression
+                      (integer_literal))))
+                (block
+                  (statement
+                    (continue_statement)))))
+            (statement
+              (print_statement
+                (identifier)
+                (expression
+                  (identifier))))
+            (statement
+              (break_statement)))))
+      (statement
+        (variable_declaration
+          (identifier)
+          (type_annotation
+            (type
+              (array_type
+                (builtin_type))))
+          (expression
+            (sequence_literal
+              (expression
+                (integer_literal))))))
+      (statement
+        (for_statement
+          (identifier)
+          (expression
+            (identifier))
+          (block
+            (statement
+              (assignment_statement
+                (identifier)
+                (expression
+                  (integer_literal))))))))))
+
+=============================
+Parenthesized implicit binding
+=============================
+
+func main() {
+    let values = [1]
+    for (value in values) {}
+}
+
+---
+
+(source_file
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (block
+      (statement
+        (variable_declaration
+          (identifier)
+          (expression
+            (sequence_literal
+              (expression
+                (integer_literal))))))
+      (statement
+        (for_statement
+          (identifier)
+          (expression
+            (identifier))
+          (block))))))
+
+=============================
+Integer ranges and cascade source
+=============================
+
+func main() {
+    for let i in 0...3 {}
+    for var i in range(3, 0) {}
+    var values = [1]
+    for let value in values..reverse() {}
+}
+
+---
+
+(source_file
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (block
+      (statement
+        (for_statement
+          (identifier)
+          (integer_range
+            (expression
+              (integer_literal))
+            (expression
+              (integer_literal)))
+          (block)))
+      (statement
+        (for_statement
+          (identifier)
+          (integer_range
+            (expression
+              (integer_literal))
+            (expression
+              (integer_literal)))
+          (block)))
+      (statement
+        (variable_declaration
+          (identifier)
+          (expression
+            (sequence_literal
+              (expression
+                (integer_literal))))))
+      (statement
+        (for_statement
+          (identifier)
+          (expression
+            (cascade_expression
+              (identifier)
+              (cascade_operation
+                (cascade_method_call
+                  (identifier)))))
+          (block))))))
+
+=============================
+Optional control flow parentheses
+=============================
+
+func main() {
+    let enabled = true
+    let values = [1]
+    if enabled {}
+    if (enabled) {}
+    while enabled {}
+    while (enabled) {}
+    for value in values {}
+    for (value in values) {}
+    for (let value in values) {}
+}
+
+---
+
+(source_file
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (block
+      (statement
+        (variable_declaration
+          (identifier)
+          (expression
+            (boolean_literal))))
+      (statement
+        (variable_declaration
+          (identifier)
+          (expression
+            (sequence_literal
+              (expression
+                (integer_literal))))))
+      (statement
+        (if_statement
+          (expression
+            (identifier))
+          (block)))
+      (statement
+        (if_statement
+          (expression
+            (parenthesized_expression
+              (expression
+                (identifier))))
+          (block)))
+      (statement
+        (while_statement
+          (expression
+            (identifier))
+          (block)))
+      (statement
+        (while_statement
+          (expression
+            (parenthesized_expression
+              (expression
+                (identifier))))
+          (block)))
+      (statement
+        (for_statement
+          (identifier)
+          (expression
+            (identifier))
+          (block)))
+      (statement
+        (for_statement
+          (identifier)
+          (expression
+            (identifier))
+          (block)))
+      (statement
+        (for_statement
+          (identifier)
+          (expression
+            (identifier))
+          (block))))))

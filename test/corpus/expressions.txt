@@ -1,0 +1,1068 @@
+==================
+Arithmetic precedence
+==================
+
+func main() {
+    print(1 + 2 * 3);
+}
+
+---
+
+(source_file
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (block
+      (statement
+        (print_statement
+          (identifier)
+          (expression
+            (binary_expression
+              (expression
+                (integer_literal))
+              (expression
+                (binary_expression
+                  (expression
+                    (integer_literal))
+                  (expression
+                    (integer_literal)))))))))))
+
+====================
+Remainder precedence
+====================
+
+func main() {
+    print(20 + 17 % 5 * 3)
+}
+
+---
+
+(source_file
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (block
+      (statement
+        (print_statement
+          (identifier)
+          (expression
+            (binary_expression
+              (expression
+                (integer_literal))
+              (expression
+                (binary_expression
+                  (expression
+                    (binary_expression
+                      (expression
+                        (integer_literal))
+                      (expression
+                        (integer_literal))))
+                  (expression
+                    (integer_literal)))))))))))
+
+==================
+Bitwise precedence
+==================
+
+func main() {
+    let value:uint8 = 1 + 1 << 2 & 7 ^ 3
+}
+
+---
+
+(source_file
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (block
+      (statement
+        (variable_declaration
+          (identifier)
+          (type_annotation
+            (type
+              (builtin_type)))
+          (expression
+            (binary_expression
+              (expression
+                (binary_expression
+                  (expression
+                    (binary_expression
+                      (expression
+                        (binary_expression
+                          (expression
+                            (integer_literal))
+                          (expression
+                            (integer_literal))))
+                      (expression
+                        (integer_literal))))
+                  (expression
+                    (integer_literal))))
+              (expression
+                (integer_literal)))))))))
+
+===============================
+Explicit numeric conversions
+===============================
+
+func main() {
+    let value:int = 12.0 as int
+    print(value as float)
+}
+
+---
+
+(source_file
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (block
+      (statement
+        (variable_declaration
+          (identifier)
+          (type_annotation
+            (type
+              (builtin_type)))
+          (expression
+            (conversion_expression
+              (expression
+                (float_literal))
+              (type
+                (builtin_type))))))
+      (statement
+        (print_statement
+          (identifier)
+          (expression
+            (conversion_expression
+              (expression
+                (identifier))
+              (type
+                (builtin_type)))))))))
+
+===============================
+Variables and conditional block
+===============================
+
+func main() {
+    let a = 5;
+    var hit:bool = true;
+    if hit {
+        print(a);
+    }
+    hit = false;
+}
+
+---
+
+(source_file
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (block
+      (statement
+        (variable_declaration
+          (identifier)
+          (expression
+            (integer_literal))))
+      (statement
+        (variable_declaration
+          (identifier)
+          (type_annotation
+            (type
+              (builtin_type)))
+          (expression
+            (boolean_literal))))
+      (statement
+        (if_statement
+          (expression
+            (identifier))
+          (block
+            (statement
+              (print_statement
+                (identifier)
+                (expression
+                  (identifier)))))))
+      (statement
+        (assignment_statement
+          (identifier)
+          (expression
+            (boolean_literal)))))))
+
+=================================
+Logical precedence and else block
+=================================
+
+func main() {
+    let value = 5;
+    if !(value >= 10) && value != 0 || false {
+        print("active");
+    } else {
+        print("inactive");
+    }
+}
+
+---
+
+(source_file
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (block
+      (statement
+        (variable_declaration
+          (identifier)
+          (expression
+            (integer_literal))))
+      (statement
+        (if_statement
+          (expression
+            (binary_expression
+              (expression
+                (binary_expression
+                  (expression
+                    (unary_expression
+                      (expression
+                        (parenthesized_expression
+                          (expression
+                            (binary_expression
+                              (expression
+                                (identifier))
+                              (expression
+                                (integer_literal))))))))
+                  (expression
+                    (binary_expression
+                      (expression
+                        (identifier))
+                      (expression
+                        (integer_literal))))))
+              (expression
+                (boolean_literal))))
+          (block
+            (statement
+              (print_statement
+                (identifier)
+                (expression
+                  (string_literal)))))
+          (block
+            (statement
+              (print_statement
+                (identifier)
+                (expression
+                  (string_literal))))))))))
+
+====================
+While loop
+====================
+
+func main() {
+    var count = 2;
+    while count > 0 {
+        print(count);
+        count = count - 1;
+    }
+}
+
+---
+
+(source_file
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (block
+      (statement
+        (variable_declaration
+          (identifier)
+          (expression
+            (integer_literal))))
+      (statement
+        (while_statement
+          (expression
+            (binary_expression
+              (expression
+                (identifier))
+              (expression
+                (integer_literal))))
+          (block
+            (statement
+              (print_statement
+                (identifier)
+                (expression
+                  (identifier))))
+            (statement
+              (assignment_statement
+                (identifier)
+                (expression
+                  (binary_expression
+                    (expression
+                      (identifier))
+                    (expression
+                      (integer_literal))))))))))))
+
+====================================
+Alternative branch chains
+====================================
+
+func main() {
+    if false {} elif true {} else if (false) {} elif true {} else {}
+    if false {} else { if true {} }
+}
+
+---
+
+(source_file
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (block
+      (statement
+        (if_statement
+          (expression
+            (boolean_literal))
+          (block)
+          (alternative_branch
+            (expression
+              (boolean_literal))
+            (block))
+          (alternative_branch
+            (expression
+              (parenthesized_expression
+                (expression
+                  (boolean_literal))))
+            (block))
+          (alternative_branch
+            (expression
+              (boolean_literal))
+            (block))
+          (block)))
+      (statement
+        (if_statement
+          (expression
+            (boolean_literal))
+          (block)
+          (block
+            (statement
+              (if_statement
+                (expression
+                  (boolean_literal))
+                (block)))))))))
+
+============================
+Runtime assertion
+============================
+
+func main() {
+    assert(1 < 2, "must hold")
+}
+
+---
+
+(source_file
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (block
+      (statement
+        (assert_statement
+          (identifier)
+          (expression
+            (binary_expression
+              (expression
+                (integer_literal))
+              (expression
+                (integer_literal))))
+          (expression
+            (string_literal)))))))
+
+===================
+Runtime panic
+===================
+
+func main() {
+    panic("stop")
+}
+
+---
+
+(source_file
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (block
+      (statement
+        (panic_statement
+          (identifier)
+          (expression
+            (string_literal)))))))
+
+=====================
+Automatic terminators
+=====================
+
+func main() {
+    let a = 1 // comment
+    let b =
+        a +
+        2
+    print(
+        b
+    )
+    var count = 2; count = count - 1; print(count)
+}
+
+---
+
+(source_file
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (block
+      (statement
+        (variable_declaration
+          (identifier)
+          (expression
+            (integer_literal)))
+        (comment))
+      (statement
+        (variable_declaration
+          (identifier)
+          (expression
+            (binary_expression
+              (expression
+                (identifier))
+              (expression
+                (integer_literal))))))
+      (statement
+        (print_statement
+          (identifier)
+          (expression
+            (identifier))))
+      (statement
+        (variable_declaration
+          (identifier)
+          (expression
+            (integer_literal))))
+      (statement
+        (assignment_statement
+          (identifier)
+          (expression
+            (binary_expression
+              (expression
+                (identifier))
+              (expression
+                (integer_literal))))))
+      (statement
+        (print_statement
+          (identifier)
+          (expression
+            (identifier)))))))
+
+==============================================
+Missing separator between same-line statements
+==============================================
+
+func main() {
+    let a = 1 let b = 2
+}
+
+---
+
+(source_file
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (block
+      (statement
+        (variable_declaration
+          (identifier)
+          (expression
+            (integer_literal)))
+        (MISSING ";"))
+      (statement
+        (variable_declaration
+          (identifier)
+          (expression
+            (integer_literal)))))))
+
+=============================
+Functions calls and returns
+=============================
+
+func main() {
+    announce("result")
+    print(add(2, 3))
+}
+
+func add(left:int, right:int) int {
+    return left + right
+}
+
+func announce(message:str) {
+    print(message)
+    return
+}
+
+---
+
+(source_file
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (block
+      (statement
+        (expression_statement
+          (invocation_expression
+            (identifier)
+            (expression
+              (string_literal)))))
+      (statement
+        (print_statement
+          (identifier)
+          (expression
+            (invocation_expression
+              (identifier)
+              (expression
+                (integer_literal))
+              (expression
+                (integer_literal))))))))
+  (function_definition
+    (identifier)
+    (parameter_list
+      (parameter
+        (identifier)
+        (type
+          (builtin_type)))
+      (parameter
+        (identifier)
+        (type
+          (builtin_type))))
+    (type
+      (builtin_type))
+    (block
+      (statement
+        (return_statement
+          (expression
+            (binary_expression
+              (expression
+                (identifier))
+              (expression
+                (identifier))))))))
+  (function_definition
+    (identifier)
+    (parameter_list
+      (parameter
+        (identifier)
+        (type
+          (builtin_type))))
+    (block
+      (statement
+        (print_statement
+          (identifier)
+          (expression
+            (identifier))))
+      (statement
+        (return_statement)))))
+
+=============================
+Defaults and compound assignments
+=============================
+
+struct Settings {
+    count:int
+    name:str = "Silex"
+}
+
+func main() {
+    var settings:Settings
+    settings.count += 4
+    settings.count *= 2
+    settings.count--
+    settings.count++
+    let zero:int
+    print(zero)
+}
+
+---
+
+(source_file
+  (structure_definition
+    (identifier)
+    (structure_field
+      (identifier)
+      (type
+        (builtin_type)))
+    (structure_field
+      (identifier)
+      (type
+        (builtin_type))
+      (expression
+        (string_literal))))
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (block
+      (statement
+        (variable_declaration
+          (identifier)
+          (type_annotation
+            (type
+              (named_type
+                (type_identifier))))))
+      (statement
+        (assignment_statement
+          (member_expression
+            (identifier)
+            (identifier))
+          (expression
+            (integer_literal))))
+      (statement
+        (assignment_statement
+          (member_expression
+            (identifier)
+            (identifier))
+          (expression
+            (integer_literal))))
+      (statement
+        (update_statement
+          (member_expression
+            (identifier)
+            (identifier))))
+      (statement
+        (update_statement
+          (member_expression
+            (identifier)
+            (identifier))))
+      (statement
+        (variable_declaration
+          (identifier)
+          (type_annotation
+            (type
+              (builtin_type)))))
+      (statement
+        (print_statement
+          (identifier)
+          (expression
+            (identifier)))))))
+
+=============================
+Struct initialization and fields
+=============================
+
+struct Position {
+    x:int
+    y:int
+}
+
+func main() {
+    var position = Position(y:20, x:10)
+    position.x = 12
+    print(position.x)
+}
+
+---
+
+(source_file
+  (structure_definition
+    (identifier)
+    (structure_field
+      (identifier)
+      (type
+        (builtin_type)))
+    (structure_field
+      (identifier)
+      (type
+        (builtin_type))))
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (block
+      (statement
+        (variable_declaration
+          (identifier)
+          (expression
+            (invocation_expression
+              (identifier)
+              (field_initializer
+                (identifier)
+                (expression
+                  (integer_literal)))
+              (field_initializer
+                (identifier)
+                (expression
+                  (integer_literal)))))))
+      (statement
+        (assignment_statement
+          (member_expression
+            (identifier)
+            (identifier))
+          (expression
+            (integer_literal))))
+      (statement
+        (print_statement
+          (identifier)
+          (expression
+            (member_expression
+              (identifier)
+              (identifier))))))))
+
+=============================
+Struct methods and self
+=============================
+
+struct Counter {
+    value:int
+
+    func current() int {
+        return self.value
+    }
+
+    func increment(amount:int) {
+        self.value = self.value + amount
+    }
+}
+
+func main() {
+    var counter = Counter(value:1)
+    counter.increment(2)
+    print(counter.current())
+}
+
+---
+
+(source_file
+  (structure_definition
+    (identifier)
+    (structure_field
+      (identifier)
+      (type
+        (builtin_type)))
+    (function_definition
+      (identifier)
+      (parameter_list)
+      (type
+        (builtin_type))
+      (block
+        (statement
+          (return_statement
+            (expression
+              (member_expression
+                (self_expression)
+                (identifier)))))))
+    (function_definition
+      (identifier)
+      (parameter_list
+        (parameter
+          (identifier)
+          (type
+            (builtin_type))))
+      (block
+        (statement
+          (assignment_statement
+            (member_expression
+              (self_expression)
+              (identifier))
+            (expression
+              (binary_expression
+                (expression
+                  (member_expression
+                    (self_expression)
+                    (identifier)))
+                (expression
+                  (identifier)))))))))
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (block
+      (statement
+        (variable_declaration
+          (identifier)
+          (expression
+            (invocation_expression
+              (identifier)
+              (field_initializer
+                (identifier)
+                (expression
+                  (integer_literal)))))))
+      (statement
+        (expression_statement
+          (invocation_expression
+            (member_expression
+              (identifier)
+              (identifier))
+            (expression
+              (integer_literal)))))
+      (statement
+        (print_statement
+          (identifier)
+          (expression
+            (invocation_expression
+              (member_expression
+                (identifier)
+                (identifier)))))))))
+
+=============================
+Float literals and promotion
+=============================
+
+struct Motion {
+    position:float
+    speed:float = 1.5
+}
+
+func main() {
+    var motion:Motion
+    motion.position += motion.speed * 2
+    let offset = -2.5
+    let ratio = 5 / 2.0
+    print(offset + ratio)
+}
+
+---
+
+(source_file
+  (structure_definition
+    (identifier)
+    (structure_field
+      (identifier)
+      (type
+        (builtin_type)))
+    (structure_field
+      (identifier)
+      (type
+        (builtin_type))
+      (expression
+        (float_literal))))
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (block
+      (statement
+        (variable_declaration
+          (identifier)
+          (type_annotation
+            (type
+              (named_type
+                (type_identifier))))))
+      (statement
+        (assignment_statement
+          (member_expression
+            (identifier)
+            (identifier))
+          (expression
+            (binary_expression
+              (expression
+                (member_expression
+                  (identifier)
+                  (identifier)))
+              (expression
+                (integer_literal))))))
+      (statement
+        (variable_declaration
+          (identifier)
+          (expression
+            (unary_expression
+              (expression
+                (float_literal))))))
+      (statement
+        (variable_declaration
+          (identifier)
+          (expression
+            (binary_expression
+              (expression
+                (integer_literal))
+              (expression
+                (float_literal))))))
+      (statement
+        (print_statement
+          (identifier)
+          (expression
+            (binary_expression
+              (expression
+                (identifier))
+              (expression
+                (identifier)))))))))
+
+============================
+Mutable parameter
+============================
+
+func increment(value:&int) {
+    value += 1
+}
+
+func main() {
+    var values = [1]
+    increment(&values[0])
+}
+
+---
+
+(source_file
+  (function_definition
+    (identifier)
+    (parameter_list
+      (parameter
+        (identifier)
+        (type
+          (builtin_type))))
+    (block
+      (statement
+        (assignment_statement
+          (identifier)
+          (expression
+            (integer_literal))))))
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (block
+      (statement
+        (variable_declaration
+          (identifier)
+          (expression
+            (sequence_literal
+              (expression
+                (integer_literal))))))
+      (statement
+        (expression_statement
+          (invocation_expression
+            (identifier)
+            (expression
+              (borrow_expression
+                (expression
+                  (index_expression
+                    (identifier)
+                    (expression
+                      (integer_literal))))))))))))
+
+============================
+Optional values and safe access
+============================
+
+struct Profile {
+    value:int?
+}
+
+func find() Profile? {
+    return null
+}
+
+func main() {
+    let values:int?[] = [null, 1]
+    let callback:(func(int))? = null
+    if profile = find() {
+        print(profile.value)
+    } elif (var fallback = find()) {
+        fallback?.value
+    }
+    while profile = find() {
+        print(profile.value)
+    }
+    let value:int? = find()?.value
+}
+
+---
+
+(source_file
+  (structure_definition
+    (identifier)
+    (structure_field
+      (identifier)
+      (type
+        (optional_type
+          (builtin_type)))))
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (type
+      (optional_type
+        (named_type
+          (type_identifier))))
+    (block
+      (statement
+        (return_statement
+          (expression
+            (null_literal))))))
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (block
+      (statement
+        (variable_declaration
+          (identifier)
+          (type_annotation
+            (type
+              (array_type
+                (optional_type
+                  (builtin_type)))))
+          (expression
+            (sequence_literal
+              (expression
+                (null_literal))
+              (expression
+                (integer_literal))))))
+      (statement
+        (variable_declaration
+          (identifier)
+          (type_annotation
+            (type
+              (optional_type
+                (grouped_type
+                  (type
+                    (function_type
+                      (function_type_parameter
+                        (type
+                          (builtin_type)))))))))
+          (expression
+            (null_literal))))
+      (statement
+        (if_statement
+          (conditional_binding
+            (identifier)
+            (expression
+              (invocation_expression
+                (identifier))))
+          (block
+            (statement
+              (print_statement
+                (identifier)
+                (expression
+                  (member_expression
+                    (identifier)
+                    (identifier))))))
+          (alternative_branch
+            (conditional_binding
+              (identifier)
+              (expression
+                (invocation_expression
+                  (identifier))))
+            (block
+              (statement
+                (expression_statement
+                  (safe_member_expression
+                    (identifier)
+                    (identifier))))))))
+      (statement
+        (while_statement
+          (conditional_binding
+            (identifier)
+            (expression
+              (invocation_expression
+                (identifier))))
+          (block
+            (statement
+              (print_statement
+                (identifier)
+                (expression
+                  (member_expression
+                    (identifier)
+                    (identifier))))))))
+      (statement
+        (variable_declaration
+          (identifier)
+          (type_annotation
+            (type
+              (optional_type
+                (builtin_type))))
+          (expression
+            (safe_member_expression
+              (invocation_expression
+                (identifier))
+              (identifier))))))))

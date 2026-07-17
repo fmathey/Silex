@@ -1,0 +1,24 @@
+{
+  "name": "tree-sitter-silex",
+  "version": "0.7.0",
+  "description": "Tree-sitter grammar for Silex",
+  "main": "bindings/node",
+  "keywords": [
+    "incremental",
+    "parsing",
+    "silex",
+    "tree-sitter"
+  ],
+  "license": "MIT",
+  "tree-sitter": [
+    {
+      "scope": "source.silex",
+      "file-types": [
+        "sx"
+      ]
+    }
+  ],
+  "devDependencies": {
+    "tree-sitter-cli": "0.25.10"
+  }
+}

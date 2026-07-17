@@ -1,0 +1,344 @@
+==================
+Generic structures
+==================
+
+struct Pair<T> {
+    first:T
+    second:T
+}
+
+struct Entry<Key, Value> {
+    key:Key
+    value:Value
+}
+
+func main() {
+    let pair:Pair<int> = Pair<int>(first:1, second:2)
+    let nested = Entry<int, Pair<str>>(
+        key:1,
+        value:Pair<str>(first:"left", second:"right"),
+    )
+    print(pair.first < pair.second)
+}
+
+---
+
+(source_file
+  (structure_definition
+    (identifier)
+    (type_parameter_list
+      (type_parameter
+        (identifier)))
+    (structure_field
+      (identifier)
+      (type
+        (named_type
+          (type_identifier))))
+    (structure_field
+      (identifier)
+      (type
+        (named_type
+          (type_identifier)))))
+  (structure_definition
+    (identifier)
+    (type_parameter_list
+      (type_parameter
+        (identifier))
+      (type_parameter
+        (identifier)))
+    (structure_field
+      (identifier)
+      (type
+        (named_type
+          (type_identifier))))
+    (structure_field
+      (identifier)
+      (type
+        (named_type
+          (type_identifier)))))
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (block
+      (statement
+        (variable_declaration
+          (identifier)
+          (type_annotation
+            (type
+              (named_type
+                (generic_type
+                  (type_identifier)
+                  (type_argument_list
+                    (type
+                      (builtin_type)))))))
+          (expression
+            (invocation_expression
+              (generic_type
+                (type_identifier)
+                (type_argument_list
+                  (type
+                    (builtin_type))))
+              (field_initializer
+                (identifier)
+                (expression
+                  (integer_literal)))
+              (field_initializer
+                (identifier)
+                (expression
+                  (integer_literal)))))))
+      (statement
+        (variable_declaration
+          (identifier)
+          (expression
+            (invocation_expression
+              (generic_type
+                (type_identifier)
+                (type_argument_list
+                  (type
+                    (builtin_type))
+                  (type
+                    (named_type
+                      (generic_type
+                        (type_identifier)
+                        (type_argument_list
+                          (type
+                            (builtin_type))))))))
+              (field_initializer
+                (identifier)
+                (expression
+                  (integer_literal)))
+              (field_initializer
+                (identifier)
+                (expression
+                  (invocation_expression
+                    (generic_type
+                      (type_identifier)
+                      (type_argument_list
+                        (type
+                          (builtin_type))))
+                    (field_initializer
+                      (identifier)
+                      (expression
+                        (string_literal)))
+                    (field_initializer
+                      (identifier)
+                      (expression
+                        (string_literal))))))))))
+      (statement
+        (print_statement
+          (identifier)
+          (expression
+            (binary_expression
+              (expression
+                (member_expression
+                  (identifier)
+                  (identifier)))
+              (expression
+                (member_expression
+                  (identifier)
+                  (identifier))))))))))
+
+=================
+Generic functions
+=================
+
+func identity<T>(value:T) T {
+    return value
+}
+
+func choose<Key, Value>(key:Key, value:Value) Value {
+    return value
+}
+
+func main() {
+    print(identity<int>(42))
+    print(choose<int, str>(1, "Ada"))
+}
+
+---
+
+(source_file
+  (function_definition
+    (identifier)
+    (type_parameter_list
+      (type_parameter
+        (identifier)))
+    (parameter_list
+      (parameter
+        (identifier)
+        (type
+          (named_type
+            (type_identifier)))))
+    (type
+      (named_type
+        (type_identifier)))
+    (block
+      (statement
+        (return_statement
+          (expression
+            (identifier))))))
+  (function_definition
+    (identifier)
+    (type_parameter_list
+      (type_parameter
+        (identifier))
+      (type_parameter
+        (identifier)))
+    (parameter_list
+      (parameter
+        (identifier)
+        (type
+          (named_type
+            (type_identifier))))
+      (parameter
+        (identifier)
+        (type
+          (named_type
+            (type_identifier)))))
+    (type
+      (named_type
+        (type_identifier)))
+    (block
+      (statement
+        (return_statement
+          (expression
+            (identifier))))))
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (block
+      (statement
+        (print_statement
+          (identifier)
+          (expression
+            (invocation_expression
+              (generic_type
+                (type_identifier)
+                (type_argument_list
+                  (type
+                    (builtin_type))))
+              (expression
+                (integer_literal))))))
+      (statement
+        (print_statement
+          (identifier)
+          (expression
+            (invocation_expression
+              (generic_type
+                (type_identifier)
+                (type_argument_list
+                  (type
+                    (builtin_type))
+                  (type
+                    (builtin_type))))
+              (expression
+                (integer_literal))
+              (expression
+                (string_literal)))))))))
+
+========================
+Transparent type aliases
+========================
+
+struct Vec3<T> {
+    x:T
+    y:T
+    z:T
+}
+
+use Vec3<int> as Vec3i
+use int[] as Integers
+use str? as OptionalString
+use func(int) bool as Predicate
+pub use Vec3<str> as Vec3s
+
+func main() {
+    let position:Vec3i = Vec3i(x:1, y:2, z:3)
+}
+
+---
+
+(source_file
+  (structure_definition
+    (identifier)
+    (type_parameter_list
+      (type_parameter
+        (identifier)))
+    (structure_field
+      (identifier)
+      (type
+        (named_type
+          (type_identifier))))
+    (structure_field
+      (identifier)
+      (type
+        (named_type
+          (type_identifier))))
+    (structure_field
+      (identifier)
+      (type
+        (named_type
+          (type_identifier)))))
+  (use_declaration
+    (type
+      (named_type
+        (generic_type
+          (type_identifier)
+          (type_argument_list
+            (type
+              (builtin_type))))))
+    (identifier))
+  (use_declaration
+    (type
+      (array_type
+        (builtin_type)))
+    (identifier))
+  (use_declaration
+    (type
+      (optional_type
+        (builtin_type)))
+    (identifier))
+  (use_declaration
+    (type
+      (function_type
+        (function_type_parameter
+          (type
+            (builtin_type)))
+        (type
+          (builtin_type))))
+    (identifier))
+  (use_declaration
+    (type
+      (named_type
+        (generic_type
+          (type_identifier)
+          (type_argument_list
+            (type
+              (builtin_type))))))
+    (identifier))
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (block
+      (statement
+        (variable_declaration
+          (identifier)
+          (type_annotation
+            (type
+              (named_type
+                (type_identifier))))
+          (expression
+            (invocation_expression
+              (identifier)
+              (field_initializer
+                (identifier)
+                (expression
+                  (integer_literal)))
+              (field_initializer
+                (identifier)
+                (expression
+                  (integer_literal)))
+              (field_initializer
+                (identifier)
+                (expression
+                  (integer_literal))))))))))

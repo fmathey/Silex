@@ -1,0 +1,76 @@
+==================
+Modules and visibility
+==================
+
+import NK.Window as Window
+use Window.Session
+pub use Window.Event as WindowEvent
+
+pub struct Session {}
+pub class Window {
+  id: int
+  sub state: int
+  pub title: str
+  pub func show() {}
+}
+
+pub func create() Window.Session {
+    return Window.Session()
+}
+
+---
+
+(source_file
+  (import_declaration
+    module: (module_path
+      (identifier)
+      (identifier))
+    alias: (identifier))
+  (use_declaration
+    declaration: (qualified_name
+      (identifier)
+      (identifier)))
+  (use_declaration
+    declaration: (qualified_name
+      (identifier)
+      (identifier))
+    alias: (identifier))
+  (public_declaration
+    (structure_definition
+      name: (identifier)))
+  (public_declaration
+    (structure_definition
+      name: (identifier)
+      (structure_field
+        name: (identifier)
+        type: (type
+          (builtin_type)))
+      (structure_field
+        name: (identifier)
+        type: (type
+          (builtin_type)))
+      (structure_field
+        name: (identifier)
+        type: (type
+          (builtin_type)))
+      (function_definition
+        name: (identifier)
+        (parameter_list)
+        body: (block))))
+  (public_declaration
+    (function_definition
+      name: (identifier)
+      (parameter_list)
+      return_type: (type
+        (named_type
+          (type_identifier
+            (identifier)
+            (identifier))))
+      body: (block
+        (statement
+          (return_statement
+            value: (expression
+              (invocation_expression
+                target: (member_expression
+                  object: (identifier)
+                  field: (identifier))))))))))
