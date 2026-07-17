@@ -1,0 +1,117 @@
+struct Counter {
+    static var value:int
+
+    static func increment() {
+        Counter.value++
+    }
+}
+
+struct Limits {
+    static let maximum:int = 10
+}
+
+use Counter as SharedCounter
+
+struct Bucket {
+    var values:int[]
+
+    func add(value:int) {
+        self.values.append(value)
+    }
+}
+
+struct Store {
+    static var bucket:Bucket
+}
+
+struct Cache<T> {
+    static var hits:int
+}
+
+struct DualValue {
+    static var value:int
+    var value:int
+}
+
+class Services {
+    static var shared:Services?
+    let identifier:int
+
+    init(identifier:int) {
+        self.identifier = identifier
+    }
+
+    pub static func instance() Services {
+        if var current = Services.shared {
+            return current
+        }
+
+        var created = Services(42)
+        Services.shared = created
+        return created
+    }
+
+    pub func get_identifier() int {
+        return self.identifier
+    }
+}
+
+class BaseState {
+    sub static var count:int
+    pub static var public_count:int
+
+    pub static func value() int {
+        return BaseState.count
+    }
+}
+
+class ChildState : BaseState {
+    pub static func increment_base() {
+        BaseState.count++
+    }
+}
+
+class Node {
+    pub var next:Node?
+
+    pub init() {}
+}
+
+struct RetainedGraph {
+    static var root:Node?
+}
+
+func main() {
+    assert(Counter.value == 0, "a static counter starts at its intrinsic value")
+    Counter.increment()
+    SharedCounter.value += 2
+    assert(Counter.value == 3, "an alias designates the same static storage")
+    assert(Limits.maximum == 10, "a static let keeps its restricted initializer")
+
+    Store.bucket.values.append(7)
+    Store.bucket.add(8)
+    assert(Store.bucket.values.count() == 2, "a static var allows nested mutation")
+
+    Cache<int>.hits = 4
+    Cache<str>.hits = 9
+    assert(Cache<int>.hits == 4 && Cache<str>.hits == 9, "generic specializations own independent static storage")
+
+    DualValue.value = 5
+    var local = DualValue(value:8)
+    assert(DualValue.value == 5 && local.value == 8, "static and instance field namespaces are distinct")
+
+    var first = Services.instance()
+    var second = Services.instance()
+    assert(first == second && first.get_identifier() == 42, "a private static field supports a lazy singleton")
+
+    ChildState.increment_base()
+    BaseState.public_count = 2
+    assert(BaseState.value() == 1, "a descendant qualifies a visible sub static field by its declaring type")
+    assert(BaseState.public_count == 2, "a public class static field is visible to callers")
+
+    var parent = Node()
+    var child = Node()
+    parent.next = child
+    child.next = parent
+    RetainedGraph.root = parent
+}

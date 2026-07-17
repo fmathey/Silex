@@ -1,0 +1,9 @@
+class Base {
+    pub static var value:int
+}
+
+class Child : Base {}
+
+func main() {
+    print(Child.value)
+}

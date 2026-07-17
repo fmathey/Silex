@@ -1,0 +1,78 @@
+=============
+Static fields
+=============
+
+struct Counter {
+    static var value:int
+}
+
+class Services {
+    static var shared:Services?
+    pub static let limit:int = 10
+}
+
+struct Cache<T> {
+    static var hits:int
+}
+
+func main() {
+    Counter.value = Cache<int>.hits
+    let limit = Services.limit
+}
+
+---
+
+(source_file
+  (structure_definition
+    (identifier)
+    (structure_field
+      (identifier)
+      (type
+        (builtin_type))))
+  (structure_definition
+    (identifier)
+    (structure_field
+      (identifier)
+      (type
+        (optional_type
+          (named_type
+            (type_identifier)))))
+    (structure_field
+      (identifier)
+      (type
+        (builtin_type))
+      (expression
+        (integer_literal))))
+  (structure_definition
+    (identifier)
+    (type_parameter_list
+      (type_parameter
+        (identifier)))
+    (structure_field
+      (identifier)
+      (type
+        (builtin_type))))
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (block
+      (statement
+        (assignment_statement
+          (member_expression
+            (identifier)
+            (identifier))
+          (expression
+            (member_expression
+              (generic_type
+                (type_identifier)
+                (type_argument_list
+                  (type
+                    (builtin_type))))
+              (identifier)))))
+      (statement
+        (variable_declaration
+          (identifier)
+          (expression
+            (member_expression
+              (identifier)
+              (identifier))))))))

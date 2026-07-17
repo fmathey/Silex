@@ -1,0 +1,7 @@
+class State {
+    static var value:int
+}
+
+func main() {
+    print(State.value)
+}

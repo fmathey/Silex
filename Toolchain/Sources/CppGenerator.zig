@@ -799,6 +799,16 @@ pub fn generateWithSources(
             }
         }
         try output.appendSlice(allocator, " {\n");
+        for (structure.static_fields) |field| {
+            try output.appendSlice(allocator, "    inline static ");
+            try appendCppType(allocator, &output, field.type);
+            try output.append(allocator, ' ');
+            try output.appendSlice(allocator, field.generated_name);
+            try output.appendSlice(allocator, " = ");
+            try generateExpression(allocator, &output, field.initializer.?);
+            try output.appendSlice(allocator, ";\n");
+        }
+        if (structure.static_fields.len != 0 and structure.fields.len != 0) try output.append(allocator, '\n');
         for (structure.fields) |field| {
             try output.appendSlice(allocator, "    ");
             try appendCppType(allocator, &output, field.type);
@@ -889,6 +899,19 @@ pub fn generateWithSources(
         try output.appendSlice(allocator, "    }\n");
         try output.appendSlice(allocator, "};\n\n");
     }
+    try output.appendSlice(allocator, "void silexResetStaticFields() {\n");
+    for (program.structures) |structure| {
+        for (structure.static_fields) |field| {
+            try output.appendSlice(allocator, "    ");
+            try output.appendSlice(allocator, structure.generated_name);
+            try output.appendSlice(allocator, "::");
+            try output.appendSlice(allocator, field.generated_name);
+            try output.appendSlice(allocator, " = ");
+            try generateExpression(allocator, &output, field.reset_value.?);
+            try output.appendSlice(allocator, ";\n");
+        }
+    }
+    try output.appendSlice(allocator, "}\n\n");
     if (program.structures.len > 0) {
         for (program.structures) |structure| {
             if (structure.is_class) continue;
@@ -966,6 +989,7 @@ pub fn generateWithSources(
         \\
         \\int main() {
         \\    const int result = SilexGenerated::silexMain();
+        \\    SilexGenerated::silexResetStaticFields();
         \\    if (SilexGenerated::silexLiveObjects != 0) {
         \\        std::cerr << "silex: runtime error: unreachable class graph was not collected\n";
         \\        return 1;
@@ -1864,6 +1888,11 @@ fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expressi
                 try generateExpression(allocator, output, argument);
             }
             try output.append(allocator, ')');
+        },
+        .static_field_access => |access| {
+            try output.appendSlice(allocator, access.owner_generated_name);
+            try output.appendSlice(allocator, "::");
+            try output.appendSlice(allocator, access.generated_name);
         },
         .super_method_call => |call| {
             try output.appendSlice(allocator, call.base_generated_name);

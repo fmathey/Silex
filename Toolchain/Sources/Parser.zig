@@ -157,9 +157,15 @@ pub const Parser = struct {
             if (self.current.tag == .keyword_override) return self.fail("'override' must precede the method visibility");
             const is_static = self.current.tag == .keyword_static;
             if (is_static) {
-                if (is_override) return self.fail("a static method cannot use 'override'");
+                const static_position = self.current.position;
                 try self.advance();
-                if (self.current.tag != .keyword_func) return self.fail("expected 'func' after 'static'");
+                if (is_override) return self.failAt(static_position, if (self.current.tag == .keyword_func)
+                    "a static method cannot use 'override'"
+                else
+                    "a static field cannot use 'override'");
+                if (self.current.tag != .keyword_func and self.current.tag != .keyword_let and self.current.tag != .keyword_var) {
+                    return self.fail("expected 'func', 'let', or 'var' after 'static'");
+                }
             }
             if (self.current.tag == .keyword_func) {
                 var method = try self.parseFunction(false);
@@ -237,6 +243,7 @@ pub const Parser = struct {
                 .initializer = initializer,
                 .visibility = visibility,
                 .mutability = field_mutability,
+                .is_static = is_static,
             });
             try self.expectStatementTerminator();
         }
@@ -1063,9 +1070,9 @@ pub const Parser = struct {
     }
 
     fn parseIdentifierExpressionAfterToken(self: *Parser, token: Token) ParseError!*Ast.Expression {
-        if (token.tag != .keyword_self and self.current.tag == .less and self.genericStaticMethodCallFollows()) {
+        if (token.tag != .keyword_self and self.current.tag == .less and self.genericStaticMemberFollows()) {
             const arguments = try self.parseTypeArguments();
-            return self.parsePostfix(try self.parseStaticMethodCall(.{ .generic_structure = .{
+            return self.parsePostfix(try self.parseStaticMember(.{ .generic_structure = .{
                 .name = token.lexeme,
                 .arguments = arguments,
             } }, token.position));
@@ -1142,10 +1149,10 @@ pub const Parser = struct {
             const name = self.current.lexeme;
             const position = self.current.position;
             try self.advance();
-            if (!safe and self.current.tag == .less and self.genericStaticMethodCallFollows()) {
+            if (!safe and self.current.tag == .less and self.genericStaticMemberFollows()) {
                 const prefix = (try self.expressionPath(expression)) orelse return self.fail("a generic type qualifier must be a name");
                 const arguments = try self.parseTypeArguments();
-                expression = try self.parseStaticMethodCall(.{ .generic_structure = .{
+                expression = try self.parseStaticMember(.{ .generic_structure = .{
                     .name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ prefix, name }),
                     .arguments = arguments,
                 } }, expression.position);
@@ -1192,29 +1199,39 @@ pub const Parser = struct {
         return expression;
     }
 
-    fn parseStaticMethodCall(self: *Parser, owner: Ast.TypeName, owner_position: Source.Position) ParseError!*Ast.Expression {
-        try self.expect(.dot, "expected '.' after static method type");
-        if (self.current.tag != .identifier) return self.fail("expected static method name after type");
+    fn parseStaticMember(self: *Parser, owner: Ast.TypeName, owner_position: Source.Position) ParseError!*Ast.Expression {
+        try self.expect(.dot, "expected '.' after static member type");
+        if (self.current.tag != .identifier) return self.fail("expected static member name after type");
         const name = self.current.lexeme;
         const name_position = self.current.position;
         try self.advance();
-        if (self.current.tag != .left_parenthesis) return self.fail("a static method must be called directly");
-        const invocation = try self.parseInvocationArguments();
+        if (self.current.tag == .left_parenthesis) {
+            const invocation = try self.parseInvocationArguments();
+            return self.newExpression(.{
+                .position = owner_position,
+                .value = .{ .static_method_call = .{
+                    .owner = owner,
+                    .owner_position = owner_position,
+                    .name = name,
+                    .name_position = name_position,
+                    .arguments = switch (invocation) {
+                        .positional => |values| values,
+                        .named => &.{},
+                    },
+                    .named_fields = switch (invocation) {
+                        .positional => null,
+                        .named => |fields| fields,
+                    },
+                } },
+            });
+        }
         return self.newExpression(.{
             .position = owner_position,
-            .value = .{ .static_method_call = .{
+            .value = .{ .static_field_access = .{
                 .owner = owner,
                 .owner_position = owner_position,
                 .name = name,
                 .name_position = name_position,
-                .arguments = switch (invocation) {
-                    .positional => |values| values,
-                    .named => &.{},
-                },
-                .named_fields = switch (invocation) {
-                    .positional => null,
-                    .named => |fields| fields,
-                },
             } },
         });
     }
@@ -1421,14 +1438,12 @@ pub const Parser = struct {
         return probe.current.tag == .left_parenthesis;
     }
 
-    fn genericStaticMethodCallFollows(self: *const Parser) bool {
+    fn genericStaticMemberFollows(self: *const Parser) bool {
         var probe = self.*;
         _ = probe.parseTypeArguments() catch return false;
         if (probe.current.tag != .dot) return false;
         probe.advance() catch return false;
-        if (probe.current.tag != .identifier) return false;
-        probe.advance() catch return false;
-        return probe.current.tag == .left_parenthesis;
+        return probe.current.tag == .identifier;
     }
 
     fn expressionPath(self: *Parser, expression: *const Ast.Expression) ParseError!?[]const u8 {
@@ -2449,6 +2464,25 @@ test "reject override on static method" {
     var parser = Parser.init(arena.allocator(), "class Factory { override pub static func create() {} }");
     try std.testing.expectError(error.InvalidSource, parser.parse());
     try std.testing.expectEqualStrings("a static method cannot use 'override'", parser.diagnostic.?.message);
+}
+
+test "parse static fields and generic static field access" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var parser = Parser.init(arena.allocator(),
+        \\struct Cache<T> {
+        \\    static var hits:int
+        \\    let value:T
+        \\}
+        \\func main() { Cache<int>.hits = 1 }
+    );
+    const program = try parser.parse();
+    try std.testing.expect(program.structures[0].fields[0].is_static);
+    try std.testing.expect(!program.structures[0].fields[1].is_static);
+    const target = program.functions[0].statements[0].assignment.target;
+    try std.testing.expect(target.value == .static_field_access);
+    try std.testing.expect(target.value.static_field_access.owner == .generic_structure);
+    try std.testing.expectEqualStrings("hits", target.value.static_field_access.name);
 }
 
 test "override must precede method visibility" {

@@ -1,0 +1,7 @@
+struct Counter {
+    var value:int
+}
+
+func main() {
+    print(Counter.value)
+}

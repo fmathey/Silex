@@ -1038,6 +1038,12 @@ pub const Resolver = struct {
                 .arguments = try self.transformExpressions(call.arguments),
                 .named_fields = if (call.named_fields) |fields| try self.transformFieldInitializers(fields) else null,
             } },
+            .static_field_access => |access| .{ .static_field_access = .{
+                .owner = try self.transformType(access.owner, access.owner_position),
+                .owner_position = access.owner_position,
+                .name = access.name,
+                .name_position = access.name_position,
+            } },
             .super_method_call => |call| .{ .super_method_call = .{
                 .position = call.position,
                 .name = call.name,
@@ -1066,11 +1072,23 @@ pub const Resolver = struct {
                     .operations = try operations.toOwnedSlice(self.allocator),
                 } };
             },
-            .member_access => |member| .{ .member_access = .{
-                .object = try self.transformExpression(member.object),
-                .name = member.name,
-                .name_position = member.name_position,
-            } },
+            .member_access => |member| member_access: {
+                if (try self.expressionPath(member.object)) |prefix| {
+                    if (try self.staticOwnerType(expression.position.file, prefix, member.name_position)) |owner| {
+                        break :member_access .{ .static_field_access = .{
+                            .owner = owner,
+                            .owner_position = member.object.position,
+                            .name = member.name,
+                            .name_position = member.name_position,
+                        } };
+                    }
+                }
+                break :member_access .{ .member_access = .{
+                    .object = try self.transformExpression(member.object),
+                    .name = member.name,
+                    .name_position = member.name_position,
+                } };
+            },
             .safe_member_access => |member| .{ .safe_member_access = .{
                 .object = try self.transformExpression(member.object),
                 .name = member.name,

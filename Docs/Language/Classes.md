@@ -130,6 +130,40 @@ A static factory returns an ordinary value. Its result may begin a cascade,
 for example `Client.create()..connect()`, but a type itself is not a cascade
 receiver and static methods are never candidates after `..`.
 
+## Static fields
+
+Class storage uses the canonical forms `static var shared:Session?`,
+`pub static let limit:int = 10`, and `sub static var count:int`. Like every
+class member, a static field is private without a marker. It is accessed only
+through the exact type that declares it and is not inherited. A descendant may
+use an accessible `sub` field by explicitly qualifying that declaring type.
+
+```sx
+class Services {
+    static var shared:Services?
+
+    init() {}
+
+    pub static func instance() Services {
+        if var current = Services.shared {
+            return current
+        }
+
+        var created = Services()
+        Services.shared = created
+        return created
+    }
+}
+```
+
+Here the private constructor prevents external construction, the optional
+field starts at `null`, and the public static method is the singleton API.
+The field remains a strong root while `main` runs. It is reset to `null` after
+`main` and before the runtime leak check, so the instance is released even if
+client code never clears the singleton explicitly. General initializer,
+mutability, generic-specialization, and lifetime rules are specified under
+[Static fields](Structures.md#static-fields).
+
 ## Single inheritance
 
 A class may name one immediate base class after `:`. The base is part of the
@@ -256,8 +290,10 @@ Every class field and method is private by default. A private member is
 accessible from methods of its declaring class, including through another
 instance of that same class, but not from other code in the module.
 
-For a field, visibility precedes mutability: `pub var name:str`,
-`sub let generation:int`, or the private form `let id:int`.
+For an instance field, visibility precedes mutability: `pub var name:str`,
+`sub let generation:int`, or the private form `let id:int`. For a static field,
+visibility precedes `static`: `pub static var count:int` or
+`sub static let limit:int = 10`.
 
 `pub` exposes a member everywhere the class is visible. `sub` reserves a member
 for its declaring class and descendants:

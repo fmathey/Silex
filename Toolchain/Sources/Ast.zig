@@ -140,6 +140,7 @@ pub const Expression = struct {
         lambda: Lambda,
         method_call: MethodCall,
         static_method_call: StaticMethodCall,
+        static_field_access: StaticFieldAccess,
         super_method_call: SuperMethodCall,
         cascade: Cascade,
         class_initializer: ClassInitializer,
@@ -197,6 +198,13 @@ pub const Expression = struct {
         name_position: Source.Position,
         arguments: []const *Expression,
         named_fields: ?[]const FieldInitializer = null,
+    };
+
+    pub const StaticFieldAccess = struct {
+        owner: TypeName,
+        owner_position: Source.Position,
+        name: []const u8,
+        name_position: Source.Position,
     };
 
     pub const SuperMethodCall = struct {
@@ -462,6 +470,7 @@ pub const StructureField = struct {
     initializer: ?*Expression,
     visibility: MemberVisibility,
     mutability: Mutability,
+    is_static: bool = false,
 };
 
 pub const Parameter = struct {

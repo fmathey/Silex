@@ -1,0 +1,5 @@
+struct Hooks {
+    static var callback:func() void
+}
+
+func main() {}

@@ -91,6 +91,7 @@ pub const Expression = struct {
         owner_self,
         method_call: MethodCall,
         static_method_call: StaticMethodCall,
+        static_field_access: StaticFieldAccess,
         super_method_call: SuperMethodCall,
         class_initializer: ClassInitializer,
         structure_initializer: StructureInitializer,
@@ -159,6 +160,11 @@ pub const Expression = struct {
         owner_generated_name: []const u8,
         generated_name: []const u8,
         arguments: []const *Expression,
+    };
+
+    pub const StaticFieldAccess = struct {
+        owner_generated_name: []const u8,
+        generated_name: []const u8,
     };
 
     pub const SuperMethodCall = struct {
@@ -355,6 +361,7 @@ pub const Structure = struct {
     implicit_constructor_available: bool,
     implicit_base_initializer: ?BaseInitializer,
     fields: []const StructureField,
+    static_fields: []const StructureField,
     constructors: []const Constructor,
     drop: ?Drop,
     methods: []Method,
@@ -371,6 +378,7 @@ pub const StructureField = struct {
     visibility: Ast.MemberVisibility,
     mutability: Ast.Mutability,
     initializer: ?*Expression,
+    reset_value: ?*Expression = null,
 };
 
 pub const Constructor = struct {
@@ -489,6 +497,7 @@ const StructureSymbol = struct {
     is_class: bool,
     base_index: ?usize,
     fields: []StructureFieldSymbol,
+    static_fields: []StructureFieldSymbol,
     constructors: []ConstructorSymbol,
     methods: []MethodSymbol,
     position: Source.Position,
@@ -616,6 +625,22 @@ pub const Analyzer = struct {
                 else
                     null,
             });
+            var static_fields: std.ArrayList(StructureField) = .empty;
+            for (symbol.static_fields) |field| {
+                const intrinsic = try self.intrinsicDefaultExpression(field.type, field.position) orelse {
+                    const field_type_name = try allocatedTypeName(self.allocator, field.type);
+                    const message = try std.fmt.allocPrint(self.allocator, "static field '{s}' of type '{s}' has no intrinsic value", .{ field.source_name, field_type_name });
+                    return self.fail(field.position, message);
+                };
+                try static_fields.append(self.allocator, .{
+                    .generated_name = field.generated_name,
+                    .type = field.type,
+                    .visibility = field.visibility,
+                    .mutability = field.mutability,
+                    .initializer = field.default_value orelse intrinsic,
+                    .reset_value = intrinsic,
+                });
+            }
             var constructors: std.ArrayList(Constructor) = .empty;
             for (ast_structure.constructors, symbol.constructors) |ast_constructor, constructor_symbol| {
                 try constructors.append(self.allocator, try self.constructor(ast_constructor, constructor_symbol, structure_index));
@@ -639,6 +664,7 @@ pub const Analyzer = struct {
                 .implicit_constructor_available = symbol.constructors.len == 0 and implicit_base.available,
                 .implicit_base_initializer = implicit_base.initializer,
                 .fields = try fields.toOwnedSlice(self.allocator),
+                .static_fields = try static_fields.toOwnedSlice(self.allocator),
                 .constructors = try constructors.toOwnedSlice(self.allocator),
                 .drop = drop,
                 .methods = try methods.toOwnedSlice(self.allocator),
@@ -677,6 +703,7 @@ pub const Analyzer = struct {
                 .is_class = ast_structure.is_class,
                 .base_index = null,
                 .fields = &.{},
+                .static_fields = &.{},
                 .constructors = &.{},
                 .methods = &.{},
                 .position = ast_structure.name_position,
@@ -700,8 +727,10 @@ pub const Analyzer = struct {
 
         for (ast_structures, 0..) |ast_structure, structure_index| {
             var fields: std.ArrayList(StructureFieldSymbol) = .empty;
+            var static_fields: std.ArrayList(StructureFieldSymbol) = .empty;
             for (ast_structure.fields, 0..) |field, field_index| {
-                for (fields.items) |existing| {
+                const existing_fields = if (field.is_static) static_fields.items else fields.items;
+                for (existing_fields) |existing| {
                     if (std.mem.eql(u8, existing.source_name, field.name)) {
                         const message = try std.fmt.allocPrint(self.allocator, "field '{s}' is already declared in {s} '{s}'", .{ field.name, if (ast_structure.is_class) "class" else "struct", ast_structure.name });
                         return self.fail(field.position, message);
@@ -730,9 +759,11 @@ pub const Analyzer = struct {
                         return self.fail(field.position, message);
                     }
                 }
-                try fields.append(self.allocator, .{
+                const field_symbol = StructureFieldSymbol{
                     .source_name = field.name,
-                    .generated_name = if (ast_structure.is_class)
+                    .generated_name = if (field.is_static)
+                        try std.fmt.allocPrint(self.allocator, "staticField{d}_{d}", .{ structure_index, field_index })
+                    else if (ast_structure.is_class)
                         try std.fmt.allocPrint(self.allocator, "field{d}_{d}", .{ structure_index, field_index })
                     else
                         try std.fmt.allocPrint(self.allocator, "field{d}", .{field_index}),
@@ -741,10 +772,18 @@ pub const Analyzer = struct {
                     .ast_initializer = field.initializer,
                     .visibility = field.visibility,
                     .mutability = field.mutability,
-                });
+                };
+                if (field.is_static)
+                    try static_fields.append(self.allocator, field_symbol)
+                else
+                    try fields.append(self.allocator, field_symbol);
             }
             self.structures.items[structure_index].fields = try fields.toOwnedSlice(self.allocator);
+            self.structures.items[structure_index].static_fields = try static_fields.toOwnedSlice(self.allocator);
             for (self.structures.items[structure_index].fields) |field| {
+                if (field.mutability == .immutable) try self.requireIndependentLetType(field.type, field.position);
+            }
+            for (self.structures.items[structure_index].static_fields) |field| {
                 if (field.mutability == .immutable) try self.requireIndependentLetType(field.type, field.position);
             }
 
@@ -1030,6 +1069,17 @@ pub const Analyzer = struct {
         var empty_scope = Scope{ .parent = null, .depth = 0 };
         for (self.structures.items) |*structure| {
             for (structure.fields) |*field| {
+                const ast_initializer = field.ast_initializer orelse continue;
+                try self.validateDefaultShape(ast_initializer, field.type);
+                var value = try self.expressionForExpected(ast_initializer, &empty_scope, field.type);
+                value = try self.coerce(value, field.type);
+                if (!typeEqual(field.type, value.type)) {
+                    const message = try typeMismatchMessage(self.allocator, field.type, value.type);
+                    return self.fail(ast_initializer.position, message);
+                }
+                field.default_value = value;
+            }
+            for (structure.static_fields) |*field| {
                 const ast_initializer = field.ast_initializer orelse continue;
                 try self.validateDefaultShape(ast_initializer, field.type);
                 var value = try self.expressionForExpected(ast_initializer, &empty_scope, field.type);
@@ -1508,7 +1558,7 @@ pub const Analyzer = struct {
         initialized: []const FieldInitialization,
     ) AnalyzeError!void {
         switch (expression_value.value) {
-            .integer, .floating, .boolean, .null, .string, .cascade_target, .variable, .optional_unwrap => {},
+            .integer, .floating, .boolean, .null, .string, .cascade_target, .variable, .static_field_access, .optional_unwrap => {},
             .self, .owner_self => if (!allFieldsInitialized(initialized)) {
                 return self.fail(expression_value.position, "'self' cannot escape before every class field is initialized");
             },
@@ -1770,6 +1820,7 @@ pub const Analyzer = struct {
 
         const root = assignmentRoot(ast.target) orelse return self.fail(ast.position, "invalid assignment target");
         switch (root) {
+            .static => {},
             .self => {
                 if (self.current_method_index == null and !self.current_constructor and !self.current_drop) return self.fail(ast.position, "'self' is only available inside a method, constructor, or drop block");
                 if (ast.target.value == .self) return self.fail(ast.position, "cannot assign to 'self'");
@@ -1871,7 +1922,7 @@ pub const Analyzer = struct {
                     .variable => |name| {
                         if (findSymbol(scope, name)) |symbol| symbol.state.lifetime_depth = value.?.lifetime_depth;
                     },
-                    .self => {},
+                    .self, .static => {},
                 };
             },
             .add, .subtract, .multiply, .divide => {
@@ -2070,12 +2121,21 @@ pub const Analyzer = struct {
 
                 const root = assignmentRoot(ast_collection);
                 if (root) |resolved_root| {
+                    if (resolved_root == .static) {
+                        if (mutable) if (self.immutableFieldInPlace(collection)) |field_candidate| {
+                            const message = try std.fmt.allocPrint(self.allocator, "cannot iterate mutably through let field '{s}'", .{field_candidate.symbol.source_name});
+                            return self.fail(ast_collection.position, message);
+                        };
+                        break :source .{ .collection = collection };
+                    }
                     const state: *BindingState = switch (resolved_root) {
+                        .static => unreachable,
                         .self => &self.current_self_state,
                         .variable => |name| (findSymbol(parent_scope, name) orelse return self.fail(ast_collection.position, "unknown iteration source")).state,
                     };
                     if (mutable) {
                         switch (resolved_root) {
+                            .static => unreachable,
                             .self => self.current_method_direct_mutation = true,
                             .variable => |name| {
                                 const symbol = findSymbol(parent_scope, name).?;
@@ -2211,6 +2271,7 @@ pub const Analyzer = struct {
             .lambda => |lambda| self.lambdaExpression(lambda, scope, null),
             .method_call => |call| self.methodCallExpression(call, scope),
             .static_method_call => |call| self.staticMethodCallExpression(call, scope),
+            .static_field_access => |access| self.staticFieldAccessExpression(access),
             .super_method_call => |call| self.superMethodCallExpression(call, scope),
             .cascade => |cascade| self.cascadeExpression(cascade, scope, null),
             .class_initializer => |initializer| self.classInitializerExpression(initializer, scope),
@@ -3023,6 +3084,35 @@ pub const Analyzer = struct {
         });
     }
 
+    fn staticFieldAccessExpression(
+        self: *Analyzer,
+        access: Ast.Expression.StaticFieldAccess,
+    ) AnalyzeError!*Expression {
+        const owner_type = try typeFromAnnotation(self, access.owner, access.owner_position);
+        if (owner_type != .structure) return self.fail(access.owner_position, "a static field must be selected through a struct or class type");
+        const structure_index = self.findStructureIndexByGeneratedName(owner_type.structure.generated_name).?;
+        const structure = &self.structures.items[structure_index];
+        if (self.findStaticField(structure_index, access.name)) |field| {
+            if (!self.memberVisibleFromCurrentContext(structure_index, field.visibility)) {
+                return self.failMemberAccess("static field", structure, field.source_name, field.visibility, access.name_position);
+            }
+            return self.newExpression(.{
+                .type = field.type,
+                .position = access.name_position,
+                .value = .{ .static_field_access = .{
+                    .owner_generated_name = structure.generated_name,
+                    .generated_name = field.generated_name,
+                } },
+            });
+        }
+        if (self.findFieldInHierarchy(structure_index, access.name) != null) {
+            const message = try std.fmt.allocPrint(self.allocator, "instance field '{s}' requires a value of type '{s}'", .{ access.name, structure.source_name });
+            return self.fail(access.name_position, message);
+        }
+        const message = try std.fmt.allocPrint(self.allocator, "type '{s}' has no static field '{s}'", .{ structure.source_name, access.name });
+        return self.fail(access.name_position, message);
+    }
+
     fn staticMethodCallExpression(
         self: *Analyzer,
         call: Ast.Expression.StaticMethodCall,
@@ -3272,6 +3362,7 @@ pub const Analyzer = struct {
             return self.fail(position, "cascade mutations require a mutable value or a newly owned temporary");
         };
         switch (root) {
+            .static => {},
             .self => {
                 if (self.current_self_state.mutable_borrow or self.current_self_state.immutable_borrows != 0) {
                     return self.fail(position, "cannot mutate 'self' while one of its collections is iterated");
@@ -3466,6 +3557,7 @@ pub const Analyzer = struct {
         }
         const root = assignmentRoot(ast_object) orelse return self.fail(position, "cannot call mutating collection method on a temporary value");
         switch (root) {
+            .static => return,
             .self => {
                 if (self.current_self_state.mutable_borrow or self.current_self_state.immutable_borrows != 0) {
                     return self.fail(position, "cannot mutate 'self' while one of its collections is iterated");
@@ -3735,6 +3827,20 @@ pub const Analyzer = struct {
         return null;
     }
 
+    fn findStaticField(self: *const Analyzer, structure_index: usize, name: []const u8) ?StructureFieldSymbol {
+        for (self.structures.items[structure_index].static_fields) |field| {
+            if (std.mem.eql(u8, field.source_name, name)) return field;
+        }
+        return null;
+    }
+
+    fn findStaticFieldByGeneratedName(self: *const Analyzer, structure_index: usize, name: []const u8) ?StructureFieldSymbol {
+        for (self.structures.items[structure_index].static_fields) |field| {
+            if (std.mem.eql(u8, field.generated_name, name)) return field;
+        }
+        return null;
+    }
+
     fn findFieldByGeneratedName(self: *const Analyzer, structure_index: usize, name: []const u8) ?FieldCandidate {
         var declaring_index: ?usize = structure_index;
         while (declaring_index) |index| {
@@ -3752,6 +3858,11 @@ pub const Analyzer = struct {
 
     fn immutableFieldInPlace(self: *const Analyzer, expression_value: *const Expression) ?FieldCandidate {
         return switch (expression_value.value) {
+            .static_field_access => |access| field: {
+                const structure_index = self.findStructureIndexByGeneratedName(access.owner_generated_name) orelse break :field null;
+                const field = self.findStaticFieldByGeneratedName(structure_index, access.generated_name) orelse break :field null;
+                break :field if (field.mutability == .immutable) .{ .symbol = field, .structure_index = structure_index } else null;
+            },
             .member_access, .bound_function => |member| field: {
                 if (self.immutableFieldInPlace(member.object)) |candidate| break :field candidate;
                 if (member.object.type != .structure) break :field null;
@@ -4103,6 +4214,10 @@ pub const Analyzer = struct {
                 } },
             });
         }
+        if (self.findStaticField(structure_index, member.name) != null) {
+            const message = try std.fmt.allocPrint(self.allocator, "static field '{s}' must be accessed through type '{s}'", .{ member.name, structure.source_name });
+            return self.fail(member.name_position, message);
+        }
         const message = try std.fmt.allocPrint(self.allocator, "{s} '{s}' has no field '{s}'", .{ if (structure.is_class) "class" else "struct", structure.source_name, member.name });
         return self.fail(member.name_position, message);
     }
@@ -4425,7 +4540,7 @@ pub const Analyzer = struct {
                 const value = std.fmt.parseFloat(f32, lexeme) catch return self.fail(expression_value.position, "float literal is outside the range of 'float'");
                 if (!std.math.isFinite(value)) return self.fail(expression_value.position, "float literal is outside the range of 'float'");
             },
-            .boolean, .string, .null, .variable, .self, .owner_self, .cascade_target, .optional_unwrap => {},
+            .boolean, .string, .null, .variable, .static_field_access, .self, .owner_self, .cascade_target, .optional_unwrap => {},
             .optional_wrap => |value| try self.validateExpression(value),
             .safe_access => |access| {
                 try self.validateExpression(access.receiver);
@@ -4573,6 +4688,7 @@ pub const Analyzer = struct {
             return self.fail(unary.operator_position, "'&' requires a variable, field, or collection element");
         };
         switch (root) {
+            .static => {},
             .self => {
                 if (self.current_method_index == null and !self.current_constructor and !self.current_drop) return self.fail(unary.operator_position, "'self' is only available inside a method, constructor, or drop block");
                 self.current_method_direct_mutation = true;
@@ -5137,7 +5253,7 @@ fn parameterStored(statements: []const Ast.Statement, name: []const u8) bool {
             if (assignment_value.value) |value| {
                 if (assignmentRoot(assignment_value.target)) |root| switch (root) {
                     .self => if (astExpressionUsesIdentifier(value, name)) return true,
-                    .variable => {},
+                    .variable, .static => {},
                 };
             }
         },
@@ -5594,6 +5710,7 @@ fn isPrintable(value: Type) bool {
 }
 
 const AssignmentRoot = union(enum) {
+    static,
     self,
     variable: []const u8,
 };
@@ -5610,6 +5727,7 @@ fn isCascadeOwnedTemporary(expression: *const Ast.Expression) bool {
 
 fn assignmentRoot(expression: *const Ast.Expression) ?AssignmentRoot {
     return switch (expression.value) {
+        .static_field_access => .static,
         .self => .self,
         .identifier => |name| .{ .variable = name },
         .member_access => |member| assignmentRoot(member.object),
@@ -5620,6 +5738,7 @@ fn assignmentRoot(expression: *const Ast.Expression) ?AssignmentRoot {
 
 fn expressionScopeDepth(expression: *const Ast.Expression, scope: *const Scope) usize {
     return switch (assignmentRoot(expression) orelse return scope.depth) {
+        .static => 0,
         .self => 1,
         .variable => |name| if (findSymbol(scope, name)) |symbol| symbol.scope_depth else scope.depth,
     };
@@ -5631,6 +5750,7 @@ fn assignmentDestinationDepth(
     scope: *const Scope,
 ) usize {
     return switch (assignmentRoot(expression) orelse return scope.depth) {
+        .static => 0,
         .self => self.function_scope_depth,
         .variable => |name| if (findSymbol(scope, name)) |symbol| symbol.scope_depth else scope.depth,
     };
@@ -5639,6 +5759,7 @@ fn assignmentDestinationDepth(
 fn updateDestinationLifetime(expression: *const Ast.Expression, scope: *const Scope, lifetime_depth: usize) void {
     const root = assignmentRoot(expression) orelse return;
     switch (root) {
+        .static => {},
         .variable => |name| if (findSymbol(scope, name)) |symbol| {
             symbol.state.lifetime_depth = @max(symbol.state.lifetime_depth, lifetime_depth);
         },
@@ -5648,6 +5769,7 @@ fn updateDestinationLifetime(expression: *const Ast.Expression, scope: *const Sc
 
 fn receiverFor(expression: *const Ast.Expression, scope: *const Scope, self_borrowed: bool) Receiver {
     return switch (expression.value) {
+        .static_field_access => .mutable,
         .self => if (self_borrowed) .borrowed_self else .self,
         .identifier => |name| receiver: {
             const symbol = findSymbol(scope, name) orelse break :receiver .temporary;

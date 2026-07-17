@@ -1,0 +1,9 @@
+func seed() int {
+    return 1
+}
+
+struct Counter {
+    static var value:int = seed()
+}
+
+func main() {}

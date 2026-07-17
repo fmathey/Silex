@@ -1188,6 +1188,7 @@ fn collectSemanticInfo(
                         .kind = 5,
                         .detail = "Silex field",
                         .visibility = visibility,
+                        .is_static = is_static,
                     });
                 }
             }
@@ -1577,6 +1578,7 @@ fn collectPublicStructureMembers(
                 .kind = 5,
                 .detail = "Silex module field",
                 .visibility = field.visibility,
+                .is_static = field.is_static,
             });
         }
         for (structure.methods) |method| {
@@ -1927,6 +1929,7 @@ fn fieldType(
     while (current_structure) |structure_name| : (hierarchy_depth += 1) {
         if (hierarchy_depth > info.structures.items.len) return null;
         for (info.members.items) |member| {
+            if (member.is_static) continue;
             if (std.mem.eql(u8, member.structure, structure_name) and std.mem.eql(u8, member.name, field)) {
                 if (!memberVisibleForCompletion(info, structure_name, member.visibility, enclosing_structure)) return null;
                 const type_name = member.type_name orelse return null;
@@ -2530,6 +2533,52 @@ test "member completion separates static and instance methods" {
     try std.testing.expect(containsCompletion(value_items, "reset"));
 }
 
+test "member completion separates static and instance fields" {
+    const source =
+        \\struct State {
+        \\    static var shared:int
+        \\    var local:int
+        \\}
+        \\func main() {
+        \\    State.
+        \\    var state = State()
+        \\    state.
+        \\}
+    ;
+    const type_items = try completionItems(std.testing.allocator, std.testing.io, source, .{ .line = 5, .character = 10 });
+    defer std.testing.allocator.free(type_items);
+    try std.testing.expect(containsCompletion(type_items, "shared"));
+    try std.testing.expect(!containsCompletion(type_items, "local"));
+
+    const value_items = try completionItems(std.testing.allocator, std.testing.io, source, .{ .line = 7, .character = 10 });
+    defer std.testing.allocator.free(value_items);
+    try std.testing.expect(containsCompletion(value_items, "local"));
+    try std.testing.expect(!containsCompletion(value_items, "shared"));
+}
+
+test "member completion recognizes generic and aliased static field receivers" {
+    const source =
+        \\struct Cache<T> {
+        \\    static var hits:int
+        \\    var value:T
+        \\}
+        \\use Cache<int> as IntCache
+        \\func main() {
+        \\    Cache<int>.
+        \\    IntCache.
+        \\}
+    ;
+    const generic_items = try completionItems(std.testing.allocator, std.testing.io, source, .{ .line = 6, .character = 15 });
+    defer std.testing.allocator.free(generic_items);
+    try std.testing.expect(containsCompletion(generic_items, "hits"));
+    try std.testing.expect(!containsCompletion(generic_items, "value"));
+
+    const alias_items = try completionItems(std.testing.allocator, std.testing.io, source, .{ .line = 7, .character = 13 });
+    defer std.testing.allocator.free(alias_items);
+    try std.testing.expect(containsCompletion(alias_items, "hits"));
+    try std.testing.expect(!containsCompletion(alias_items, "value"));
+}
+
 test "member completion recognizes generic and imported static type receivers" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -2558,6 +2607,8 @@ test "member completion recognizes generic and imported static type receivers" {
         .{ .line = 1, .character = 24 },
     );
     try std.testing.expect(containsCompletion(imported_items, "zero"));
+    try std.testing.expect(containsCompletion(imported_items, "creations"));
+    try std.testing.expect(!containsCompletion(imported_items, "x"));
     try std.testing.expect(!containsCompletion(imported_items, "length_squared"));
 }
 

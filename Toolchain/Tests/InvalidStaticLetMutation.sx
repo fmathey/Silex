@@ -1,0 +1,7 @@
+struct Settings {
+    static let values:int[] = []
+}
+
+func main() {
+    Settings.values.append(1)
+}

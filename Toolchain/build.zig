@@ -1288,6 +1288,41 @@ pub fn build(b: *std.Build) void {
     invalid_static_cascade_command.expectExitCode(1);
     invalid_static_cascade_command.expectStdErrEqual("Tests/InvalidStaticCascade.sx:8:35: error: static method 'create' must be called through type 'Client'\n");
 
+    const invalid_static_field_by_instance_command = b.addRunArtifact(executable);
+    invalid_static_field_by_instance_command.addArgs(&.{ "compile", "Tests/InvalidStaticFieldByInstance.sx" });
+    invalid_static_field_by_instance_command.expectExitCode(1);
+    invalid_static_field_by_instance_command.expectStdErrEqual("Tests/InvalidStaticFieldByInstance.sx:7:19: error: static field 'value' must be accessed through type 'Counter'\n");
+
+    const invalid_instance_field_by_type_command = b.addRunArtifact(executable);
+    invalid_instance_field_by_type_command.addArgs(&.{ "compile", "Tests/InvalidInstanceFieldByType.sx" });
+    invalid_instance_field_by_type_command.expectExitCode(1);
+    invalid_instance_field_by_type_command.expectStdErrEqual("Tests/InvalidInstanceFieldByType.sx:6:19: error: instance field 'value' requires a value of type 'Counter'\n");
+
+    const invalid_static_let_mutation_command = b.addRunArtifact(executable);
+    invalid_static_let_mutation_command.addArgs(&.{ "compile", "Tests/InvalidStaticLetMutation.sx" });
+    invalid_static_let_mutation_command.expectExitCode(1);
+    invalid_static_let_mutation_command.expectStdErrEqual("Tests/InvalidStaticLetMutation.sx:6:21: error: cannot mutate through let field 'values'\n");
+
+    const invalid_static_field_without_intrinsic_command = b.addRunArtifact(executable);
+    invalid_static_field_without_intrinsic_command.addArgs(&.{ "compile", "Tests/InvalidStaticFieldWithoutIntrinsic.sx" });
+    invalid_static_field_without_intrinsic_command.expectExitCode(1);
+    invalid_static_field_without_intrinsic_command.expectStdErrEqual("Tests/InvalidStaticFieldWithoutIntrinsic.sx:2:16: error: static field 'callback' of type 'func' has no intrinsic value\n");
+
+    const invalid_static_field_initializer_command = b.addRunArtifact(executable);
+    invalid_static_field_initializer_command.addArgs(&.{ "compile", "Tests/InvalidStaticFieldInitializer.sx" });
+    invalid_static_field_initializer_command.expectExitCode(1);
+    invalid_static_field_initializer_command.expectStdErrEqual("Tests/InvalidStaticFieldInitializer.sx:6:28: error: default field value must be a literal or named initializer of type 'int'\n");
+
+    const invalid_private_static_field_command = b.addRunArtifact(executable);
+    invalid_private_static_field_command.addArgs(&.{ "compile", "Tests/InvalidPrivateStaticField.sx" });
+    invalid_private_static_field_command.expectExitCode(1);
+    invalid_private_static_field_command.expectStdErrEqual("Tests/InvalidPrivateStaticField.sx:6:17: error: static field 'value' is private in class 'State'\n");
+
+    const invalid_inherited_static_field_command = b.addRunArtifact(executable);
+    invalid_inherited_static_field_command.addArgs(&.{ "compile", "Tests/InvalidInheritedStaticField.sx" });
+    invalid_inherited_static_field_command.expectExitCode(1);
+    invalid_inherited_static_field_command.expectStdErrEqual("Tests/InvalidInheritedStaticField.sx:8:17: error: type 'Child' has no static field 'value'\n");
+
     const test_step = b.step("test", "Run the toolchain tests");
     test_step.dependOn(b.getInstallStep());
     test_step.dependOn(&test_command.step);
@@ -1307,6 +1342,13 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&invalid_inherited_static_method_command.step);
     test_step.dependOn(&invalid_private_static_method_command.step);
     test_step.dependOn(&invalid_static_cascade_command.step);
+    test_step.dependOn(&invalid_static_field_by_instance_command.step);
+    test_step.dependOn(&invalid_instance_field_by_type_command.step);
+    test_step.dependOn(&invalid_static_let_mutation_command.step);
+    test_step.dependOn(&invalid_static_field_without_intrinsic_command.step);
+    test_step.dependOn(&invalid_static_field_initializer_command.step);
+    test_step.dependOn(&invalid_private_static_field_command.step);
+    test_step.dependOn(&invalid_inherited_static_field_command.step);
     test_step.dependOn(&invalid_command.step);
     test_step.dependOn(&missing_module_subcommand_command.step);
     test_step.dependOn(&missing_module_init_path_command.step);
@@ -1674,9 +1716,13 @@ pub fn build(b: *std.Build) void {
     static_methods_command.step.dependOn(&field_mutability_command.step);
     static_methods_command.addArgs(&.{ "run", "Smokes/StaticMethods.sx" });
 
+    const static_fields_command = b.addRunArtifact(executable);
+    static_fields_command.step.dependOn(&static_methods_command.step);
+    static_fields_command.addArgs(&.{ "run", "Smokes/StaticFields.sx" });
+
     const integer_semantics_output = "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n";
     const integer_semantics_command = b.addRunArtifact(executable);
-    integer_semantics_command.step.dependOn(&static_methods_command.step);
+    integer_semantics_command.step.dependOn(&static_fields_command.step);
     integer_semantics_command.addArgs(&.{ "run", "Smokes/IntegerSemantics.sx" });
     integer_semantics_command.expectStdOutEqual(hostText(b, integer_semantics_output));
 

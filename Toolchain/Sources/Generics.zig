@@ -444,6 +444,12 @@ pub const Specializer = struct {
                 .arguments = try self.rewriteExpressions(call.arguments, bindings),
                 .named_fields = if (call.named_fields) |fields| try self.rewriteFieldInitializers(fields, bindings) else null,
             } },
+            .static_field_access => |access| .{ .static_field_access = .{
+                .owner = try self.rewriteType(access.owner, bindings, access.owner_position),
+                .owner_position = access.owner_position,
+                .name = access.name,
+                .name_position = access.name_position,
+            } },
             .super_method_call => |call| .{ .super_method_call = .{
                 .position = call.position,
                 .name = call.name,

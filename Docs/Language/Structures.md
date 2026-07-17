@@ -108,6 +108,46 @@ they contain a function value directly or recursively; such values are not
 comparable. A function field has no intrinsic default and must be supplied by
 the initializer, for example with `func() {}`.
 
+## Static fields
+
+`static let` and `static var` declare one storage location attached to a
+concrete type rather than copied into each value. A static field always has an
+explicit `name:type` annotation and is selected only through its complete type:
+
+```sx
+struct Counter {
+    static var value:int
+}
+
+Counter.value += 1
+```
+
+A value cannot select a static field, and a type cannot select an instance
+field. The two namespaces are distinct, so one type may declare a static field
+and an instance field with the same name. A transparent alias selects the same
+storage as its source type. Each used generic specialization instead owns an
+independent location: `Cache<int>.hits` and `Cache<str>.hits` do not share a
+value.
+
+An omitted initializer is accepted only when the field type has an intrinsic
+value. Static initializers follow the restricted field-default grammar:
+compatible literals, `null`, an empty collection, or a named structure
+initializer recursively composed from those forms. They cannot call code,
+construct a class, read another static field, or depend on source-file order.
+Elaborate setup is written explicitly in a static method.
+
+`static let` is deeply immutable and accepts only recursively independent
+types. `static var` permits assignment and mutation through nested fields,
+collections, and ordinary mutable paths. Static storage exists before `main`
+and is a strong root during the call. After `main` returns, every static field
+is reset to its intrinsic value before the runtime checks for remaining class
+instances; retained class references and cycles are therefore released under
+the ordinary `drop` and cycle-collection rules. Silex currently provides no
+concurrency model, atomic access, or implicit synchronization for this storage.
+
+Structure static fields are public and do not accept `pub` or `sub`. Class
+visibility and inheritance rules are described in [Classes](Classes.md).
+
 ## Methods
 
 Methods declare `self` explicitly. A method becomes mutating if it writes
