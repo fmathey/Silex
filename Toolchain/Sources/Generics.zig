@@ -18,6 +18,12 @@ const StructureSpecialization = struct {
     state: State,
 };
 
+const EnumSpecialization = struct {
+    template_name: []const u8,
+    name: []const u8,
+    state: State,
+};
+
 const FunctionSpecialization = struct {
     template_position: Source.Position,
     name: []const u8,
@@ -27,8 +33,10 @@ const FunctionSpecialization = struct {
 pub const Specializer = struct {
     allocator: Allocator,
     program: Ast.Program,
+    enums: std.ArrayList(Ast.Enum) = .empty,
     structures: std.ArrayList(Ast.Structure) = .empty,
     functions: std.ArrayList(Ast.Function) = .empty,
+    enum_specializations: std.ArrayList(EnumSpecialization) = .empty,
     structure_specializations: std.ArrayList(StructureSpecialization) = .empty,
     function_specializations: std.ArrayList(FunctionSpecialization) = .empty,
     diagnostic: ?Source.Diagnostic = null,
@@ -38,9 +46,9 @@ pub const Specializer = struct {
     }
 
     pub fn specialize(self: *Specializer) SpecializeError!Ast.Program {
-        var enums: std.ArrayList(Ast.Enum) = .empty;
         for (self.program.enums) |enum_value| {
-            try enums.append(self.allocator, try self.rewriteEnum(enum_value));
+            if (enum_value.type_parameters.len != 0) continue;
+            try self.enums.append(self.allocator, try self.rewriteEnum(enum_value, &.{}));
         }
         for (self.program.structures) |structure| {
             if (structure.type_parameters.len != 0) continue;
@@ -54,27 +62,32 @@ pub const Specializer = struct {
         }
 
         return .{
-            .enums = try enums.toOwnedSlice(self.allocator),
+            .enums = try self.enums.toOwnedSlice(self.allocator),
             .structures = try self.structures.toOwnedSlice(self.allocator),
             .functions = try self.functions.toOwnedSlice(self.allocator),
         };
     }
 
-    fn rewriteEnum(self: *Specializer, enum_value: Ast.Enum) SpecializeError!Ast.Enum {
+    fn rewriteEnum(
+        self: *Specializer,
+        enum_value: Ast.Enum,
+        bindings: []const Binding,
+    ) SpecializeError!Ast.Enum {
         var variants: std.ArrayList(Ast.EnumVariant) = .empty;
         for (enum_value.variants) |variant| {
             var associated_types: std.ArrayList(Ast.TypeName) = .empty;
             for (variant.associated_types) |associated_type| {
-                try associated_types.append(self.allocator, try self.rewriteType(associated_type, &.{}, variant.position));
+                try associated_types.append(self.allocator, try self.rewriteType(associated_type, bindings, variant.position));
             }
             try variants.append(self.allocator, .{
                 .name = variant.name,
                 .position = variant.position,
                 .associated_types = try associated_types.toOwnedSlice(self.allocator),
-                .raw_value = if (variant.raw_value) |raw_value| try self.rewriteExpression(raw_value, &.{}) else null,
+                .raw_value = if (variant.raw_value) |raw_value| try self.rewriteExpression(raw_value, bindings) else null,
             });
         }
         var result = enum_value;
+        result.type_parameters = &.{};
         result.variants = try variants.toOwnedSlice(self.allocator);
         return result;
     }
@@ -154,6 +167,14 @@ pub const Specializer = struct {
     ) SpecializeError!Ast.TypeName {
         return switch (value) {
             .structure => |name| structure: {
+                if (self.findEnumTemplate(name)) |template| {
+                    const message = try std.fmt.allocPrint(
+                        self.allocator,
+                        "generic enum '{s}' requires {d} type argument{s}",
+                        .{ name, template.type_parameters.len, if (template.type_parameters.len == 1) "" else "s" },
+                    );
+                    return self.fail(position, message);
+                }
                 if (self.findTemplate(name)) |template| {
                     const message = try std.fmt.allocPrint(
                         self.allocator,
@@ -169,7 +190,10 @@ pub const Specializer = struct {
                 for (generic.arguments) |argument| {
                     try arguments.append(self.allocator, try self.rewriteType(argument, bindings, position));
                 }
-                const name = try self.instantiate(generic.name, arguments.items, position);
+                const name = if (self.findEnumTemplate(generic.name) != null or self.findConcreteEnum(generic.name) != null)
+                    try self.instantiateEnum(generic.name, arguments.items, position)
+                else
+                    try self.instantiate(generic.name, arguments.items, position);
                 break :generic_type .{ .structure = name };
             },
             .type_parameter => |name| {
@@ -301,6 +325,61 @@ pub const Specializer = struct {
         concrete.type_parameters = &.{};
         try self.structures.append(self.allocator, concrete);
         self.structure_specializations.items[specialization_index].state = .done;
+        return name;
+    }
+
+    fn instantiateEnum(
+        self: *Specializer,
+        template_name: []const u8,
+        arguments: []const Ast.TypeName,
+        position: Source.Position,
+    ) SpecializeError![]const u8 {
+        const template = self.findEnumTemplate(template_name) orelse {
+            if (self.findConcreteEnum(template_name) != null) {
+                const message = try std.fmt.allocPrint(self.allocator, "enum '{s}' does not accept type arguments", .{template_name});
+                return self.fail(position, message);
+            }
+            const message = try std.fmt.allocPrint(self.allocator, "unknown generic enum '{s}'", .{template_name});
+            return self.fail(position, message);
+        };
+        if (arguments.len != template.type_parameters.len) {
+            const message = try std.fmt.allocPrint(
+                self.allocator,
+                "generic enum '{s}' expects {d} type argument{s}, found {d}",
+                .{ template_name, template.type_parameters.len, if (template.type_parameters.len == 1) "" else "s", arguments.len },
+            );
+            return self.fail(position, message);
+        }
+
+        const name = try self.genericTypeName(template_name, arguments);
+        for (self.enum_specializations.items) |specialization| {
+            if (std.mem.eql(u8, specialization.name, name)) return specialization.name;
+            if (specialization.state == .visiting and std.mem.eql(u8, specialization.template_name, template_name)) {
+                const message = try std.fmt.allocPrint(
+                    self.allocator,
+                    "generic enum '{s}' recursively expands with different type arguments",
+                    .{template_name},
+                );
+                return self.fail(position, message);
+            }
+        }
+
+        const specialization_index = self.enum_specializations.items.len;
+        try self.enum_specializations.append(self.allocator, .{
+            .template_name = template_name,
+            .name = name,
+            .state = .visiting,
+        });
+        const bindings = try self.allocator.alloc(Binding, arguments.len);
+        for (template.type_parameters, arguments, 0..) |parameter, argument, index| {
+            bindings[index] = .{ .name = parameter.name, .value = argument };
+        }
+
+        var concrete = try self.rewriteEnum(template.*, bindings);
+        concrete.name = name;
+        concrete.type_parameters = &.{};
+        try self.enums.append(self.allocator, concrete);
+        self.enum_specializations.items[specialization_index].state = .done;
         return name;
     }
 
@@ -624,6 +703,20 @@ pub const Specializer = struct {
     fn findTemplate(self: *const Specializer, name: []const u8) ?*const Ast.Structure {
         for (self.program.structures) |*structure| {
             if (structure.type_parameters.len != 0 and std.mem.eql(u8, structure.name, name)) return structure;
+        }
+        return null;
+    }
+
+    fn findEnumTemplate(self: *const Specializer, name: []const u8) ?*const Ast.Enum {
+        for (self.program.enums) |*enum_value| {
+            if (enum_value.type_parameters.len != 0 and std.mem.eql(u8, enum_value.name, name)) return enum_value;
+        }
+        return null;
+    }
+
+    fn findConcreteEnum(self: *const Specializer, name: []const u8) ?*const Ast.Enum {
+        for (self.program.enums) |*enum_value| {
+            if (enum_value.type_parameters.len == 0 and std.mem.eql(u8, enum_value.name, name)) return enum_value;
         }
         return null;
     }

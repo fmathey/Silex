@@ -138,6 +138,36 @@ func main() {
                   (identifier)
                   (identifier))))))))))
 
+=============
+Generic enums
+=============
+
+enum Outcome<T, E> {
+    success(T)
+    failure(E)
+}
+
+---
+
+(source_file
+  (enum_definition
+    (identifier)
+    (type_parameter_list
+      (type_parameter
+        (identifier))
+      (type_parameter
+        (identifier)))
+    (enum_variant
+      (identifier)
+      (type
+        (named_type
+          (type_identifier))))
+    (enum_variant
+      (identifier)
+      (type
+        (named_type
+          (type_identifier))))))
+
 =================
 Generic functions
 =================

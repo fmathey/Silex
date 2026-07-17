@@ -1,0 +1,7 @@
+enum State<T> {
+    ready(T)
+}
+
+func main() {
+    let value = State<void>.ready()
+}

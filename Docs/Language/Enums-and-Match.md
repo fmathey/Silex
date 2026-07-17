@@ -27,8 +27,46 @@ type of every variant is recursively independent. A variant containing a
 function value or class reference therefore requires a `var` binding, directly
 or through another value.
 
-Enums are currently non-generic. They do not declare methods or fields and do
-not receive automatic conversions or equality operations.
+Enums do not declare methods or fields and do not receive automatic conversions
+or equality operations.
+
+## Generic enums
+
+An associated-value enum may declare type parameters after its name. Every use
+supplies one explicit type argument per parameter:
+
+```sx
+enum Outcome<T, E> {
+    success(T)
+    failure(E)
+}
+
+enum ParseError {
+    invalid
+}
+
+let parsed = Outcome<int, ParseError>.success(42)
+let text = match parsed {
+    success(number) => "success"
+    failure(error) => "failure"
+}
+```
+
+`Outcome<int, ParseError>` and `Outcome<str, ParseError>` are distinct nominal
+types. Repeating the same arguments denotes the same specialization throughout
+the application and across module boundaries. Type parameters may appear in
+any associated value type, including collections, optionals, function types,
+and other generic specializations.
+
+Arguments are never inferred: annotations, function parameters and returns,
+aliases, and variant constructors use the complete specialization. `void` is a
+return type rather than a value type and cannot be an argument; a function type
+such as `func()` remains a valid argument. A specialization is checked by the
+ordinary enum rules, so copying, `let`, and match binding independence depend
+on its concrete associated types.
+
+Raw `int` and `str` enums cannot be generic. Generic enums have no constraints,
+default arguments, or independently generic variants.
 
 ## Raw enum values
 

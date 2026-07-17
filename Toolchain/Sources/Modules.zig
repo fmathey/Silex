@@ -549,6 +549,9 @@ pub const Resolver = struct {
     }
 
     fn transformEnum(self: *Resolver, enum_value: Ast.Enum) !Ast.Enum {
+        const previous_type_parameters = self.current_type_parameters;
+        self.current_type_parameters = enum_value.type_parameters;
+        defer self.current_type_parameters = previous_type_parameters;
         const declaration = self.findDirectByPosition(enum_value.name_position, .structure).?;
         var variants: std.ArrayList(Ast.EnumVariant) = .empty;
         for (enum_value.variants) |variant| {
@@ -720,12 +723,13 @@ pub const Resolver = struct {
         switch (value) {
             .structure => |name| {
                 const declaration = self.findDeclarationByCanonicalName(name, .structure) orelse return;
-                const parameter_count = self.structureTypeParameterCount(declaration.position);
+                const parameter_count = self.namedTypeParameterCount(declaration.position);
                 if (parameter_count != 0) {
+                    const declaration_kind = if (self.declarationIsEnum(declaration)) "enum" else "struct";
                     const message = try std.fmt.allocPrint(
                         self.allocator,
-                        "generic struct '{s}' requires {d} type argument{s}",
-                        .{ name, parameter_count, if (parameter_count == 1) "" else "s" },
+                        "generic {s} '{s}' requires {d} type argument{s}",
+                        .{ declaration_kind, name, parameter_count, if (parameter_count == 1) "" else "s" },
                     );
                     return self.fail(position, message);
                 }
@@ -735,15 +739,16 @@ pub const Resolver = struct {
                     const message = try std.fmt.allocPrint(self.allocator, "unknown generic struct '{s}'", .{generic.name});
                     return self.fail(position, message);
                 };
-                const parameter_count = self.structureTypeParameterCount(declaration.position);
+                const parameter_count = self.namedTypeParameterCount(declaration.position);
                 if (parameter_count != generic.arguments.len) {
+                    const declaration_kind = if (self.declarationIsEnum(declaration)) "enum" else "struct";
                     const message = if (parameter_count == 0)
-                        try std.fmt.allocPrint(self.allocator, "struct '{s}' does not accept type arguments", .{generic.name})
+                        try std.fmt.allocPrint(self.allocator, "{s} '{s}' does not accept type arguments", .{ declaration_kind, generic.name })
                     else
                         try std.fmt.allocPrint(
                             self.allocator,
-                            "generic struct '{s}' expects {d} type argument{s}, found {d}",
-                            .{ generic.name, parameter_count, if (parameter_count == 1) "" else "s", generic.arguments.len },
+                            "generic {s} '{s}' expects {d} type argument{s}, found {d}",
+                            .{ declaration_kind, generic.name, parameter_count, if (parameter_count == 1) "" else "s", generic.arguments.len },
                         );
                     return self.fail(position, message);
                 }
@@ -767,7 +772,11 @@ pub const Resolver = struct {
         return null;
     }
 
-    fn structureTypeParameterCount(self: *const Resolver, position: Source.Position) usize {
+    fn namedTypeParameterCount(self: *const Resolver, position: Source.Position) usize {
+        for (self.files) |file| for (file.program.enums) |enum_value| {
+            if (enum_value.name_position.file == position.file and enum_value.name_position.line == position.line and
+                enum_value.name_position.column == position.column) return enum_value.type_parameters.len;
+        };
         for (self.files) |file| for (file.program.structures) |structure| {
             if (structure.name_position.file == position.file and structure.name_position.line == position.line and
                 structure.name_position.column == position.column) return structure.type_parameters.len;
@@ -1546,6 +1555,16 @@ pub const Resolver = struct {
                 }
             }
         }
+        return false;
+    }
+
+    fn declarationIsEnum(self: *const Resolver, declaration: *const Declaration) bool {
+        if (declaration.kind != .structure) return false;
+        for (self.files) |file| for (file.program.enums) |enum_value| {
+            if (enum_value.name_position.file == declaration.position.file and
+                enum_value.name_position.line == declaration.position.line and
+                enum_value.name_position.column == declaration.position.column) return true;
+        };
         return false;
     }
 

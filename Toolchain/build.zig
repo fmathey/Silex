@@ -611,6 +611,55 @@ pub fn build(b: *std.Build) void {
         "Tests/RecursiveGenericStructureExpansion.sx:6:9: error: generic struct 'Expand' recursively expands with different type arguments\n",
     );
 
+    const missing_generic_enum_arguments_command = b.addRunArtifact(executable);
+    missing_generic_enum_arguments_command.addArgs(&.{ "compile", "Tests/MissingGenericEnumArguments.sx" });
+    missing_generic_enum_arguments_command.expectExitCode(1);
+    missing_generic_enum_arguments_command.expectStdErrEqual(
+        "Tests/MissingGenericEnumArguments.sx:7:9: error: generic enum 'Outcome' requires 2 type arguments\n",
+    );
+
+    const invalid_generic_enum_arity_command = b.addRunArtifact(executable);
+    invalid_generic_enum_arity_command.addArgs(&.{ "compile", "Tests/InvalidGenericEnumArity.sx" });
+    invalid_generic_enum_arity_command.expectExitCode(1);
+    invalid_generic_enum_arity_command.expectStdErrEqual(
+        "Tests/InvalidGenericEnumArity.sx:7:17: error: generic enum 'Outcome' expects 2 type arguments, found 1\n",
+    );
+
+    const unexpected_generic_enum_arguments_command = b.addRunArtifact(executable);
+    unexpected_generic_enum_arguments_command.addArgs(&.{ "compile", "Tests/UnexpectedGenericEnumArguments.sx" });
+    unexpected_generic_enum_arguments_command.expectExitCode(1);
+    unexpected_generic_enum_arguments_command.expectStdErrEqual(
+        "Tests/UnexpectedGenericEnumArguments.sx:6:17: error: enum 'State' does not accept type arguments\n",
+    );
+
+    const recursive_generic_enum_expansion_command = b.addRunArtifact(executable);
+    recursive_generic_enum_expansion_command.addArgs(&.{ "compile", "Tests/RecursiveGenericEnumExpansion.sx" });
+    recursive_generic_enum_expansion_command.expectExitCode(1);
+    recursive_generic_enum_expansion_command.expectStdErrEqual(
+        "Tests/RecursiveGenericEnumExpansion.sx:2:5: error: generic enum 'Expand' recursively expands with different type arguments\n",
+    );
+
+    const invalid_generic_enum_independence_command = b.addRunArtifact(executable);
+    invalid_generic_enum_independence_command.addArgs(&.{ "compile", "Tests/InvalidGenericEnumIndependence.sx" });
+    invalid_generic_enum_independence_command.expectExitCode(1);
+    invalid_generic_enum_independence_command.expectStdErrEqual(
+        "Tests/InvalidGenericEnumIndependence.sx:6:9: error: type 'Callback<int>' is not an independent value because field 'ready[1]' reaches 'func'; use 'var'\n",
+    );
+
+    const invalid_generic_raw_enum_command = b.addRunArtifact(executable);
+    invalid_generic_raw_enum_command.addArgs(&.{ "compile", "Tests/InvalidGenericRawEnum.sx" });
+    invalid_generic_raw_enum_command.expectExitCode(1);
+    invalid_generic_raw_enum_command.expectStdErrEqual(
+        "Tests/InvalidGenericRawEnum.sx:1:13: error: a raw enum cannot be generic\n",
+    );
+
+    const invalid_generic_enum_void_argument_command = b.addRunArtifact(executable);
+    invalid_generic_enum_void_argument_command.addArgs(&.{ "compile", "Tests/InvalidGenericEnumVoidArgument.sx" });
+    invalid_generic_enum_void_argument_command.expectExitCode(1);
+    invalid_generic_enum_void_argument_command.expectStdErrEqual(
+        "Tests/InvalidGenericEnumVoidArgument.sx:6:23: error: void cannot be used as a type argument\n",
+    );
+
     const missing_generic_function_arguments_command = b.addRunArtifact(executable);
     missing_generic_function_arguments_command.addArgs(&.{ "compile", "Tests/MissingGenericFunctionArguments.sx" });
     missing_generic_function_arguments_command.expectExitCode(1);
@@ -1432,6 +1481,13 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&invalid_generic_arity_command.step);
     test_step.dependOn(&invalid_generic_specialization_command.step);
     test_step.dependOn(&recursive_generic_structure_expansion_command.step);
+    test_step.dependOn(&missing_generic_enum_arguments_command.step);
+    test_step.dependOn(&invalid_generic_enum_arity_command.step);
+    test_step.dependOn(&unexpected_generic_enum_arguments_command.step);
+    test_step.dependOn(&recursive_generic_enum_expansion_command.step);
+    test_step.dependOn(&invalid_generic_enum_independence_command.step);
+    test_step.dependOn(&invalid_generic_raw_enum_command.step);
+    test_step.dependOn(&invalid_generic_enum_void_argument_command.step);
     test_step.dependOn(&missing_generic_function_arguments_command.step);
     test_step.dependOn(&unexpected_generic_function_arguments_command.step);
     test_step.dependOn(&invalid_generic_function_arity_command.step);
@@ -1612,8 +1668,13 @@ pub fn build(b: *std.Build) void {
     generic_structures_command.addArgs(&.{ "run", "Smokes/GenericStructures.sx" });
     generic_structures_command.expectStdOutEqual(hostText(b, "10\n30\nAda\ntrue\n7\nright\ntrue\n0\n3\nGrace\n8\n4\n9\n"));
 
+    const generic_enums_command = b.addRunArtifact(executable);
+    generic_enums_command.step.dependOn(&generic_structures_command.step);
+    generic_enums_command.addArgs(&.{ "run", "Smokes/GenericEnums/silex.json" });
+    generic_enums_command.expectStdOutEqual(hostText(b, "success\ninvalid\ndistinct\n2\ntrue\nconverted\nsuccess\n"));
+
     const generic_functions_command = b.addRunArtifact(executable);
-    generic_functions_command.step.dependOn(&generic_structures_command.step);
+    generic_functions_command.step.dependOn(&generic_enums_command.step);
     generic_functions_command.addArgs(&.{ "run", "Smokes/GenericFunctions.sx" });
     generic_functions_command.expectStdOutEqual(hostText(b, "42\n7\nAda\nGrace\n9\nSilex\n3\n3\n4\n120\nlocal\n11\n5\ngeneric\n"));
 

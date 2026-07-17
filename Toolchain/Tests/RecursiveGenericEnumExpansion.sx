@@ -1,0 +1,7 @@
+enum Expand<T> {
+    next(Expand<T[]>)
+}
+
+func main() {
+    var value:Expand<int>
+}

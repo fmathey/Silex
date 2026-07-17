@@ -1,0 +1,8 @@
+enum Outcome<T, E> {
+    success(T)
+    failure(E)
+}
+
+func main() {
+    let value = Outcome<int>.success(42)
+}

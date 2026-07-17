@@ -1,0 +1,7 @@
+enum Callback<T> {
+    ready(func(T))
+}
+
+func main() {
+    let callback = Callback<int>.ready(func(value:int) {})
+}

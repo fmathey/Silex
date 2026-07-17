@@ -1,0 +1,5 @@
+enum Code<T>:int {
+    success = 0
+}
+
+func main() {}

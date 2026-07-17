@@ -60,8 +60,8 @@ let indexed = Entry<int, Pair<str>>(
 
 `Pair<int>` and `Pair<str>` are distinct concrete types. Repeating the same
 arguments denotes the same type throughout the application and across module
-boundaries. Arguments may themselves be structures, classes, collections,
-optionals, function types, or generic structure specializations.
+boundaries. Arguments may themselves be structures, classes, enums,
+collections, optionals, function types, or generic type specializations.
 
 Type arguments are not inferred. A generic structure name without arguments
 is incomplete, including in an initializer whose fields would otherwise reveal

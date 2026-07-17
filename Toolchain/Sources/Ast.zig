@@ -437,6 +437,7 @@ pub const Enum = struct {
     position: Source.Position,
     name: []const u8,
     name_position: Source.Position,
+    type_parameters: []const TypeParameter = &.{},
     raw_type: ?RawEnumType = null,
     variants: []const EnumVariant,
 };

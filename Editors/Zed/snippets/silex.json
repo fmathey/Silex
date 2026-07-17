@@ -50,6 +50,16 @@
     ],
     "description": "Declare a closed enum"
   },
+  "Generic enum": {
+    "prefix": "enumgeneric",
+    "body": [
+      "enum ${1:Name}<${2:T}> {",
+      "    ${3:variant}(${2:T})",
+      "    $0",
+      "}"
+    ],
+    "description": "Declare a generic enum with associated values"
+  },
   "Raw enum": {
     "prefix": "enumraw",
     "body": [

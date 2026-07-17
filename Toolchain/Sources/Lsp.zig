@@ -1340,6 +1340,9 @@ fn collectLocalEnums(
         if (tokens[index].tag != .keyword_enum or tokens[index + 1].tag != .identifier) continue;
         const enum_name = tokens[index + 1].lexeme;
         var body_index = index + 2;
+        if (tokens[body_index].tag == .less) {
+            body_index = genericArgumentsEnd(tokens, body_index) orelse continue;
+        }
         var has_raw_value = false;
         if (tokens[body_index].tag == .colon) {
             body_index += 1;
@@ -1468,9 +1471,11 @@ fn enumVariantInitializerType(info: SemanticInfo, tokens: []const LexerModule.To
     var current_name = tokens[start].lexeme;
     var enum_candidate: ?[]const u8 = null;
     var index = start + 1;
-    while (index + 1 < tokens.len and tokens[index].tag == .dot and
-        tokens[index + 1].tag == .identifier)
-    {
+    while (true) {
+        if (index < tokens.len and tokens[index].tag == .less) {
+            index = genericArgumentsEnd(tokens, index) orelse return null;
+        }
+        if (index + 1 >= tokens.len or tokens[index].tag != .dot or tokens[index + 1].tag != .identifier) break;
         enum_candidate = current_name;
         current_name = tokens[index + 1].lexeme;
         index += 2;
@@ -2880,6 +2885,27 @@ test "enum completion inserts local variant constructors" {
     try std.testing.expectEqualStrings("connected($0)", connected.insertText.?);
     try std.testing.expectEqual(@as(?u8, 2), connected.insertTextFormat);
     try std.testing.expectEqual(@as(usize, 2), items.len);
+}
+
+test "enum completion recognizes generic declarations and specializations" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const source =
+        \\enum Outcome<T, E> {
+        \\    success(T)
+        \\    failure(E)
+        \\}
+        \\func main() {
+        \\    Outcome<int, str>.
+        \\}
+    ;
+    const items = try completionItems(arena.allocator(), std.testing.io, source, .{ .line = 5, .character = 22 });
+    try std.testing.expect(containsCompletion(items, "success"));
+    try std.testing.expect(containsCompletion(items, "failure"));
+    try std.testing.expect(syntaxDiagnostic(arena.allocator(),
+        \\enum Outcome<T, E> { success(T); failure(E) }
+        \\func main() { let value = Outcome<int, str>.success(42) }
+    ) == null);
 }
 
 test "enum instance completion exposes only declared raw values" {

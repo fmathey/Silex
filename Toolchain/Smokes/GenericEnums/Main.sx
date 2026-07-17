@@ -1,0 +1,41 @@
+use Generic.API.Outcome
+use Generic.API.Bundle
+
+use Outcome<int, str> as IntOutcome
+use Bundle<int, str> as IntBundle
+
+func describe(value:IntOutcome) str {
+    return match value {
+        success(number) => "success"
+        failure(error) => error
+    }
+}
+
+func main() {
+    let success:IntOutcome = IntOutcome.success(42)
+    let failure = Outcome<int, str>.failure("invalid")
+    let distinct = Outcome<str, str>.success("distinct")
+
+    print(describe(success))
+    print(describe(failure))
+    print(match distinct {
+        success(value) => value
+        failure(error) => error
+    })
+
+    var bundle:IntBundle = IntBundle.payload(
+        [1, 2],
+        null,
+        func(value:int) str { return "converted" },
+        success
+    )
+    match bundle {
+        payload(values, optional, var convert, outcome) => {
+            print(values.count())
+            print(optional == null)
+            print(convert(1))
+            print(describe(outcome))
+        }
+        empty => {}
+    }
+}

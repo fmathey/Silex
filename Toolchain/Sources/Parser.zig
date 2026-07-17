@@ -79,8 +79,12 @@ pub const Parser = struct {
         const name = self.current.lexeme;
         const name_position = self.current.position;
         try self.advance();
-        if (self.current.tag == .less) return self.fail("generic enums are not supported");
+        const type_parameters = if (self.current.tag == .less)
+            try self.parseTypeParameters("enum")
+        else
+            &.{};
         const raw_type: ?Ast.RawEnumType = if (self.current.tag == .colon) raw_type: {
+            if (type_parameters.len != 0) return self.fail("a raw enum cannot be generic");
             try self.advance();
             const result: Ast.RawEnumType = switch (self.current.tag) {
                 .keyword_int => .int,
@@ -135,6 +139,7 @@ pub const Parser = struct {
             .position = position,
             .name = name,
             .name_position = name_position,
+            .type_parameters = type_parameters,
             .raw_type = raw_type,
             .variants = try variants.toOwnedSlice(self.allocator),
         };
@@ -195,7 +200,7 @@ pub const Parser = struct {
         try self.advance();
         const type_parameters = if (self.current.tag == .less) parameters: {
             if (is_class) return self.fail("generic classes are not supported");
-            break :parameters try self.parseTypeParameters();
+            break :parameters try self.parseTypeParameters("structure");
         } else &.{};
         var base: ?Ast.BaseClass = null;
         if (self.current.tag == .colon) {
@@ -344,7 +349,7 @@ pub const Parser = struct {
         const name = self.current.lexeme;
         const name_position = self.current.position;
         try self.advance();
-        const type_parameters = if (self.current.tag == .less) try self.parseTypeParameters() else &.{};
+        const type_parameters = if (self.current.tag == .less) try self.parseTypeParameters("function") else &.{};
         if (type_parameters.len != 0 and std.mem.eql(u8, name, "main")) {
             return self.fail("'main' cannot be generic");
         }
@@ -1520,10 +1525,11 @@ pub const Parser = struct {
         });
     }
 
-    fn parseTypeParameters(self: *Parser) ParseError![]const Ast.TypeParameter {
+    fn parseTypeParameters(self: *Parser, declaration_kind: []const u8) ParseError![]const Ast.TypeParameter {
         try self.expect(.less, "expected '<'");
         if (self.current.tag == .greater or self.current.tag == .shift_right) {
-            return self.fail("a generic structure requires at least one type parameter");
+            const message = try std.fmt.allocPrint(self.allocator, "a generic {s} requires at least one type parameter", .{declaration_kind});
+            return self.fail(message);
         }
         var parameters: std.ArrayList(Ast.TypeParameter) = .empty;
         while (true) {
@@ -1555,6 +1561,7 @@ pub const Parser = struct {
         }
         var arguments: std.ArrayList(Ast.TypeName) = .empty;
         while (true) {
+            if (self.current.tag == .keyword_void) return self.fail("void cannot be used as a type argument");
             try arguments.append(self.allocator, try self.parseTypeNameAfter("expected type argument"));
             if (self.current.tag != .comma) break;
             try self.advance();
@@ -1590,16 +1597,37 @@ pub const Parser = struct {
 
     fn genericInvocationFollows(self: *const Parser) bool {
         var probe = self.*;
-        _ = probe.parseTypeArguments() catch return false;
+        _ = probe.parseTypeArguments() catch return self.malformedGenericSuffixFollows(.left_parenthesis);
         return probe.current.tag == .left_parenthesis;
     }
 
     fn genericStaticMemberFollows(self: *const Parser) bool {
         var probe = self.*;
-        _ = probe.parseTypeArguments() catch return false;
+        _ = probe.parseTypeArguments() catch return self.malformedGenericSuffixFollows(.dot);
         if (probe.current.tag != .dot) return false;
         probe.advance() catch return false;
         return probe.current.tag == .identifier;
+    }
+
+    fn malformedGenericSuffixFollows(self: *const Parser, suffix: TokenTag) bool {
+        if (self.current.tag != .less) return false;
+        var lexer = self.lexer;
+        var depth: usize = 1;
+        while (depth != 0) {
+            const token = lexer.next() catch return false;
+            switch (token.tag) {
+                .less => depth += 1,
+                .greater => depth -= 1,
+                .shift_right => {
+                    if (depth < 2) return false;
+                    depth -= 2;
+                },
+                .end => return false,
+                else => {},
+            }
+        }
+        if ((lexer.next() catch return false).tag != suffix) return false;
+        return suffix != .dot or (lexer.next() catch return false).tag == .identifier;
     }
 
     fn expressionPath(self: *Parser, expression: *const Ast.Expression) ParseError!?[]const u8 {
@@ -2755,6 +2783,28 @@ test "parse enums and expression and imperative matches" {
     try std.testing.expectEqual(Ast.Mutability.mutable, imperative_match.branches[1].bindings[0].mutability);
 }
 
+test "parse generic enum declarations and specialized variant constructors" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var parser = Parser.init(arena.allocator(),
+        \\enum Outcome<T, E> { success(T); failure(E) }
+        \\func main() {
+        \\    let value:Outcome<int, str> = Outcome<int, str>.success(42)
+        \\}
+    );
+    const program = try parser.parse();
+    try std.testing.expectEqual(@as(usize, 2), program.enums[0].type_parameters.len);
+    try std.testing.expectEqualStrings("T", program.enums[0].type_parameters[0].name);
+    try std.testing.expectEqualStrings("E", program.enums[0].type_parameters[1].name);
+    try std.testing.expectEqualStrings("T", program.enums[0].variants[0].associated_types[0].structure);
+    const annotation = program.functions[0].statements[0].variable_declaration.annotation.?.generic_structure;
+    try std.testing.expectEqualStrings("Outcome", annotation.name);
+    try std.testing.expectEqual(@as(usize, 2), annotation.arguments.len);
+    const owner = program.functions[0].statements[0].variable_declaration.initializer.?.value.static_method_call.owner.generic_structure;
+    try std.testing.expectEqualStrings("Outcome", owner.name);
+    try std.testing.expectEqual(@as(usize, 2), owner.arguments.len);
+}
+
 test "parse terminal else match branches" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -2837,6 +2887,10 @@ test "reject invalid raw enum declaration shapes" {
     var missing_type = Parser.init(arena.allocator(), "enum State { ready = 1 }");
     try std.testing.expectError(error.InvalidSource, missing_type.parse());
     try std.testing.expectEqualStrings("an enum without a raw type cannot assign variant values", missing_type.diagnostic.?.message);
+
+    var generic_raw = Parser.init(arena.allocator(), "enum State<T>:int { ready = 1 }");
+    try std.testing.expectError(error.InvalidSource, generic_raw.parse());
+    try std.testing.expectEqualStrings("a raw enum cannot be generic", generic_raw.diagnostic.?.message);
 }
 
 test "require a name for a type alias" {
