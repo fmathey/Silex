@@ -78,7 +78,11 @@ module.exports = grammar({
         "{",
         repeat(
           choice(
-            seq(optional(field("visibility", choice("pub", "sub"))), $.structure_field),
+            seq(
+              optional(field("visibility", choice("pub", "sub"))),
+              optional(field("static", "static")),
+              $.structure_field,
+            ),
             seq(optional(field("visibility", choice("pub", "sub"))), $.constructor_definition),
             $.drop_definition,
             seq(
