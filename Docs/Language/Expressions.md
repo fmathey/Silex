@@ -11,8 +11,9 @@ Arithmetic and ordering comparisons require compatible numeric operands, except
 that `+` also concatenates two strings. Equality uses the same numeric
 compatibility rules, compares strings by bytes, and compares two values of the
 same ordinary structure type recursively by their fields. A unique resource
-structure declaring `drop` does not support equality. `print` accepts numbers,
-`bool`, and `str`.
+structure declaring `drop`, and every structure or container recursively made
+noncopyable by such a value, does not support equality. `print` accepts
+numbers, `bool`, and `str`.
 
 Mutable numeric places support `+=`, `-=`, `*=`, `/=`, `++`, and `--`; `+=`
 also concatenates strings. `++` and `--` are postfix statements, not values.

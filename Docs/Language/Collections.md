@@ -52,9 +52,19 @@ the end, and each bound is clamped between zero and the collection count. If
 the normalized start is greater than or equal to the normalized end, the slice
 is empty. Both bounds are required and evaluated once from left to right. The
 result is an independent dynamic list; it is not a view into the source.
+Because slicing copies, it is unavailable when the element type is
+noncopyable.
 
 Dynamic lists also provide `append`, `prepend`, `insert`, `take`,
 `take_first`, `take_last`, and `clear`. `append` accepts one compatible element
 or a compatible sequence. Assigning a list, passing it to an ordinary
 parameter, or returning it preserves independent value behaviour; a list is
 separated only if one of those values is later mutated.
+
+A collection of noncopyable elements owns them and is itself noncopyable.
+`append`, `prepend`, `insert`, and the replacement value of `replace` require
+`move` for a named element and accept a temporary directly. `take`,
+`take_first`, `take_last`, and `replace` transfer the removed element. An
+indexed read that would copy is rejected; use `borrow values[index]`, a read
+loop, or `for var`. A read loop binds each noncopyable element by temporary
+read-only alias, while `for let` remains a copying form and is rejected.

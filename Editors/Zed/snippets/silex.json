@@ -123,6 +123,28 @@
     ],
     "description": "Match selected enum variants with a default branch"
   },
+  "Consume noncopyable match": {
+    "prefix": "matchmove",
+    "body": [
+      "match move ${1:value} {",
+      "    ${2:variant}(${3:item}) => {",
+      "        $0",
+      "    }",
+      "}"
+    ],
+    "description": "Consume a noncopyable enum and own its associated values"
+  },
+  "Borrow noncopyable match": {
+    "prefix": "matchborrow",
+    "body": [
+      "match borrow ${1:value} {",
+      "    ${2:variant}(${3:item}) => {",
+      "        $0",
+      "    }",
+      "}"
+    ],
+    "description": "Inspect a noncopyable enum without consuming it"
+  },
   "Result match": {
     "prefix": "matchresult",
     "body": [
@@ -141,6 +163,22 @@
       "try ${1:operation}($0)"
     ],
     "description": "Unwrap a Result success or propagate its failure"
+  },
+  "Propagate named noncopyable Result": {
+    "prefix": "trymove",
+    "body": [
+      "try move ${1:result}"
+    ],
+    "description": "Consume a named noncopyable Result while propagating failure"
+  },
+  "Consume noncopyable optional": {
+    "prefix": "ifmove",
+    "body": [
+      "if var ${1:value} = move ${2:optional} {",
+      "    $0",
+      "}"
+    ],
+    "description": "Consume a noncopyable optional and own its present value"
   },
   "Move unique resource": {
     "prefix": "move",

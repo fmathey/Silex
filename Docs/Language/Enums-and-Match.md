@@ -173,6 +173,26 @@ class, or recursively non-independent associated value. Bindings exist only
 inside their branch and copy the associated values; matching never consumes or
 mutates the subject.
 
+When an enum is noncopyable, a named subject chooses an explicit mode.
+`match move value` consumes the complete enum and transfers each associated
+value to its branch binding. `match borrow value` keeps the enum available and
+creates read-only bindings limited to the branch. A fresh noncopyable enum
+temporary is consumed without an extra marker. Ordinary `match` keeps its copy
+semantics for copyable enums. A consuming `else` destroys the active associated
+values it does not bind.
+
+```sx
+match move state {
+    loaded(var document) => { consume(move document) }
+    failed(error) => { print(error.message()) }
+}
+
+match borrow state {
+    loaded(document) => { inspect(borrow document) }
+    failed(error) => { print(error.message()) }
+}
+```
+
 ## Imperative match
 
 When every branch body is a block, `match` is a statement-like expression of

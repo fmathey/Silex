@@ -29,6 +29,7 @@ pub fn generateWithSources(
         \\#include <bit>
         \\#include <climits>
         \\#include <cmath>
+        \\#include <concepts>
         \\#include <iostream>
         \\#include <iterator>
         \\#include <limits>
@@ -410,6 +411,12 @@ pub fn generateWithSources(
         \\
         \\    SilexList() = default;
         \\    SilexList(std::initializer_list<T> values) : values_(values) {}
+        \\    SilexList(const SilexList&) requires std::copy_constructible<T> = default;
+        \\    SilexList(const SilexList&) requires (!std::copy_constructible<T>) = delete;
+        \\    SilexList& operator=(const SilexList&) requires std::copyable<T> = default;
+        \\    SilexList& operator=(const SilexList&) requires (!std::copyable<T>) = delete;
+        \\    SilexList(SilexList&&) noexcept = default;
+        \\    SilexList& operator=(SilexList&&) noexcept = default;
         \\
         \\    std::size_t size() const { return values_.size(); }
         \\    bool empty() const { return values_.empty(); }
@@ -443,6 +450,14 @@ pub fn generateWithSources(
         \\    std::vector<T> values_;
         \\};
         \\
+        \\template <typename T, typename... Values>
+        \\SilexList<T> silexMakeList(Values&&... values) {
+        \\    SilexList<T> result;
+        \\    result.reserve(sizeof...(Values));
+        \\    (result.push_back(std::forward<Values>(values)), ...);
+        \\    return result;
+        \\}
+        \\
         \\template <typename T>
         \\void silexTraceValue(const T& value, const SilexTraceVisitor& visit) {
         \\    if constexpr (requires { value.silexTrace(visit); }) value.silexTrace(visit);
@@ -464,7 +479,8 @@ pub fn generateWithSources(
         \\    T value;
         \\    explicit SilexTypedEnumValue(T input) : value(std::move(input)) {}
         \\    std::unique_ptr<SilexEnumValue> clone() const override {
-        \\        return std::make_unique<SilexTypedEnumValue<T>>(value);
+        \\        if constexpr (std::copy_constructible<T>) return std::make_unique<SilexTypedEnumValue<T>>(value);
+        \\        std::abort();
         \\    }
         \\    void trace(const SilexTraceVisitor& visit) const override { silexTraceValue(value, visit); }
         \\    void clear() override { silexClearValue(value); }
@@ -491,6 +507,9 @@ pub fn generateWithSources(
         \\    SilexEnumStorage& operator=(SilexEnumStorage&&) noexcept = default;
         \\    template <typename T> const T& get(std::size_t index) const {
         \\        return static_cast<const SilexTypedEnumValue<T>&>(*values[index]).value;
+        \\    }
+        \\    template <typename T> T& get(std::size_t index) {
+        \\        return static_cast<SilexTypedEnumValue<T>&>(*values[index]).value;
         \\    }
         \\    void silexTrace(const SilexTraceVisitor& visit) const {
         \\        for (const auto& value : values) value->trace(visit);
@@ -848,6 +867,25 @@ pub fn generateWithSources(
         try output.appendSlice(allocator, "struct ");
         try output.appendSlice(allocator, enum_value.generated_name);
         try output.appendSlice(allocator, " : SilexEnumStorage {\n    using SilexEnumStorage::SilexEnumStorage;\n");
+        if (!enum_value.is_copyable) {
+            try output.appendSlice(allocator, "    ");
+            try output.appendSlice(allocator, enum_value.generated_name);
+            try output.appendSlice(allocator, "(const ");
+            try output.appendSlice(allocator, enum_value.generated_name);
+            try output.appendSlice(allocator, "&) = delete;\n    ");
+            try output.appendSlice(allocator, enum_value.generated_name);
+            try output.appendSlice(allocator, "& operator=(const ");
+            try output.appendSlice(allocator, enum_value.generated_name);
+            try output.appendSlice(allocator, "&) = delete;\n    ");
+            try output.appendSlice(allocator, enum_value.generated_name);
+            try output.appendSlice(allocator, "(");
+            try output.appendSlice(allocator, enum_value.generated_name);
+            try output.appendSlice(allocator, "&&) noexcept = default;\n    ");
+            try output.appendSlice(allocator, enum_value.generated_name);
+            try output.appendSlice(allocator, "& operator=(");
+            try output.appendSlice(allocator, enum_value.generated_name);
+            try output.appendSlice(allocator, "&&) noexcept = default;\n");
+        }
         if (enum_value.raw_type) |raw_type| {
             try output.appendSlice(allocator, "    ");
             try appendCppType(allocator, &output, raw_type);
@@ -902,7 +940,7 @@ pub fn generateWithSources(
             try output.appendSlice(allocator, ";\n");
         }
         if (structure.is_owner) try output.appendSlice(allocator, "    bool silexOwnsResource = true;\n");
-        if ((structure.is_class and structure.constructors.len == 0 and structure.implicit_constructor_available) or structure.is_owner) {
+        if ((structure.is_class and structure.constructors.len == 0 and structure.implicit_constructor_available) or structure.is_noncopyable) {
             try output.appendSlice(allocator, "\n    ");
             try output.appendSlice(allocator, structure.generated_name);
             try output.append(allocator, '(');
@@ -934,6 +972,25 @@ pub fn generateWithSources(
             try output.appendSlice(allocator, "\n    ");
             try generateConstructorSignature(allocator, &output, structure.generated_name, constructor, false);
             try output.appendSlice(allocator, ";\n");
+        }
+        if (structure.is_noncopyable and structure.drop == null and !structure.is_class) {
+            try output.appendSlice(allocator, "\n    ");
+            try output.appendSlice(allocator, structure.generated_name);
+            try output.appendSlice(allocator, "(const ");
+            try output.appendSlice(allocator, structure.generated_name);
+            try output.appendSlice(allocator, "&) = delete;\n    ");
+            try output.appendSlice(allocator, structure.generated_name);
+            try output.appendSlice(allocator, "& operator=(const ");
+            try output.appendSlice(allocator, structure.generated_name);
+            try output.appendSlice(allocator, "&) = delete;\n    ");
+            try output.appendSlice(allocator, structure.generated_name);
+            try output.appendSlice(allocator, "(");
+            try output.appendSlice(allocator, structure.generated_name);
+            try output.appendSlice(allocator, "&&) noexcept = default;\n    ");
+            try output.appendSlice(allocator, structure.generated_name);
+            try output.appendSlice(allocator, "& operator=(");
+            try output.appendSlice(allocator, structure.generated_name);
+            try output.appendSlice(allocator, "&&) noexcept = default;\n");
         }
         if (structure.drop != null) {
             if (structure.is_class) {
@@ -1134,6 +1191,7 @@ pub fn generateWithSources(
             try output.appendSlice(allocator, " {\n");
             try generateCapturedParameterBindings(allocator, &output, method.parameters, 1);
             try generateStatements(allocator, &output, method.statements, 1, false);
+            if (method.return_type != .void) try output.appendSlice(allocator, "    std::abort();\n");
             try output.appendSlice(allocator, "}\n\n");
         }
     }
@@ -1144,6 +1202,7 @@ pub fn generateWithSources(
         try generateCapturedParameterBindings(allocator, &output, function.parameters, 1);
         try generateStatements(allocator, &output, function.statements, 1, function.is_main);
         if (function.is_main and function.return_type == .void) try output.appendSlice(allocator, "    return 0;\n");
+        if (function.return_type != .void) try output.appendSlice(allocator, "    std::abort();\n");
         try output.appendSlice(allocator, "}\n\n");
     }
     const main_function = for (program.functions) |function| {
@@ -1691,7 +1750,7 @@ fn generateTryPreludes(
             try indent(allocator, output, indentation);
             try output.appendSlice(allocator, "{\n");
             try indent(allocator, output, indentation);
-            try output.appendSlice(allocator, "    const auto ");
+            try output.appendSlice(allocator, "    auto ");
             try output.appendSlice(allocator, try_value.temporary_name);
             try output.appendSlice(allocator, " = ");
             try generateExpression(allocator, output, try_value.operand);
@@ -1702,19 +1761,20 @@ fn generateTryPreludes(
             try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, ".variant == {d}) return ", .{try_value.failure_variant_index}));
             try output.appendSlice(allocator, try_value.return_enum_generated_name);
             try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{{std::size_t{{{d}}}, ", .{try_value.failure_variant_index}));
+            try output.appendSlice(allocator, "std::move(");
             try output.appendSlice(allocator, try_value.temporary_name);
             try output.appendSlice(allocator, ".get<");
             try appendCppType(allocator, output, try_value.error_type);
-            try output.appendSlice(allocator, ">(0)};\n");
+            try output.appendSlice(allocator, ">(0))};\n");
             if (expression.type != .void) {
                 try indent(allocator, output, indentation);
                 try output.appendSlice(allocator, "    ");
                 try output.appendSlice(allocator, try_value.temporary_name);
-                try output.appendSlice(allocator, "Value.emplace(");
+                try output.appendSlice(allocator, "Value.emplace(std::move(");
                 try output.appendSlice(allocator, try_value.temporary_name);
                 try output.appendSlice(allocator, ".get<");
                 try appendCppType(allocator, output, expression.type);
-                try output.appendSlice(allocator, ">(0));\n");
+                try output.appendSlice(allocator, ">(0)));\n");
             }
             try indent(allocator, output, indentation);
             try output.appendSlice(allocator, "}\n");
@@ -1833,7 +1893,7 @@ fn generateStatement(
                 try generateExpression(allocator, output, declaration.initializer);
                 try output.append(allocator, ')');
             } else {
-                if (declaration.mutability == .immutable and declaration.type != .reference and !isUniqueOwnerType(declaration.type)) {
+                if (declaration.mutability == .immutable and declaration.type != .reference and !declaration.is_noncopyable) {
                     try output.appendSlice(allocator, "const ");
                 }
                 try appendCppType(allocator, output, declaration.type);
@@ -1907,7 +1967,10 @@ fn generateStatement(
                 try output.appendSlice(allocator, "while (true) {\n");
                 try generateTryPreludes(allocator, output, while_statement.condition.binding.source, indentation + 1);
                 try indent(allocator, output, indentation + 1);
-                try output.appendSlice(allocator, "auto ");
+                try output.appendSlice(allocator, switch (binding.mode) {
+                    .copy, .move => "auto ",
+                    .borrow => "const auto& ",
+                });
                 try output.appendSlice(allocator, binding.temporary_name);
                 try output.appendSlice(allocator, " = ");
                 try generateExpression(allocator, output, binding.source);
@@ -1946,7 +2009,7 @@ fn generateStatement(
                     try indent(allocator, output, indentation);
                     try output.appendSlice(allocator, "for (");
                     try output.appendSlice(allocator, switch (for_statement.binding) {
-                        .read => "auto ",
+                        .read => if (for_statement.element_noncopyable) "const auto& " else "auto ",
                         .immutable => "const auto& ",
                         .mutable => "auto& ",
                     });
@@ -2028,16 +2091,20 @@ fn generateMatchBindings(
             try appendCppType(allocator, output, binding.type);
             try output.appendSlice(allocator, ">>(");
         } else {
-            if (binding.mutability == .immutable) try output.appendSlice(allocator, "const ");
+            if (match_value.mode == .borrow) try output.appendSlice(allocator, "const ");
+            if (binding.mutability == .immutable and match_value.mode == .copy) try output.appendSlice(allocator, "const ");
             try appendCppType(allocator, output, binding.type);
+            if (match_value.mode == .borrow) try output.append(allocator, '&');
             try output.append(allocator, ' ');
             try output.appendSlice(allocator, binding.generated_name);
             try output.appendSlice(allocator, " = ");
         }
+        if (match_value.mode == .move) try output.appendSlice(allocator, "std::move(");
         try output.appendSlice(allocator, match_value.temporary_name);
         try output.appendSlice(allocator, ".get<");
         try appendCppType(allocator, output, binding.type);
         try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, ">({d})", .{binding_index}));
+        if (match_value.mode == .move) try output.append(allocator, ')');
         if (binding.capture_box.*) try output.append(allocator, ')');
         try output.appendSlice(allocator, if (multiline) ";\n" else "; ");
     }
@@ -2054,7 +2121,11 @@ fn generateImperativeMatch(
     try output.appendSlice(allocator, "{\n");
     try generateTryPreludes(allocator, output, match_value.subject, indentation + 1);
     try indent(allocator, output, indentation + 1);
-    try output.appendSlice(allocator, "const auto ");
+    try output.appendSlice(allocator, switch (match_value.mode) {
+        .copy => "const auto ",
+        .move => "auto ",
+        .borrow => "const auto& ",
+    });
     try output.appendSlice(allocator, match_value.temporary_name);
     try output.appendSlice(allocator, " = ");
     try generateExpression(allocator, output, match_value.subject);
@@ -2143,7 +2214,10 @@ fn generateIntegerRangeStatement(
 fn generateCondition(allocator: Allocator, output: *std.ArrayList(u8), condition: Semantic.Statement.Condition) !void {
     if (condition == .binding) {
         const binding = condition.binding;
-        try output.appendSlice(allocator, "(auto ");
+        try output.appendSlice(allocator, switch (binding.mode) {
+            .copy, .move => "(auto ",
+            .borrow => "(const auto& ",
+        });
         try output.appendSlice(allocator, binding.temporary_name);
         try output.appendSlice(allocator, " = ");
         try generateExpression(allocator, output, binding.source);
@@ -2177,12 +2251,15 @@ fn generateConditionalBindingDeclaration(
         try output.appendSlice(allocator, binding.temporary_name);
         try output.append(allocator, ')');
     } else {
-        if (binding.mutability == .immutable) try output.appendSlice(allocator, "const ");
+        if (binding.mode == .borrow) try output.appendSlice(allocator, "const ");
+        if (binding.mutability == .immutable and binding.mode == .copy) try output.appendSlice(allocator, "const ");
         try appendCppType(allocator, output, binding.type);
+        if (binding.mode == .borrow) try output.append(allocator, '&');
         try output.append(allocator, ' ');
         try output.appendSlice(allocator, binding.generated_name);
-        try output.appendSlice(allocator, " = *");
+        try output.appendSlice(allocator, if (binding.mode == .move) " = std::move(*" else " = *");
         try output.appendSlice(allocator, binding.temporary_name);
+        if (binding.mode == .move) try output.append(allocator, ')');
     }
     try output.appendSlice(allocator, ";\n");
 }
@@ -2226,13 +2303,19 @@ fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expressi
             try output.append(allocator, ')');
         },
         .sequence_literal => |values| {
-            try appendCppType(allocator, output, expression.type);
-            try output.append(allocator, '{');
+            if (expression.type == .list) {
+                try output.appendSlice(allocator, "silexMakeList<");
+                try appendCppType(allocator, output, expression.type.list.*);
+                try output.appendSlice(allocator, ">(");
+            } else {
+                try appendCppType(allocator, output, expression.type);
+                try output.append(allocator, '{');
+            }
             for (values, 0..) |value, index| {
                 if (index != 0) try output.appendSlice(allocator, ", ");
                 try generateExpression(allocator, output, value);
             }
-            try output.append(allocator, '}');
+            try output.append(allocator, if (expression.type == .list) ')' else '}');
         },
         .cascade_target => try output.appendSlice(allocator, "silexCascadeValue"),
         .cascade => |cascade| {
@@ -2552,7 +2635,12 @@ fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expressi
             try output.appendSlice(allocator, ".rawValue()");
         },
         .match_expression => |match_value| {
-            try output.appendSlice(allocator, "([&]() { const auto ");
+            try output.appendSlice(allocator, "([&]() { ");
+            try output.appendSlice(allocator, switch (match_value.mode) {
+                .copy => "const auto ",
+                .move => "auto ",
+                .borrow => "const auto& ",
+            });
             try output.appendSlice(allocator, match_value.temporary_name);
             try output.appendSlice(allocator, " = ");
             try generateExpression(allocator, output, match_value.subject);
@@ -2950,10 +3038,6 @@ fn appendCppParameterType(
 
 fn isClassType(type_name: Semantic.Type) bool {
     return type_name == .structure and type_name.structure.is_class;
-}
-
-fn isUniqueOwnerType(type_name: Semantic.Type) bool {
-    return type_name == .structure and type_name.structure.is_owner;
 }
 
 fn silexTypeName(type_name: Semantic.Type) []const u8 {

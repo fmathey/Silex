@@ -59,6 +59,13 @@ while (var position = find_position()) {
 }
 ```
 
+A noncopyable optional is extracted explicitly. `if var value = move source`
+consumes the complete optional whether it is present or `null`; the binding owns
+the present value. `if value = borrow source` leaves the optional intact and
+creates a read-only binding limited to the body. A fresh optional temporary is
+consumed directly. Safe non-mutating access borrows a present value for the
+duration of that access.
+
 An `if` source is evaluated once if its branch is reached. A `while` source is
 evaluated once before every attempt, including after `continue`; `null` ends
 the loop and `break` does not evaluate the source again.

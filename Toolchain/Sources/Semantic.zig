@@ -6,6 +6,12 @@ const Allocator = std.mem.Allocator;
 const AnalyzeError = Source.Error || Allocator.Error;
 const never_capture_box = false;
 
+pub const TransferMode = enum {
+    copy,
+    move,
+    borrow,
+};
+
 pub const Type = union(enum) {
     void,
     int,
@@ -283,6 +289,7 @@ pub const Expression = struct {
     pub const Match = struct {
         subject: *Expression,
         temporary_name: []const u8,
+        mode: TransferMode,
         branches: []const Branch,
 
         pub const Branch = struct {
@@ -370,6 +377,7 @@ pub const Statement = union(enum) {
     pub const VariableDeclaration = struct {
         generated_name: []const u8,
         type: Type,
+        is_noncopyable: bool,
         mutability: Ast.Mutability,
         initializer: *Expression,
         capture_box: *const bool,
@@ -409,6 +417,7 @@ pub const Statement = union(enum) {
         temporary_name: []const u8,
         generated_name: []const u8,
         type: Type,
+        mode: TransferMode,
         mutability: Ast.Mutability,
         capture_box: *const bool,
     };
@@ -416,6 +425,7 @@ pub const Statement = union(enum) {
     pub const For = struct {
         generated_name: []const u8,
         element_type: Type,
+        element_noncopyable: bool,
         binding: Ast.IterationBinding,
         source: IterationSource,
         body: []const Statement,
@@ -466,6 +476,7 @@ pub const ProtocolConformance = struct {
 pub const Enum = struct {
     generated_name: []const u8,
     raw_type: ?Type,
+    is_copyable: bool,
     variants: []const EnumVariant,
 };
 
@@ -478,6 +489,7 @@ pub const Structure = struct {
     generated_name: []const u8,
     is_class: bool,
     is_owner: bool = false,
+    is_noncopyable: bool,
     equality_comparable: bool,
     protocol_conformances: []const ProtocolConformance,
     base: ?StructureType,
@@ -812,6 +824,7 @@ pub const Analyzer = struct {
         try self.collectProtocols(program.protocols);
         try self.collectStructures(program.structures);
         try self.collectEnumVariants(program.enums);
+        try self.validateNoncopyableStaticFields();
         try self.collectFunctions(program.functions);
         try self.validateStructureDefaults();
         var enums: std.ArrayList(Enum) = .empty;
@@ -824,6 +837,10 @@ pub const Analyzer = struct {
             try enums.append(self.allocator, .{
                 .generated_name = symbol.generated_name,
                 .raw_type = symbol.raw_type,
+                .is_copyable = !try self.isNonCopyableType(.{ .enumeration = .{
+                    .source_name = symbol.source_name,
+                    .generated_name = symbol.generated_name,
+                } }),
                 .variants = try variants.toOwnedSlice(self.allocator),
             });
         }
@@ -895,6 +912,7 @@ pub const Analyzer = struct {
                 .generated_name = symbol.generated_name,
                 .is_class = symbol.is_class,
                 .is_owner = symbol.is_owner,
+                .is_noncopyable = !symbol.is_class and try self.isNonCopyableType(.{ .structure = self.structureType(structure_index) }),
                 .equality_comparable = self.isEqualityComparable(.{ .structure = self.structureType(structure_index) }),
                 .protocol_conformances = try self.protocolConformances(structure_index),
                 .base = if (symbol.base_index) |base_index| self.structureType(base_index) else null,
@@ -989,6 +1007,16 @@ pub const Analyzer = struct {
                 });
             }
             self.enums.items[enum_index].variants = try variants.toOwnedSlice(self.allocator);
+        }
+    }
+
+    fn validateNoncopyableStaticFields(self: *Analyzer) AnalyzeError!void {
+        for (self.structures.items) |structure| {
+            for (structure.static_fields) |field| {
+                if (try self.isNonCopyableType(field.type)) {
+                    return self.fail(field.position, "a static field cannot own a noncopyable value");
+                }
+            }
         }
     }
 
@@ -1103,6 +1131,9 @@ pub const Analyzer = struct {
                 else
                     "a struct field cannot have a reference type");
                 try self.rejectUniqueOwnerComposition(field_type, false, field.position);
+                if (field.is_static and try self.isNonCopyableType(field_type)) {
+                    return self.fail(field.position, "a static field cannot own a noncopyable value");
+                }
                 if (field_type == .structure and !field_type.structure.is_class) {
                     const dependency_index = self.findStructureIndex(field_type.structure.source_name).?;
                     if (dependency_index >= structure_index) {
@@ -2367,10 +2398,10 @@ pub const Analyzer = struct {
             return self.fail(if (declaration.initializer) |value| value.position else declaration.name_position, message);
         }
         try self.rejectUniqueOwnerComposition(declared_type, true, declaration.name_position);
-        if (isUniqueOwnerType(declared_type) and !isUniqueOwnerTemporary(initializer)) {
+        if (try self.isNonCopyableType(declared_type) and !self.isNonCopyableTemporary(initializer)) {
             const message = try std.fmt.allocPrint(
                 self.allocator,
-                "cannot copy unique resource '{s}'; initialize it directly from a temporary value",
+                "cannot copy noncopyable value '{s}'; initialize it directly from a temporary value or use 'move'",
                 .{typeName(declared_type)},
             );
             return self.fail(if (declaration.initializer) |value| value.position else declaration.name_position, message);
@@ -2416,6 +2447,7 @@ pub const Analyzer = struct {
         return .{ .variable_declaration = .{
             .generated_name = generated_name,
             .type = declared_type,
+            .is_noncopyable = try self.isNonCopyableType(declared_type),
             .mutability = declaration.mutability,
             .initializer = initializer,
             .capture_box = &state.capture_box,
@@ -2524,7 +2556,7 @@ pub const Analyzer = struct {
 
         if (ast.target.value == .identifier) {
             const symbol = findSymbol(scope, ast.target.value.identifier).?;
-            if (isUniqueOwnerType(symbol.type)) return self.uniqueOwnerAssignment(ast, symbol, scope);
+            if (try self.isNonCopyableType(symbol.type)) return self.uniqueOwnerAssignment(ast, symbol, scope);
         }
 
         const target = prepared_target orelse if (ast.target.value == .identifier and findSymbol(scope, ast.target.value.identifier) != null and
@@ -2543,15 +2575,6 @@ pub const Analyzer = struct {
         else
             try self.expression(ast.target, scope);
 
-        if (isUniqueOwnerType(target.type)) {
-            const message = try std.fmt.allocPrint(
-                self.allocator,
-                "cannot assign unique resource '{s}' before explicit transfer is available",
-                .{typeName(target.type)},
-            );
-            return self.fail(ast.position, message);
-        }
-
         if (target.value == .enum_raw_value) return self.fail(ast.position, "enum property 'raw_value' is read-only");
 
         if (self.immutableFieldInPlace(target)) |field_candidate| {
@@ -2569,6 +2592,22 @@ pub const Analyzer = struct {
 
         var value: ?*Expression = null;
         if (ast.value) |ast_value| value = try self.expressionForExpected(ast_value, scope, target.type);
+
+        if (try self.isNonCopyableType(target.type)) {
+            if (ast.operator != .assign) {
+                const message = try std.fmt.allocPrint(self.allocator, "operator '{s}' is not available for noncopyable value '{s}'", .{ assignmentOperatorText(ast.operator), typeName(target.type) });
+                return self.fail(ast.position, message);
+            }
+            value = try self.coerce(value.?, target.type);
+            if (!typeEqual(target.type, value.?.type)) {
+                const message = try typeMismatchMessage(self.allocator, target.type, value.?.type);
+                return self.fail(ast.value.?.position, message);
+            }
+            if (!self.isNonCopyableTemporary(value.?)) {
+                const message = try std.fmt.allocPrint(self.allocator, "noncopyable value '{s}' must be assigned from a temporary or with 'move'", .{typeName(target.type)});
+                return self.fail(ast.value.?.position, message);
+            }
+        }
 
         return self.checkedAssignment(ast, target, value, scope);
     }
@@ -2601,10 +2640,10 @@ pub const Analyzer = struct {
             const message = try typeMismatchMessage(self.allocator, symbol.type, value.type);
             return self.fail(ast_value.position, message);
         }
-        if (!isUniqueOwnerTemporary(value)) {
+        if (!self.isNonCopyableTemporary(value)) {
             const message = try std.fmt.allocPrint(
                 self.allocator,
-                "unique resource '{s}' must be assigned from a temporary or with 'move'",
+                "noncopyable value '{s}' must be assigned from a temporary or with 'move'",
                 .{typeName(symbol.type)},
             );
             return self.fail(ast_value.position, message);
@@ -2706,7 +2745,7 @@ pub const Analyzer = struct {
         var current: ?*const Scope = scope;
         while (current) |visible_scope| : (current = visible_scope.parent) {
             for (visible_scope.symbols.items) |symbol| {
-                if (!isUniqueOwnerType(symbol.type)) continue;
+                if (!try self.isNonCopyableType(symbol.type)) continue;
                 try snapshots.append(self.allocator, .{
                     .name = symbol.source_name,
                     .state = symbol.state,
@@ -2879,9 +2918,26 @@ pub const Analyzer = struct {
             },
             .binding => |binding| binding_condition: {
                 try self.requireAvailableVariableName(body_scope, binding.name, binding.name_position);
-                const source = try self.expression(binding.source, parent_scope);
+                const mode: TransferMode = if (binding.source.value == .move_expression)
+                    .move
+                else if (binding.source.value == .borrow_expression)
+                    .borrow
+                else
+                    .copy;
+                if (mode == .borrow and binding.mutability == .mutable) {
+                    return self.fail(binding.name_position, "a binding extracted with 'borrow' is read-only and cannot use 'var'");
+                }
+                const source = switch (mode) {
+                    .copy => try self.expression(binding.source, parent_scope),
+                    .move => try self.moveExpression(binding.source.value.move_expression, parent_scope),
+                    .borrow => try self.readBorrowValue(binding.source.value.borrow_expression, parent_scope, null),
+                };
                 if (source.type != .optional) return self.fail(binding.source.position, "conditional binding source must have an optional type");
-                if (binding.mutability == .immutable) {
+                const noncopyable = try self.isNonCopyableType(source.type);
+                if (noncopyable and mode == .copy and !self.isNonCopyableTemporary(source)) {
+                    return self.fail(binding.source.position, "a named noncopyable optional must be extracted with 'move' or 'borrow'");
+                }
+                if (binding.mutability == .immutable and mode == .copy) {
                     try self.requireIndependentLetType(source.type.optional.*, binding.name_position);
                 }
                 const generated_name = try std.fmt.allocPrint(self.allocator, "silexValue{d}", .{self.next_symbol_id});
@@ -2889,11 +2945,16 @@ pub const Analyzer = struct {
                 const temporary_name = try std.fmt.allocPrint(self.allocator, "silexOptional{d}", .{self.next_symbol_id});
                 self.next_symbol_id += 1;
                 const state = try self.newBindingState(source.type.optional.*);
+                state.borrowed_parameter = mode == .borrow;
+                if (mode == .borrow and source.owns_borrow) {
+                    try body_scope.borrows.append(self.allocator, source.borrow.?);
+                    source.owns_borrow = false;
+                }
                 try body_scope.symbols.append(self.allocator, .{
                     .source_name = binding.name,
                     .generated_name = generated_name,
                     .type = source.type.optional.*,
-                    .mutability = binding.mutability,
+                    .mutability = if (mode == .borrow) .immutable else binding.mutability,
                     .state = state,
                     .scope_depth = body_scope.depth,
                     .control_binding = true,
@@ -2903,7 +2964,8 @@ pub const Analyzer = struct {
                     .temporary_name = temporary_name,
                     .generated_name = generated_name,
                     .type = source.type.optional.*,
-                    .mutability = binding.mutability,
+                    .mode = mode,
+                    .mutability = if (mode == .borrow) .immutable else binding.mutability,
                     .capture_box = &state.capture_box,
                 } };
             },
@@ -3028,6 +3090,10 @@ pub const Analyzer = struct {
 
         const tracked = try self.snapshotOwnerStates(parent_scope);
 
+        const element_noncopyable = try self.isNonCopyableType(element_type);
+        if (ast.binding == .immutable and element_noncopyable) {
+            return self.fail(ast.name_position, "'for let' would copy a noncopyable element; use the read loop or 'for var'");
+        }
         if (ast.binding == .immutable) {
             try self.requireIndependentLetType(element_type, ast.name_position);
         }
@@ -3035,6 +3101,7 @@ pub const Analyzer = struct {
         const generated_name = try std.fmt.allocPrint(self.allocator, "silexValue{d}", .{symbol_id});
         self.next_symbol_id += 1;
         const state = try self.newBindingState(element_type);
+        state.borrowed_parameter = element_noncopyable and ast.binding == .read;
         try body_scope.symbols.append(self.allocator, .{
             .source_name = ast.name,
             .generated_name = generated_name,
@@ -3069,6 +3136,7 @@ pub const Analyzer = struct {
         return .{ .for_statement = .{
             .generated_name = generated_name,
             .element_type = element_type,
+            .element_noncopyable = element_noncopyable,
             .binding = ast.binding,
             .source = source,
             .body = body,
@@ -3096,10 +3164,10 @@ pub const Analyzer = struct {
             if (value.lifetime_depth != 0) {
                 return self.fail(ast.position, "capturing function value cannot be returned from its lexical scope");
             }
-            if (isUniqueOwnerType(value.type) and !isUniqueOwnerTemporary(value)) {
+            if (try self.isNonCopyableType(value.type) and !self.isNonCopyableTemporary(value)) {
                 const message = try std.fmt.allocPrint(
                     self.allocator,
-                    "named unique resource '{s}' must be returned with 'move'",
+                    "named noncopyable value '{s}' must be returned with 'move'",
                     .{typeName(value.type)},
                 );
                 return self.fail(ast.position, message);
@@ -3281,6 +3349,7 @@ pub const Analyzer = struct {
                 const message = try typeMismatchMessage(self.allocator, element_type, value.type);
                 return self.fail(ast_value.position, message);
             }
+            try self.rejectUniqueOwnerArgument(value, ast_value.position);
             try values.append(self.allocator, value);
             lifetime_depth = @max(lifetime_depth, value.lifetime_depth);
         }
@@ -3409,11 +3478,11 @@ pub const Analyzer = struct {
             const message = try std.fmt.allocPrint(self.allocator, "unknown variable '{s}'", .{name});
             return self.fail(position, message);
         };
-        if (isUniqueOwnerType(symbol.type) and !symbol.state.owner_available) {
+        if (try self.isNonCopyableType(symbol.type) and !symbol.state.owner_available) {
             const consumed_at = symbol.state.consumed_at.?;
             const message = try std.fmt.allocPrint(
                 self.allocator,
-                "unique resource '{s}' was consumed by 'move' at {d}:{d}",
+                "noncopyable value '{s}' was consumed by 'move' at {d}:{d}",
                 .{ name, consumed_at.line, consumed_at.column },
             );
             return self.fail(position, message);
@@ -3442,10 +3511,10 @@ pub const Analyzer = struct {
         const structure_index = self.current_structure_index orelse return self.fail(position, "'self' is only available inside a method or constructor");
         if (self.current_self_state.mutable_borrow) return self.fail(position, "cannot access 'self' while one of its collections is mutably iterated");
         const structure = self.structures.items[structure_index];
-        if (self.current_lambda != null and structure.is_owner) {
+        if (self.current_lambda != null and try self.isNonCopyableType(.{ .structure = self.structureType(structure_index) })) {
             const message = try std.fmt.allocPrint(
                 self.allocator,
-                "unique resource '{s}' cannot be captured by a lambda",
+                "noncopyable value '{s}' cannot be captured by a lambda",
                 .{structure.source_name},
             );
             return self.fail(position, message);
@@ -3607,8 +3676,8 @@ pub const Analyzer = struct {
                     }
                     break :equality .bool;
                 }
-                if (isUniqueOwnerType(left.type) or isUniqueOwnerType(right.type)) {
-                    const owner_type = if (isUniqueOwnerType(left.type)) left.type else right.type;
+                if (try self.isNonCopyableType(left.type) or try self.isNonCopyableType(right.type)) {
+                    const owner_type = if (try self.isNonCopyableType(left.type)) left.type else right.type;
                     const message = try std.fmt.allocPrint(
                         self.allocator,
                         "type '{s}' does not support equality",
@@ -4239,6 +4308,7 @@ pub const Analyzer = struct {
                 );
                 return self.fail(argument.position, message);
             }
+            try self.rejectUniqueOwnerArgument(value, argument.position);
             try arguments.append(self.allocator, value);
             lifetime_depth = @max(lifetime_depth, value.lifetime_depth);
             self.releaseTransientBorrow(value);
@@ -4260,10 +4330,35 @@ pub const Analyzer = struct {
         ast_match: Ast.Expression.Match,
         parent_scope: *const Scope,
     ) AnalyzeError!*Expression {
-        const subject = try self.expression(ast_match.subject, parent_scope);
+        var mode: TransferMode = if (ast_match.subject.value == .move_expression)
+            .move
+        else if (ast_match.subject.value == .borrow_expression)
+            .borrow
+        else
+            .copy;
+        const subject = switch (mode) {
+            .copy => try self.expression(ast_match.subject, parent_scope),
+            .move => move_subject: {
+                const move_value = ast_match.subject.value.move_expression;
+                if (move_value.operand.value == .identifier) {
+                    if (findSymbol(parent_scope, move_value.operand.value.identifier)) |symbol| {
+                        if (try self.isNonCopyableType(symbol.type)) break :move_subject try self.moveExpression(move_value, parent_scope);
+                    }
+                }
+                break :move_subject try self.expression(move_value.operand, parent_scope);
+            },
+            .borrow => try self.readBorrowValue(ast_match.subject.value.borrow_expression, parent_scope, null),
+        };
         if (subject.type != .enumeration) {
             const message = try std.fmt.allocPrint(self.allocator, "match requires an enum value, found '{s}'", .{typeName(subject.type)});
             return self.fail(ast_match.subject.position, message);
+        }
+        if (try self.isNonCopyableType(subject.type) and mode == .copy) {
+            if (self.isNonCopyableTemporary(subject)) {
+                mode = .move;
+            } else {
+                return self.fail(ast_match.subject.position, "a named noncopyable enum must be matched with 'match move' or 'match borrow'");
+            }
         }
         const enum_symbol = self.findEnumByGeneratedName(subject.type.enumeration.generated_name).?;
         const temporary_name = try std.fmt.allocPrint(self.allocator, "silexMatch{d}", .{self.next_symbol_id});
@@ -4317,15 +4412,19 @@ pub const Analyzer = struct {
             var bindings: std.ArrayList(Expression.Match.Binding) = .empty;
             for (ast_branch.bindings, associated_types) |ast_binding, binding_type| {
                 try self.requireAvailableVariableName(&branch_scope, ast_binding.name, ast_binding.position);
-                if (ast_binding.mutability == .immutable) try self.requireIndependentLetType(binding_type, ast_binding.position);
+                if (mode == .borrow and ast_binding.mutability == .mutable) {
+                    return self.fail(ast_binding.position, "a match binding extracted with 'borrow' is read-only and cannot use 'var'");
+                }
+                if (ast_binding.mutability == .immutable and mode == .copy) try self.requireIndependentLetType(binding_type, ast_binding.position);
                 const generated_name = try std.fmt.allocPrint(self.allocator, "silexValue{d}", .{self.next_symbol_id});
                 self.next_symbol_id += 1;
                 const state = try self.newBindingState(binding_type);
+                state.borrowed_parameter = mode == .borrow;
                 try branch_scope.symbols.append(self.allocator, .{
                     .source_name = ast_binding.name,
                     .generated_name = generated_name,
                     .type = binding_type,
-                    .mutability = ast_binding.mutability,
+                    .mutability = if (mode == .borrow) .immutable else ast_binding.mutability,
                     .state = state,
                     .scope_depth = branch_scope.depth,
                     .control_binding = true,
@@ -4333,7 +4432,7 @@ pub const Analyzer = struct {
                 try bindings.append(self.allocator, .{
                     .generated_name = generated_name,
                     .type = binding_type,
-                    .mutability = ast_binding.mutability,
+                    .mutability = if (mode == .borrow) .immutable else ast_binding.mutability,
                     .capture_box = &state.capture_box,
                 });
             }
@@ -4397,6 +4496,7 @@ pub const Analyzer = struct {
             .value = .{ .match_expression = .{
                 .subject = subject,
                 .temporary_name = temporary_name,
+                .mode = mode,
                 .branches = try branches.toOwnedSlice(self.allocator),
             } },
         });
@@ -4704,6 +4804,9 @@ pub const Analyzer = struct {
                     if (range_type == .reference) range_type = range_type.reference.target.*;
                     if (sequenceElementType(range_type)) |range_element| {
                         if (typeEqual(range_element, element_type.?)) {
+                            if (try self.isNonCopyableType(element_type.?)) {
+                                return self.fail(argument.position, "appending a range would copy noncopyable elements; append them individually with 'move'");
+                            }
                             if (value.type == .reference) {
                                 value = try self.newExpression(.{
                                     .type = range_type,
@@ -5367,6 +5470,7 @@ pub const Analyzer = struct {
                 const position = if (matching) |field| field.value.position else initializer.name_position;
                 return self.fail(position, message);
             }
+            if (matching) |field| try self.rejectUniqueOwnerArgument(value, field.value.position);
             try values.append(self.allocator, value);
             lifetime_depth = @max(lifetime_depth, value.lifetime_depth);
         }
@@ -5679,10 +5783,10 @@ pub const Analyzer = struct {
         if (type_value == .protocol and mode == .borrow) {
             return self.fail(position, "a dynamic protocol value cannot be passed with 'borrow'");
         }
-        if (isUniqueOwnerType(type_value) and mode == .mutable_reference) {
+        if (try self.isNonCopyableType(type_value) and mode == .mutable_reference) {
             const message = try std.fmt.allocPrint(
                 self.allocator,
-                "unique resource '{s}' cannot be passed with '&'",
+                "noncopyable value '{s}' cannot be passed with '&'; use 'borrow' for read-only access",
                 .{typeName(type_value)},
             );
             return self.fail(position, message);
@@ -5694,10 +5798,10 @@ pub const Analyzer = struct {
         value: *const Expression,
         position: Source.Position,
     ) AnalyzeError!void {
-        if (!isUniqueOwnerType(value.type) or isUniqueOwnerTemporary(value)) return;
+        if (!try self.isNonCopyableType(value.type) or self.isNonCopyableTemporary(value)) return;
         const message = try std.fmt.allocPrint(
             self.allocator,
-            "unique resource '{s}' must be passed with 'move'",
+            "noncopyable value '{s}' must be passed with 'move'",
             .{typeName(value.type)},
         );
         return self.fail(position, message);
@@ -5709,20 +5813,40 @@ pub const Analyzer = struct {
         allow_direct_owner: bool,
         position: Source.Position,
     ) AnalyzeError!void {
-        if (allow_direct_owner and isUniqueOwnerType(type_value)) return;
-        const owner = try self.uniqueOwnerCause(type_value) orelse return;
-        const message = try std.fmt.allocPrint(
-            self.allocator,
-            "type '{s}' cannot contain unique resource '{s}' before unique-resource composition is available",
-            .{ typeName(type_value), owner.source_name },
-        );
-        return self.fail(position, message);
+        _ = self;
+        _ = type_value;
+        _ = allow_direct_owner;
+        _ = position;
     }
 
     fn uniqueOwnerCause(self: *const Analyzer, type_value: Type) Allocator.Error!?StructureType {
         var visiting = std.StringHashMap(void).init(self.allocator);
         defer visiting.deinit();
         return self.uniqueOwnerCauseInner(type_value, &visiting);
+    }
+
+    fn isNonCopyableType(self: *const Analyzer, type_value: Type) Allocator.Error!bool {
+        return (try self.uniqueOwnerCause(type_value)) != null;
+    }
+
+    fn isNonCopyableTemporary(self: *const Analyzer, expression_value: *const Expression) bool {
+        return switch (expression_value.value) {
+            .move_expression,
+            .structure_initializer,
+            .enum_initializer,
+            .sequence_literal,
+            .call,
+            .value_call,
+            .method_call,
+            .static_method_call,
+            .class_initializer,
+            .match_expression,
+            .try_expression,
+            .collection_method,
+            => true,
+            .optional_wrap => |value| self.isNonCopyableTemporary(value),
+            else => false,
+        };
     }
 
     fn uniqueOwnerCauseInner(
@@ -6153,10 +6277,10 @@ pub const Analyzer = struct {
             const message = try std.fmt.allocPrint(self.allocator, "unknown variable '{s}'", .{name});
             return self.fail(move_value.operand.position, message);
         };
-        if (!isUniqueOwnerType(symbol.type)) {
+        if (!try self.isNonCopyableType(symbol.type) and !symbol.control_binding) {
             const message = try std.fmt.allocPrint(
                 self.allocator,
-                "'move' requires a unique resource, found '{s}'",
+                "'move' requires a noncopyable value, found '{s}'",
                 .{typeName(symbol.type)},
             );
             return self.fail(move_value.operator_position, message);
@@ -6166,11 +6290,13 @@ pub const Analyzer = struct {
         }
         const operand = try self.variableExpression(move_value.operand.position, name, scope);
         if (symbol.state.immutable_borrows != 0 or symbol.state.mutable_borrow or symbol.state.transient_mutable_borrows != 0) {
-            const message = try std.fmt.allocPrint(self.allocator, "cannot move borrowed unique resource '{s}'", .{name});
+            const message = try std.fmt.allocPrint(self.allocator, "cannot move borrowed noncopyable value '{s}'", .{name});
             return self.fail(move_value.operator_position, message);
         }
-        symbol.state.owner_available = false;
-        symbol.state.consumed_at = move_value.operator_position;
+        if (try self.isNonCopyableType(symbol.type)) {
+            symbol.state.owner_available = false;
+            symbol.state.consumed_at = move_value.operator_position;
+        }
         return self.newExpression(.{
             .type = symbol.type,
             .position = move_value.operator_position,
@@ -6227,6 +6353,9 @@ pub const Analyzer = struct {
             );
             return self.fail(try_value.operator_position, message);
         };
+        if (try self.isNonCopyableType(operand.type) and !self.isNonCopyableTemporary(operand)) {
+            return self.fail(try_value.operator_position, "a named noncopyable Result must be consumed with 'try move result'");
+        }
         if (!typeEqual(operand_shape.error_type, return_shape.error_type)) {
             const message = try std.fmt.allocPrint(
                 self.allocator,
@@ -6275,7 +6404,15 @@ pub const Analyzer = struct {
         if (argument.value != .borrow_expression) {
             return self.fail(argument.position, "a parameter declared with 'borrow' requires an argument written as 'borrow value'");
         }
-        const borrow_value = argument.value.borrow_expression;
+        return self.readBorrowValue(argument.value.borrow_expression, scope, expected_type);
+    }
+
+    fn readBorrowValue(
+        self: *Analyzer,
+        borrow_value: Ast.Expression.Borrow,
+        scope: *const Scope,
+        expected_type: ?Type,
+    ) AnalyzeError!*Expression {
         var root: ?*BindingState = null;
         if (assignmentRoot(borrow_value.operand)) |assignment_root| switch (assignment_root) {
             .static => {},
@@ -6294,8 +6431,10 @@ pub const Analyzer = struct {
             }
         }
         var operand = try self.expressionForExpected(borrow_value.operand, scope, expected_type);
-        operand = try self.coerce(operand, expected_type);
-        if (!typeEqual(operand.type, expected_type)) return operand;
+        if (expected_type) |expected| {
+            operand = try self.coerce(operand, expected);
+            if (!typeEqual(operand.type, expected)) return operand;
+        }
         const borrow = Borrow{ .root = root, .mutable = false };
         if (root) |state| state.immutable_borrows += 1;
         return self.newExpression(.{
@@ -6481,10 +6620,10 @@ pub const Analyzer = struct {
             return expression_value;
         }
         if (target_type == .protocol and expression_value.type == .structure) {
-            if (expression_value.type.structure.is_owner) {
+            if (try self.isNonCopyableType(expression_value.type)) {
                 const message = try std.fmt.allocPrint(
                     self.allocator,
-                    "unique resource '{s}' cannot be converted to dynamic protocol value '{s}'",
+                    "noncopyable value '{s}' cannot be converted to dynamic protocol value '{s}'",
                     .{ expression_value.type.structure.source_name, target_type.protocol.source_name },
                 );
                 return self.fail(expression_value.position, message);
@@ -6637,10 +6776,10 @@ pub const Analyzer = struct {
                 if (symbol.state.borrowed_parameter) {
                     return self.fail(position, "a 'borrow' parameter cannot be captured by a lambda");
                 }
-                if (isUniqueOwnerType(symbol.type)) {
+                if (try self.isNonCopyableType(symbol.type)) {
                     const message = try std.fmt.allocPrint(
                         self.allocator,
-                        "unique resource '{s}' cannot be captured by a lambda",
+                        "noncopyable value '{s}' cannot be captured by a lambda",
                         .{typeName(symbol.type)},
                     );
                     return self.fail(position, message);
@@ -7176,14 +7315,6 @@ fn appendUnicodeScalar(allocator: Allocator, output: *std.ArrayList(u8), scalar:
 
 fn isUniqueOwnerType(type_value: Type) bool {
     return type_value == .structure and type_value.structure.is_owner;
-}
-
-fn isUniqueOwnerTemporary(expression: *const Expression) bool {
-    if (!isUniqueOwnerType(expression.type)) return false;
-    return switch (expression.value) {
-        .structure_initializer, .call, .value_call, .method_call, .static_method_call, .move_expression => true,
-        else => false,
-    };
 }
 
 fn typeEqual(left: Type, right: Type) bool {
@@ -8363,7 +8494,7 @@ test "unique resource structures initialize local owners directly" {
     );
 }
 
-test "unique resource structures reject implicit transfer and composition" {
+test "noncopyable values compose through fields enums optionals collections classes and generics" {
     const declaration =
         \\struct Resource {
         \\    let handle:int
@@ -8372,49 +8503,114 @@ test "unique resource structures reject implicit transfer and composition" {
         \\}
     ;
 
+    try expectSemanticSuccess(declaration ++
+        \\struct Holder { var resource:Resource }
+        \\class Owner { pub var resource:Resource }
+        \\enum Slot { full(Holder); empty }
+        \\func consume(value:Resource) {}
+        \\func consume_holder(value:Holder) {}
+        \\func inspect(borrow value:Resource) {}
+        \\func main() {
+        \\    let holder = Holder(resource:Resource.open(1))
+        \\    inspect(borrow holder.resource)
+        \\    var optional:Resource? = Resource.open(3)
+        \\    if value = borrow optional { inspect(borrow value) }
+        \\    if var value = move optional { consume(move value) }
+        \\    var slot = Slot.full(Holder(resource:Resource.open(4)))
+        \\    match borrow slot { full(value) => { inspect(borrow value.resource) }; empty => {} }
+        \\    match move slot { full(var value) => { consume_holder(move value) }; empty => {} }
+        \\    var values:Resource[] = []
+        \\    values.append(Resource.open(5))
+        \\    let resource = Resource.open(6)
+        \\    values.append(move resource)
+        \\    for value in values { inspect(borrow value) }
+        \\    for var value in values { inspect(borrow value) }
+        \\    consume(values.take_first())
+        \\    consume(values.replace(0, Resource.open(7)))
+        \\    consume(values.take_last())
+        \\    var owner = Owner(resource:Resource.open(8))
+        \\    inspect(borrow owner.resource)
+        \\}
+    );
+    try expectSemanticSuccess(
+        \\protocol Readable { func value() int }
+        \\struct Resource : Readable {
+        \\    let handle:int
+        \\    func value() int { return self.handle }
+        \\    drop {}
+        \\}
+        \\func inspect(borrow value:Resource) int { return value.value() }
+        \\func main() { let resource = Resource(handle:1); print(inspect(borrow resource)) }
+    );
     try expectResolvedSemanticError(
         declaration ++ "func main() { let first = Resource.open(1); let second = first }",
-        "cannot copy unique resource 'Resource'; initialize it directly from a temporary value",
+        "cannot copy noncopyable value 'Resource'; initialize it directly from a temporary value or use 'move'",
     );
     try expectResolvedSemanticError(
         declaration ++ "func duplicate() Resource { let resource = Resource.open(1); return resource } func main() {}",
-        "named unique resource 'Resource' must be returned with 'move'",
-    );
-    try expectResolvedSemanticError(
-        declaration ++ "struct Holder { let resource:Resource } func main() {}",
-        "type 'Resource' cannot contain unique resource 'Resource' before unique-resource composition is available",
-    );
-    try expectResolvedSemanticError(
-        declaration ++ "class Holder { var resource:Resource } func main() {}",
-        "type 'Resource' cannot contain unique resource 'Resource' before unique-resource composition is available",
+        "named noncopyable value 'Resource' must be returned with 'move'",
     );
     try expectResolvedSemanticError(
         declaration ++ "struct Registry { static var current:Resource } func main() {}",
-        "type 'Resource' cannot contain unique resource 'Resource' before unique-resource composition is available",
-    );
-    try expectResolvedSemanticError(
-        declaration ++ "enum Slot { full(Resource) } func main() {}",
-        "type 'Resource' cannot contain unique resource 'Resource' before unique-resource composition is available",
-    );
-    try expectResolvedSemanticError(
-        declaration ++ "func main() { let resources:Resource[] = [] }",
-        "type 'list' cannot contain unique resource 'Resource' before unique-resource composition is available",
-    );
-    try expectResolvedSemanticError(
-        declaration ++ "func main() { let resource:Resource? = null }",
-        "type 'optional' cannot contain unique resource 'Resource' before unique-resource composition is available",
+        "a static field cannot own a noncopyable value",
     );
     try expectResolvedSemanticError(
         declaration ++ "func mutate(resource:&Resource) {} func main() {}",
-        "unique resource 'Resource' cannot be passed with '&'",
+        "noncopyable value 'Resource' cannot be passed with '&'; use 'borrow' for read-only access",
     );
     try expectResolvedSemanticError(
         declaration ++ "func main() { let resource = Resource.open(1); let callback = func() { print(resource.handle) } }",
-        "unique resource 'Resource' cannot be captured by a lambda",
+        "noncopyable value 'Resource' cannot be captured by a lambda",
     );
     try expectResolvedSemanticError(
         declaration ++ "func main() { let first = Resource.open(1); let second = Resource.open(2); print(first == second) }",
         "type 'Resource' does not support equality",
+    );
+    try expectResolvedSemanticError(
+        declaration ++ "struct Holder { var resource:Resource } func main() { let first = Holder(resource:Resource.open(1)); let second = Holder(resource:Resource.open(2)); print(first == second) }",
+        "type 'Holder' does not support equality",
+    );
+}
+
+test "noncopyable containers require explicit whole-value transfer" {
+    const declaration =
+        \\struct Resource { let handle:int; drop {} }
+        \\struct Holder { var resource:Resource }
+        \\enum Slot { full(Holder); empty }
+        \\func consume(value:Resource) {}
+    ;
+
+    try expectResolvedSemanticError(
+        declaration ++ "func main() { let first = Holder(resource:Resource(handle:1)); let second = first }",
+        "cannot copy noncopyable value 'Holder'; initialize it directly from a temporary value or use 'move'",
+    );
+    try expectResolvedSemanticError(
+        declaration ++ "func main() { let slot = Slot.full(Holder(resource:Resource(handle:1))); match slot { full(value) => {}; empty => {} } }",
+        "a named noncopyable enum must be matched with 'match move' or 'match borrow'",
+    );
+    try expectResolvedSemanticError(
+        declaration ++ "func main() { let pending:Resource? = Resource(handle:1); if value = pending {} }",
+        "a named noncopyable optional must be extracted with 'move' or 'borrow'",
+    );
+    try expectResolvedSemanticError(
+        declaration ++ "func main() { let holder = Holder(resource:Resource(handle:1)); consume(move holder.resource) }",
+        "'move' requires a complete local binding or parameter",
+    );
+    try expectResolvedSemanticError(
+        declaration ++ "func main() { let values:Resource[] = [Resource(handle:1)]; let copy = values[0] }",
+        "cannot copy noncopyable value 'Resource'; initialize it directly from a temporary value or use 'move'",
+    );
+    try expectResolvedSemanticError(
+        declaration ++ "func main() { let values:Resource[] = [Resource(handle:1)]; let copy = values[0:1] }",
+        "cannot copy noncopyable value 'list'; initialize it directly from a temporary value or use 'move'",
+    );
+    try expectResolvedSemanticError(
+        declaration ++ "func main() { let values:Resource[] = [Resource(handle:1)]; for let value in values {} }",
+        "'for let' would copy a noncopyable element; use the read loop or 'for var'",
+    );
+    try expectResolvedSemanticError(
+        "protocol Stored {} struct Resource { let handle:int; drop {} } struct Holder : Stored { var resource:Resource } func erase(value:Stored) {} func main() { let holder = Holder(resource:Resource(handle:1)); erase(move holder) }",
+        "noncopyable value 'Holder' cannot be converted to dynamic protocol value 'Stored'",
     );
 }
 
@@ -8491,7 +8687,7 @@ test "unique resource moves reject invalid sources and consumed uses" {
 
     try expectResolvedSemanticError(
         declaration ++ "func main() { let value = 1; let invalid = move value }",
-        "'move' requires a unique resource, found 'int'",
+        "'move' requires a noncopyable value, found 'int'",
     );
     try expectResolvedSemanticError(
         declaration ++ "func main() { let resource = Resource.open(1); let invalid = move resource.handle }",
@@ -8499,15 +8695,15 @@ test "unique resource moves reject invalid sources and consumed uses" {
     );
     try expectResolvedSemanticError(
         declaration ++ "func main() { let resource = Resource.open(1); consume(resource) }",
-        "unique resource 'Resource' must be passed with 'move'",
+        "noncopyable value 'Resource' must be passed with 'move'",
     );
     try expectResolvedSemanticErrorContains(
         declaration ++ "func main() { let resource = Resource.open(1); consume(move resource); print(resource.handle) }",
-        "unique resource 'resource' was consumed by 'move' at",
+        "noncopyable value 'resource' was consumed by 'move' at",
     );
     try expectResolvedSemanticErrorContains(
         declaration ++ "func main() { let resource = Resource.open(1); consume(move resource); consume(move resource) }",
-        "unique resource 'resource' was consumed by 'move' at",
+        "noncopyable value 'resource' was consumed by 'move' at",
     );
     try expectResolvedSemanticError(
         declaration ++ "func main() { let resource = Resource.open(1); let other = move resource; resource = move other }",
@@ -9319,7 +9515,7 @@ test "read borrows reject mutation conflicts and escape" {
     );
     try expectResolvedSemanticError(
         resource ++ "func conflict(borrow first:Resource, second:Resource) {} func main() { let value = Resource(handle:1); conflict(borrow value, move value) }",
-        "cannot move borrowed unique resource 'value'",
+        "cannot move borrowed noncopyable value 'value'",
     );
     try expectResolvedSemanticError(
         "func conflict(borrow first:int, second:&int) {} func main() { var value = 1; conflict(borrow value, &value) }",

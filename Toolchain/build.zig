@@ -891,12 +891,15 @@ pub fn build(b: *std.Build) void {
         "Tests/InvalidTryUniqueResourceDrop.sx:11:9: error: 'try' is not available in a drop block\n",
     );
 
-    const invalid_unique_resource_result_command = b.addRunArtifact(executable);
-    invalid_unique_resource_result_command.addArgs(&.{ "compile", "Tests/InvalidUniqueResourceResult.sx" });
-    invalid_unique_resource_result_command.expectExitCode(1);
-    invalid_unique_resource_result_command.expectStdErrEqual(
-        "Tests/InvalidUniqueResourceResult.sx:1:1: error: type 'Resource' cannot contain unique resource 'Resource' before unique-resource composition is available\n",
+    const invalid_try_named_noncopyable_result_command = b.addRunArtifact(executable);
+    invalid_try_named_noncopyable_result_command.addArgs(&.{ "compile", "Tests/InvalidTryNamedNoncopyableResult.sx" });
+    invalid_try_named_noncopyable_result_command.expectExitCode(1);
+    invalid_try_named_noncopyable_result_command.expectStdErrEqual(
+        "Tests/InvalidTryNamedNoncopyableResult.sx:8:17: error: a named noncopyable Result must be consumed with 'try move result'\n",
     );
+
+    const noncopyable_result_command = b.addRunArtifact(executable);
+    noncopyable_result_command.addArgs(&.{ "compile", "Tests/NoncopyableResult.sx" });
 
     const reserved_try_identifier_command = b.addRunArtifact(executable);
     reserved_try_identifier_command.addArgs(&.{ "compile", "Tests/ReservedTryIdentifier.sx" });
@@ -924,6 +927,13 @@ pub fn build(b: *std.Build) void {
     invalid_map_error_transform_command.expectExitCode(1);
     invalid_map_error_transform_command.expectStdErrEqual(
         "Tests/InvalidMapErrorTransform.sx:9:18: error: no compatible signature for function 'map_error<int, SourceError, TargetError>'; visible signatures: map_error<int, SourceError, TargetError>(Result<int, SourceError>, func(SourceError) TargetError)\n",
+    );
+
+    const invalid_map_error_named_noncopyable_command = b.addRunArtifact(executable);
+    invalid_map_error_named_noncopyable_command.addArgs(&.{ "compile", "Tests/InvalidMapErrorNamedNoncopyable.sx" });
+    invalid_map_error_named_noncopyable_command.expectExitCode(1);
+    invalid_map_error_named_noncopyable_command.expectStdErrEqual(
+        "Tests/InvalidMapErrorNamedNoncopyable.sx:9:9: error: noncopyable value 'Result<Resource, str>' must be passed with 'move'\n",
     );
 
     const invalid_map_error_void_overload_command = b.addRunArtifact(executable);
@@ -1361,7 +1371,7 @@ pub fn build(b: *std.Build) void {
         "silex: native compilation failed for target 'x86_64-linux-musl'; target support, SDKs, or native sources may be unavailable or incomplete\n",
     );
     backend_discovered_target_failure_command.expectStdErrMatch(b.fmt(
-        "silex: backend details: .silex{c}build{c}v41{c}x86_64-linux-musl{c}",
+        "silex: backend details: .silex{c}build{c}v42{c}x86_64-linux-musl{c}",
         .{
             std.fs.path.sep,
             std.fs.path.sep,
@@ -1830,11 +1840,13 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&invalid_try_constructor_command.step);
     test_step.dependOn(&invalid_try_drop_command.step);
     test_step.dependOn(&invalid_try_unique_resource_drop_command.step);
-    test_step.dependOn(&invalid_unique_resource_result_command.step);
+    test_step.dependOn(&invalid_try_named_noncopyable_result_command.step);
+    test_step.dependOn(&noncopyable_result_command.step);
     test_step.dependOn(&reserved_try_identifier_command.step);
     test_step.dependOn(&missing_map_error_type_arguments_command.step);
     test_step.dependOn(&invalid_map_error_result_type_command.step);
     test_step.dependOn(&invalid_map_error_transform_command.step);
+    test_step.dependOn(&invalid_map_error_named_noncopyable_command.step);
     test_step.dependOn(&invalid_map_error_void_overload_command.step);
     test_step.dependOn(&invalid_map_error_type_arity_command.step);
     test_step.dependOn(&reserved_map_error_function_command.step);
@@ -2598,6 +2610,73 @@ pub fn build(b: *std.Build) void {
             "close 91\n" ++
             "90\n" ++
             "close 90\n" ++
+            "composition\n" ++
+            "open 100\n" ++
+            "100\n" ++
+            "100\n" ++
+            "open 101\n" ++
+            "101\n" ++
+            "101\n" ++
+            "99\n" ++
+            "open 102\n" ++
+            "102\n" ++
+            "102\n" ++
+            "close 102\n" ++
+            "open 116\n" ++
+            "ignored\n" ++
+            "close 116\n" ++
+            "open 103\n" ++
+            "103\n" ++
+            "consume\n" ++
+            "103\n" ++
+            "close 103\n" ++
+            "open 104\n" ++
+            "open 105\n" ++
+            "104\n" ++
+            "105\n" ++
+            "104\n" ++
+            "105\n" ++
+            "consume\n" ++
+            "104\n" ++
+            "close 104\n" ++
+            "open 106\n" ++
+            "consume\n" ++
+            "105\n" ++
+            "close 105\n" ++
+            "consume\n" ++
+            "106\n" ++
+            "close 106\n" ++
+            "open 107\n" ++
+            "consume\n" ++
+            "107\n" ++
+            "close 107\n" ++
+            "open 115\n" ++
+            "consume\n" ++
+            "115\n" ++
+            "close 115\n" ++
+            "open 108\n" ++
+            "consume\n" ++
+            "108\n" ++
+            "close 108\n" ++
+            "open 114\n" ++
+            "consume\n" ++
+            "114\n" ++
+            "close 114\n" ++
+            "open 109\n" ++
+            "109\n" ++
+            "109\n" ++
+            "open 110\n" ++
+            "open 111\n" ++
+            "open 112\n" ++
+            "open 113\n" ++
+            "close 113\n" ++
+            "close 112\n" ++
+            "close 111\n" ++
+            "close 110\n" ++
+            "holder drop\n" ++
+            "close 109\n" ++
+            "close 101\n" ++
+            "close 100\n" ++
             "reject\n" ++
             "60\n" ++
             "incomplete\n" ++

@@ -1,0 +1,148 @@
+====================================
+Noncopyable filtering and propagation
+====================================
+
+func inspect(state:State, pending:File?, result:Result<File,Error>) {
+    match borrow state {
+        loaded(file) => { print(file) }
+        failed(error) => { print(error) }
+    }
+    match move state {
+        loaded(var file) => { consume(move file) }
+        failed(error) => { print(error) }
+    }
+    if file = borrow pending { print(file) }
+    if var file = move pending { consume(move file) }
+    let value = try move result
+}
+
+---
+
+(source_file
+  (function_definition
+    (identifier)
+    (parameter_list
+      (parameter
+        (identifier)
+        (type
+          (named_type
+            (type_identifier))))
+      (parameter
+        (identifier)
+        (type
+          (optional_type
+            (named_type
+              (type_identifier)))))
+      (parameter
+        (identifier)
+        (type
+          (named_type
+            (generic_type
+              (type_identifier)
+              (type_argument_list
+                (type
+                  (named_type
+                    (type_identifier)))
+                (type
+                  (named_type
+                    (type_identifier)))))))))
+    (block
+      (statement
+        (match_expression
+          (expression
+            (read_borrow_expression
+              (expression
+                (identifier))))
+          (match_branch
+            (identifier)
+            (match_binding_list
+              (match_binding
+                (identifier)))
+            (block
+              (statement
+                (print_statement
+                  (identifier)
+                  (expression
+                    (identifier))))))
+          (match_branch
+            (identifier)
+            (match_binding_list
+              (match_binding
+                (identifier)))
+            (block
+              (statement
+                (print_statement
+                  (identifier)
+                  (expression
+                    (identifier))))))))
+      (statement
+        (match_expression
+          (expression
+            (move_expression
+              (expression
+                (identifier))))
+          (match_branch
+            (identifier)
+            (match_binding_list
+              (match_binding
+                (identifier)))
+            (block
+              (statement
+                (expression_statement
+                  (invocation_expression
+                    (identifier)
+                    (expression
+                      (move_expression
+                        (expression
+                          (identifier)))))))))
+          (match_branch
+            (identifier)
+            (match_binding_list
+              (match_binding
+                (identifier)))
+            (block
+              (statement
+                (print_statement
+                  (identifier)
+                  (expression
+                    (identifier))))))))
+      (statement
+        (if_statement
+          (conditional_binding
+            (identifier)
+            (expression
+              (read_borrow_expression
+                (expression
+                  (identifier)))))
+          (block
+            (statement
+              (print_statement
+                (identifier)
+                (expression
+                  (identifier)))))))
+      (statement
+        (if_statement
+          (conditional_binding
+            (identifier)
+            (expression
+              (move_expression
+                (expression
+                  (identifier)))))
+          (block
+            (statement
+              (expression_statement
+                (invocation_expression
+                  (identifier)
+                  (expression
+                    (move_expression
+                      (expression
+                        (identifier))))))))))
+      (statement
+        (variable_declaration
+          (identifier)
+          (expression
+            (try_expression
+              (expression
+                (move_expression
+                  (expression
+                    (identifier)))))))))))

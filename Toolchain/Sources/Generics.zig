@@ -46,21 +46,19 @@ const intrinsic_result = Ast.Enum{
 
 const intrinsic_function_source =
     \\func map_error<T, E, F>(result:Result<T,E>, transform:func(E) F) Result<T,F> {
-    \\    match result {
-    \\        success(var value) => { return Result<T,F>.success(value) }
+    \\    match move result {
+    \\        success(var value) => { return Result<T,F>.success(move value) }
     \\        failure(var error) => {
-    \\            var mapped:F = transform(error)
-    \\            return Result<T,F>.failure(mapped)
+    \\            return Result<T,F>.failure(transform(move error))
     \\        }
     \\    }
     \\    panic("invalid intrinsic Result variant")
     \\}
     \\func map_error<E, F>(result:Result<void,E>, transform:func(E) F) Result<void,F> {
-    \\    match result {
+    \\    match move result {
     \\        success => { return Result<void,F>.success() }
     \\        failure(var error) => {
-    \\            var mapped:F = transform(error)
-    \\            return Result<void,F>.failure(mapped)
+    \\            return Result<void,F>.failure(transform(move error))
     \\        }
     \\    }
     \\    panic("invalid intrinsic Result variant")

@@ -1,7 +1,15 @@
 native func native_open(label:int) int
 native func native_close(handle:int) void
 
-pub struct Resource {
+pub enum OpenError {
+    unavailable(int)
+}
+
+pub protocol Readable {
+    func value() int
+}
+
+pub struct Resource : Readable {
     let handle:int
     let label:int
 
@@ -16,6 +24,13 @@ pub struct Resource {
     drop {
         native_close(self.handle)
     }
+}
+
+pub func open_result(label:int, available:bool) Result<Resource,OpenError> {
+    if available {
+        return Result<Resource,OpenError>.success(Resource(handle:native_open(label), label:label))
+    }
+    return Result<Resource,OpenError>.failure(OpenError.unavailable(label))
 }
 
 pub func maybe_open(label:int, complete:bool) Result<int,str> {

@@ -283,10 +283,11 @@ let second = move first
 close(move second)
 ```
 
-`move` accepts only a direct unique-resource name. It rejects ordinary copyable
-values, `self`, static storage, fields, indexed elements, partial values, and
-captured outer bindings. A unique resource cannot be passed with `&`, captured
-by a lambda, converted to a dynamic protocol value, or compared for equality.
+`move` accepts the complete name of any recursively noncopyable local or
+parameter. It rejects ordinary copyable values, `self`, static storage, fields,
+indexed elements, partial values, and captured outer bindings. A noncopyable
+value cannot be passed with `&`, captured by a lambda, converted to a dynamic
+protocol value, or compared for equality.
 Named owner arguments and returns must spell `move` at the transfer site. A
 `borrow resource:Resource` parameter may inspect the same owner through a
 matching `borrow resource` argument without transferring or copying it; the
@@ -310,9 +311,12 @@ every path that reaches the join. Paths ending in `return`, `break`, `continue`,
 to a loop header must restore the same owner availability it had before the
 iteration; otherwise the loop is rejected.
 
-An owner cannot yet appear inside another structure, class, collection,
-optional, enum, or `Result`, nor in static storage. Owner composition remains a
-future language step.
+Noncopyability is recursive. A structure, enum, `Result`, optional, array, or
+list containing an owner is itself noncopyable; a generic specialization gains
+that property from its concrete fields or arguments. A class may own such a
+field without making its shared reference noncopyable. Named values placed in
+these containers use `move`, while fresh temporaries transfer directly. Static
+fields remain unable to own noncopyable values.
 
 `drop` receives `self` implicitly and may access the structure's private
 storage. It has no parameters, parentheses, return type, or visibility marker,
@@ -326,9 +330,10 @@ exactly once for each completely constructed and untransferred owner:
 
 Completed locals are destroyed in reverse construction order. An owner whose
 initializer did not complete is not destroyed. Its `drop` body runs before its
-fields are destroyed automatically in reverse declaration order. Owner fields
-are not yet permitted, so recursive owner destruction begins only when owner
-composition is introduced. A transfer destination becomes responsible for the
+fields are destroyed automatically in reverse declaration order. Lists and
+arrays destroy elements in reverse index order; optionals destroy their present
+value, and enums destroy only the active variant's associated values in reverse
+declaration order. A transfer destination becomes responsible for the
 eventual `drop`; the consumed source performs no later destruction. An owner
 parameter likewise owns its argument until it is dropped or transferred again.
 

@@ -149,3 +149,8 @@ keeps `T` concrete and specializes the function statically. The protocol value
 erases the concrete type and uses dynamic dispatch. A value outside the
 declared conformance cannot convert to `Drawable`, and there is currently no
 cast from `Drawable` back to its concrete type.
+
+A noncopyable structure may satisfy a generic protocol constraint because the
+specialization keeps its concrete representation. It cannot convert to a
+dynamic protocol value: the erased container is copyable and clones structure
+storage, which would duplicate ownership.

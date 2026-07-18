@@ -4,6 +4,35 @@ struct Data {
     let value:int
 }
 
+struct ResourceBox {
+    var resource:Resources.Resource
+}
+
+struct ResourcePair {
+    var first:Resources.Resource
+    var second:Resources.Resource
+}
+
+struct GenericBox<T> {
+    var value:T
+}
+
+class ResourceHolder {
+    pub var resource:Resources.Resource
+
+    drop { print("holder drop") }
+}
+
+enum ResourceState {
+    loaded(ResourceBox)
+    failed(str)
+}
+
+enum IgnoredState {
+    loaded(Resources.Resource)
+    failed
+}
+
 func lexical_scopes() {
     print("lexical")
     let outer = Resources.Resource.open(10)
@@ -65,6 +94,10 @@ func consume(resource:Resources.Resource) {
     print(resource.value())
 }
 
+func consume_box(box:ResourceBox) {
+    print(box.resource.value())
+}
+
 func forward(resource:Resources.Resource) Resources.Resource {
     print("forward")
     return move resource
@@ -88,6 +121,106 @@ func read_int(borrow value:int) int {
 
 func generic_read<T>(borrow value:T) int {
     return 1
+}
+
+func constrained_read<T:Resources.Readable>(borrow value:T) int {
+    return value.value()
+}
+
+func propagated(label:int) Result<Resources.Resource,Resources.OpenError> {
+    let resource = try Resources.open_result(label, true)
+    return Result<Resources.Resource,Resources.OpenError>.success(move resource)
+}
+
+func propagated_named(label:int) Result<Resources.Resource,Resources.OpenError> {
+    let result = Resources.open_result(label, true)
+    let resource = try move result
+    return Result<Resources.Resource,Resources.OpenError>.success(move resource)
+}
+
+func composition() {
+    print("composition")
+    let box = ResourceBox(resource:Resources.Resource.open(100))
+    print(inspect(borrow box.resource))
+    print(constrained_read<Resources.Resource>(borrow box.resource))
+
+    let generic = GenericBox<Resources.Resource>(value:Resources.Resource.open(101))
+    print(inspect(borrow generic.value))
+    let transferred_generic = move generic
+    print(inspect(borrow transferred_generic.value))
+    let copyable_generic = GenericBox<int>(value:99)
+    let copied_generic = copyable_generic
+    print(copied_generic.value)
+
+    var state = ResourceState.loaded(ResourceBox(resource:Resources.Resource.open(102)))
+    match borrow state {
+        loaded(value) => { print(inspect(borrow value.resource)) }
+        failed(error) => { print(error) }
+    }
+    match move state {
+        loaded(var value) => { consume_box(move value) }
+        failed(error) => { print(error) }
+    }
+    var ignored = IgnoredState.loaded(Resources.Resource.open(116))
+    match move ignored {
+        failed => { print("unexpected") }
+        else => { print("ignored") }
+    }
+
+    var pending:Resources.Resource? = Resources.Resource.open(103)
+    if value = borrow pending { print(inspect(borrow value)) }
+    if var value = move pending { consume(move value) }
+
+    var values:Resources.Resource[] = []
+    values.append(Resources.Resource.open(104))
+    let named = Resources.Resource.open(105)
+    values.append(move named)
+    for value in values { print(inspect(borrow value)) }
+    for var value in values { print(value.value()) }
+    consume(values.take_first())
+    consume(values.replace(0, Resources.Resource.open(106)))
+    consume(values.take_last())
+
+    let result = propagated(107)
+    match move result {
+        success(var value) => { consume(move value) }
+        failure(error) => { print("unexpected") }
+    }
+
+    let named_propagation = propagated_named(115)
+    match move named_propagation {
+        success(var value) => { consume(move value) }
+        failure(error) => { print("unexpected") }
+    }
+
+    let mapped = map_error<Resources.Resource,Resources.OpenError,str>(
+        Resources.open_result(108, true),
+        func(error:Resources.OpenError) str { return "open error" }
+    )
+    match move mapped {
+        success(var value) => { consume(move value) }
+        failure(error) => { print(error) }
+    }
+
+    let named_result = Resources.open_result(114, true)
+    let mapped_named = map_error<Resources.Resource,Resources.OpenError,str>(
+        move named_result,
+        func(error:Resources.OpenError) str { return "open error" }
+    )
+    match move mapped_named {
+        success(var value) => { consume(move value) }
+        failure(error) => { print(error) }
+    }
+
+    var holder = ResourceHolder(resource:Resources.Resource.open(109))
+    print(inspect(borrow holder.resource))
+    var holder_alias = holder
+    print(inspect(borrow holder_alias.resource))
+    var reverse:Resources.Resource[] = [Resources.Resource.open(110), Resources.Resource.open(111)]
+    let pair = ResourcePair(
+        first:Resources.Resource.open(112),
+        second:Resources.Resource.open(113),
+    )
 }
 
 func borrows() {
@@ -153,6 +286,7 @@ func main() {
     reverse_order()
     transfers()
     borrows()
+    composition()
     match Resources.incomplete_initialization(60, false) {
         success => { print("unexpected") }
         failure(error) => { print(error) }

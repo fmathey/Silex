@@ -55,6 +55,11 @@ function.
 it, while binary operators bind after it. Thus `try parse_port(text) + 1` means
 `(try parse_port(text)) + 1`.
 
+When the `Result` is noncopyable, `try` consumes it. A temporary call remains
+`try load()`, while a named result is written `try move result`. Success moves
+`T` into the surrounding expression and failure moves `E` into the early
+return.
+
 For `Result<void,E>`, `try operation()` is a complete statement:
 
 ```sx
@@ -114,6 +119,8 @@ recovery. A transformation that calls `panic` or fails an `assert` remains
 fatal. The function is intrinsic rather than declared by `STD`; its call name
 is reserved and cannot be shadowed by a function, module alias, or local
 binding. As with other generic functions, all type arguments are explicit.
+For a noncopyable result, a named argument is supplied with `move`; the returned
+`Result` owns either the original success value or the transformed error.
 
 ## Success without a value
 

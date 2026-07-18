@@ -3,6 +3,10 @@
 A `class` is a nominal type with shared identity. Copying a class reference,
 passing it as an ordinary argument, returning it, or storing it in a field or
 collection keeps the same instance instead of copying its fields.
+A class may own noncopyable fields: copying the class reference still shares
+one storage instance, and those fields are destroyed exactly once when that
+instance dies. The class's own `drop` runs before its fields, which then follow
+reverse declaration order.
 
 ```sx
 class Player {

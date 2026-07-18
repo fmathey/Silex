@@ -1,0 +1,12 @@
+struct Resource {
+    let handle:int
+    drop {}
+}
+
+func main() {
+    let result = Result<Resource,str>.success(Resource(handle:1))
+    let mapped = map_error<Resource,str,str>(
+        result,
+        func(error:str) str { return error }
+    )
+}
