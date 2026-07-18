@@ -28,3 +28,35 @@ class Texture {
               (member_expression
                 (self_expression)
                 (identifier)))))))))
+
+=========================
+Unique structure drop block
+=========================
+
+struct File {
+    let handle:int
+
+    drop {
+        native_close(self.handle)
+    }
+}
+
+---
+
+(source_file
+  (structure_definition
+    (identifier)
+    (structure_field
+      (identifier)
+      (type
+        (builtin_type)))
+    (drop_definition
+      (block
+        (statement
+          (expression_statement
+            (invocation_expression
+              (identifier)
+              (expression
+                (member_expression
+                  (self_expression)
+                  (identifier))))))))))
