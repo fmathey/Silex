@@ -2601,6 +2601,28 @@ test "constrained generic completion exposes protocol requirements" {
     try std.testing.expect(containsCompletion(items, "draw"));
 }
 
+test "protocol value completion exposes only protocol requirements" {
+    const source =
+        \\protocol Drawable { func draw() }
+        \\class Player : Drawable { pub var score:int; pub func draw() {}; pub func jump() {} }
+        \\func main() {
+        \\    var drawable:Drawable = Player()
+        \\    drawable.
+        \\}
+    ;
+    const items = try completionItems(
+        std.testing.allocator,
+        std.testing.io,
+        source,
+        .{ .line = 4, .character = 13 },
+    );
+    defer std.testing.allocator.free(items);
+    try std.testing.expectEqual(@as(usize, 1), items.len);
+    try std.testing.expect(containsCompletion(items, "draw"));
+    try std.testing.expect(!containsCompletion(items, "jump"));
+    try std.testing.expect(!containsCompletion(items, "score"));
+}
+
 test "import completion recognizes only the module path context" {
     try std.testing.expectEqualStrings(
         "M",

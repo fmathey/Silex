@@ -827,6 +827,11 @@ pub fn generateWithSources(
         \\
     );
     try output.append(allocator, '\n');
+    for (program.protocols) |protocol| {
+        try output.appendSlice(allocator, "struct ");
+        try output.appendSlice(allocator, protocol.generated_name);
+        try output.appendSlice(allocator, ";\n");
+    }
     for (program.enums) |enum_value| {
         try output.appendSlice(allocator, "struct ");
         try output.appendSlice(allocator, enum_value.generated_name);
@@ -837,7 +842,8 @@ pub fn generateWithSources(
         try output.appendSlice(allocator, structure.generated_name);
         try output.appendSlice(allocator, ";\n");
     }
-    if (program.enums.len > 0 or program.structures.len > 0) try output.append(allocator, '\n');
+    if (program.protocols.len > 0 or program.enums.len > 0 or program.structures.len > 0) try output.append(allocator, '\n');
+    try generateProtocolTypes(allocator, &output, program);
     for (program.enums) |enum_value| {
         try output.appendSlice(allocator, "struct ");
         try output.appendSlice(allocator, enum_value.generated_name);
@@ -970,6 +976,8 @@ pub fn generateWithSources(
         try output.appendSlice(allocator, "    }\n");
         try output.appendSlice(allocator, "};\n\n");
     }
+    try generateProtocolMethodDefinitions(allocator, &output, program);
+    try generateProtocolWitnesses(allocator, &output, program);
     try output.appendSlice(allocator, "void silexResetStaticFields() {\n");
     for (program.structures) |structure| {
         for (structure.static_fields) |field| {
@@ -985,13 +993,13 @@ pub fn generateWithSources(
     try output.appendSlice(allocator, "}\n\n");
     if (program.structures.len > 0) {
         for (program.structures) |structure| {
-            if (structure.is_class) continue;
+            if (structure.is_class or !structure.equality_comparable) continue;
             try generateStructureEqualitySignature(allocator, &output, structure, false);
             try output.appendSlice(allocator, ";\n");
         }
         try output.append(allocator, '\n');
         for (program.structures) |structure| {
-            if (structure.is_class) continue;
+            if (structure.is_class or !structure.equality_comparable) continue;
             try generateStructureEqualitySignature(allocator, &output, structure, true);
             try output.appendSlice(allocator, " {\n    return ");
             if (structure.fields.len == 0) {
@@ -1088,6 +1096,196 @@ pub fn generateWithSources(
     }
     try output.appendSlice(allocator, "}\n");
     return output.toOwnedSlice(allocator);
+}
+
+fn generateProtocolTypes(
+    allocator: Allocator,
+    output: *std.ArrayList(u8),
+    program: Semantic.Program,
+) !void {
+    for (program.protocols) |protocol| {
+        try output.appendSlice(allocator, "struct ");
+        try output.appendSlice(allocator, protocol.generated_name);
+        try output.appendSlice(allocator,
+            \\ {
+            \\    struct Witness {
+        );
+        for (protocol.requirements) |requirement| {
+            try output.appendSlice(allocator, "        ");
+            try appendCppType(allocator, output, requirement.return_type);
+            try output.appendSlice(allocator, " (*");
+            try output.appendSlice(allocator, requirement.generated_name);
+            try output.appendSlice(allocator, ")(void*");
+            for (requirement.parameter_types, requirement.parameter_is_mutable_references) |parameter_type, is_mutable_reference| {
+                try output.appendSlice(allocator, ", ");
+                try appendCppType(allocator, output, parameter_type);
+                if (is_mutable_reference) try output.append(allocator, '&');
+            }
+            try output.appendSlice(allocator, ");\n");
+        }
+        try output.appendSlice(allocator,
+            \\    };
+            \\    struct StorageBase {
+            \\        virtual std::unique_ptr<StorageBase> clone() const = 0;
+            \\        virtual void* data() = 0;
+            \\        virtual void trace(const SilexTraceVisitor& visit) const = 0;
+            \\        virtual void clear() = 0;
+            \\        virtual ~StorageBase() = default;
+            \\    };
+            \\    template <typename T>
+            \\    struct Storage final : StorageBase {
+            \\        explicit Storage(T input) : value(std::move(input)) {}
+            \\        std::unique_ptr<StorageBase> clone() const override { return std::make_unique<Storage<T>>(value); }
+            \\        void* data() override { return &value; }
+            \\        void trace(const SilexTraceVisitor& visit) const override { silexTraceValue(value, visit); }
+            \\        void clear() override { silexClearValue(value); }
+            \\        T value;
+            \\    };
+        );
+        try output.appendSlice(allocator, "    ");
+        try output.appendSlice(allocator, protocol.generated_name);
+        try output.appendSlice(allocator, "() = default;\n    ");
+        try output.appendSlice(allocator, protocol.generated_name);
+        try output.appendSlice(allocator, "(const ");
+        try output.appendSlice(allocator, protocol.generated_name);
+        try output.appendSlice(allocator, "& other) : storage_(other.storage_ ? other.storage_->clone() : nullptr), witness_(other.witness_) {}\n    ");
+        try output.appendSlice(allocator, protocol.generated_name);
+        try output.appendSlice(allocator, "(");
+        try output.appendSlice(allocator, protocol.generated_name);
+        try output.appendSlice(allocator, "&&) noexcept = default;\n    ");
+        try output.appendSlice(allocator, protocol.generated_name);
+        try output.appendSlice(allocator, "& operator=(const ");
+        try output.appendSlice(allocator, protocol.generated_name);
+        try output.appendSlice(allocator, "& other) { if (this != &other) { ");
+        try output.appendSlice(allocator, protocol.generated_name);
+        try output.appendSlice(allocator, " copy(other); *this = std::move(copy); } return *this; }\n    ");
+        try output.appendSlice(allocator, protocol.generated_name);
+        try output.appendSlice(allocator, "& operator=(");
+        try output.appendSlice(allocator, protocol.generated_name);
+        try output.appendSlice(allocator, "&&) noexcept = default;\n");
+        try output.appendSlice(allocator, "    template <typename T>\n    static ");
+        try output.appendSlice(allocator, protocol.generated_name);
+        try output.appendSlice(allocator, " make(T value, const Witness* witness) {\n        ");
+        try output.appendSlice(allocator, protocol.generated_name);
+        try output.appendSlice(allocator,
+            " result;\n        result.storage_ = std::make_unique<Storage<T>>(std::move(value));\n        result.witness_ = witness;\n        return result;\n    }\n",
+        );
+        for (protocol.requirements) |requirement| {
+            try output.appendSlice(allocator, "    ");
+            try appendCppType(allocator, output, requirement.return_type);
+            try output.append(allocator, ' ');
+            try output.appendSlice(allocator, requirement.generated_name);
+            try output.append(allocator, '(');
+            for (requirement.parameter_types, requirement.parameter_is_mutable_references, 0..) |parameter_type, is_mutable_reference, index| {
+                if (index != 0) try output.appendSlice(allocator, ", ");
+                try appendCppType(allocator, output, parameter_type);
+                if (is_mutable_reference) try output.append(allocator, '&');
+                try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, " silexProtocolArgument{d}", .{index}));
+            }
+            try output.appendSlice(allocator, ");\n");
+        }
+        try output.appendSlice(allocator,
+            \\    void silexTrace(const SilexTraceVisitor& visit) const { if (storage_) storage_->trace(visit); }
+            \\    void silexClear() { if (storage_) storage_->clear(); storage_.reset(); witness_ = nullptr; }
+            \\private:
+            \\    std::unique_ptr<StorageBase> storage_;
+            \\    const Witness* witness_ = nullptr;
+            \\};
+            \\
+        );
+    }
+    for (program.structures) |structure| {
+        for (structure.protocol_conformances) |conformance| {
+            try output.appendSlice(allocator, "extern const ");
+            try output.appendSlice(allocator, conformance.protocol_generated_name);
+            try output.appendSlice(allocator, "::Witness ");
+            try output.appendSlice(allocator, conformance.witness_name);
+            try output.appendSlice(allocator, ";\n");
+        }
+    }
+    if (program.protocols.len != 0) try output.append(allocator, '\n');
+}
+
+fn generateProtocolMethodDefinitions(
+    allocator: Allocator,
+    output: *std.ArrayList(u8),
+    program: Semantic.Program,
+) !void {
+    for (program.protocols) |protocol| {
+        for (protocol.requirements) |requirement| {
+            try appendCppType(allocator, output, requirement.return_type);
+            try output.append(allocator, ' ');
+            try output.appendSlice(allocator, protocol.generated_name);
+            try output.appendSlice(allocator, "::");
+            try output.appendSlice(allocator, requirement.generated_name);
+            try output.append(allocator, '(');
+            for (requirement.parameter_types, requirement.parameter_is_mutable_references, 0..) |parameter_type, is_mutable_reference, index| {
+                if (index != 0) try output.appendSlice(allocator, ", ");
+                try appendCppType(allocator, output, parameter_type);
+                if (is_mutable_reference) try output.append(allocator, '&');
+                try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, " silexProtocolArgument{d}", .{index}));
+            }
+            try output.appendSlice(allocator, ") { return witness_->");
+            try output.appendSlice(allocator, requirement.generated_name);
+            try output.appendSlice(allocator, "(storage_->data()");
+            for (requirement.parameter_types, 0..) |_, index| {
+                try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, ", silexProtocolArgument{d}", .{index}));
+            }
+            try output.appendSlice(allocator, "); }\n");
+        }
+        try output.append(allocator, '\n');
+    }
+}
+
+fn generateProtocolWitnesses(
+    allocator: Allocator,
+    output: *std.ArrayList(u8),
+    program: Semantic.Program,
+) !void {
+    for (program.structures) |structure| {
+        for (structure.protocol_conformances) |conformance| {
+            const protocol = program.protocols[conformance.protocol_index];
+            for (protocol.requirements, conformance.method_generated_names, 0..) |requirement, method_name, requirement_index| {
+                try appendCppType(allocator, output, requirement.return_type);
+                try output.append(allocator, ' ');
+                try output.appendSlice(allocator, conformance.witness_name);
+                try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "Method{d}(void* raw", .{requirement_index}));
+                for (requirement.parameter_types, requirement.parameter_is_mutable_references, 0..) |parameter_type, is_mutable_reference, index| {
+                    try output.appendSlice(allocator, ", ");
+                    try appendCppType(allocator, output, parameter_type);
+                    if (is_mutable_reference) try output.append(allocator, '&');
+                    try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, " argument{d}", .{index}));
+                }
+                try output.appendSlice(allocator, ") { auto& value = *static_cast<");
+                if (structure.is_class) {
+                    try output.appendSlice(allocator, "SilexRef<");
+                    try output.appendSlice(allocator, structure.generated_name);
+                    try output.append(allocator, '>');
+                } else try output.appendSlice(allocator, structure.generated_name);
+                try output.appendSlice(allocator, "*>(raw); return value");
+                try output.appendSlice(allocator, if (structure.is_class) "->" else ".");
+                try output.appendSlice(allocator, method_name);
+                try output.append(allocator, '(');
+                for (requirement.parameter_types, 0..) |_, index| {
+                    if (index != 0) try output.appendSlice(allocator, ", ");
+                    try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "argument{d}", .{index}));
+                }
+                try output.appendSlice(allocator, "); }\n");
+            }
+            try output.appendSlice(allocator, "const ");
+            try output.appendSlice(allocator, conformance.protocol_generated_name);
+            try output.appendSlice(allocator, "::Witness ");
+            try output.appendSlice(allocator, conformance.witness_name);
+            try output.appendSlice(allocator, "{");
+            for (protocol.requirements, 0..) |_, index| {
+                if (index != 0) try output.appendSlice(allocator, ", ");
+                try output.appendSlice(allocator, "&");
+                try output.appendSlice(allocator, conformance.witness_name);
+                try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "Method{d}", .{index}));
+            }
+            try output.appendSlice(allocator, "};\n\n");
+        }
+    }
 }
 
 fn generateMethodSignature(
@@ -1457,6 +1655,10 @@ fn generateTryPreludes(
             try generateTryPreludes(allocator, output, call.object, indentation);
             for (call.arguments) |argument| try generateTryPreludes(allocator, output, argument, indentation);
         },
+        .protocol_method_call => |call| {
+            try generateTryPreludes(allocator, output, call.object, indentation);
+            for (call.arguments) |argument| try generateTryPreludes(allocator, output, argument, indentation);
+        },
         .static_method_call => |call| for (call.arguments) |argument| try generateTryPreludes(allocator, output, argument, indentation),
         .super_method_call => |call| for (call.arguments) |argument| try generateTryPreludes(allocator, output, argument, indentation),
         .cascade => |cascade| {
@@ -1494,6 +1696,7 @@ fn generateTryPreludes(
             try generateTryPreludes(allocator, output, binary.right, indentation);
         },
         .conversion => |conversion| try generateTryPreludes(allocator, output, conversion.operand, indentation),
+        .protocol_conversion => |conversion| try generateTryPreludes(allocator, output, conversion.operand, indentation),
         .integer, .floating, .boolean, .null, .string, .cascade_target, .variable, .self, .owner_self, .static_field_access, .optional_unwrap => {},
     }
 }
@@ -1923,6 +2126,17 @@ fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expressi
         .string_length => |argument| {
             try output.appendSlice(allocator, "silexStringLength(");
             try generateExpression(allocator, output, argument);
+            try output.append(allocator, ')');
+        },
+        .protocol_method_call => |call| {
+            try generateExpression(allocator, output, call.object);
+            try output.append(allocator, '.');
+            try output.appendSlice(allocator, call.generated_name);
+            try output.append(allocator, '(');
+            for (call.arguments, 0..) |argument, index| {
+                if (index != 0) try output.appendSlice(allocator, ", ");
+                try generateExpression(allocator, output, argument);
+            }
             try output.append(allocator, ')');
         },
         .sequence_literal => |values| {
@@ -2465,6 +2679,14 @@ fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expressi
             try output.appendSlice(allocator, silexTypeName(conversion.target_type));
             try output.appendSlice(allocator, "\")");
         },
+        .protocol_conversion => |conversion| {
+            try output.appendSlice(allocator, expression.type.protocol.generated_name);
+            try output.appendSlice(allocator, "::make(");
+            try generateExpression(allocator, output, conversion.operand);
+            try output.appendSlice(allocator, ", &");
+            try output.appendSlice(allocator, conversion.witness_name);
+            try output.append(allocator, ')');
+        },
     }
 }
 
@@ -2564,6 +2786,7 @@ fn cppType(type_name: Semantic.Type) []const u8 {
         .function => unreachable,
         .list, .fixed_array => unreachable,
         .structure => |structure_type| if (structure_type.is_class) unreachable else structure_type.generated_name,
+        .protocol => |protocol_type| protocol_type.generated_name,
         .enumeration => |enum_type| enum_type.generated_name,
         .reference => unreachable,
         .optional, .null => unreachable,
@@ -2619,6 +2842,7 @@ fn appendCppType(allocator: Allocator, output: *std.ArrayList(u8), type_name: Se
                 try output.appendSlice(allocator, structure_type.generated_name);
             }
         },
+        .protocol => |protocol_type| try output.appendSlice(allocator, protocol_type.generated_name),
         .enumeration => |enum_type| try output.appendSlice(allocator, enum_type.generated_name),
         .null => unreachable,
         else => try output.appendSlice(allocator, cppType(type_name)),
@@ -2647,6 +2871,7 @@ fn silexTypeName(type_name: Semantic.Type) []const u8 {
         .list => "list",
         .fixed_array => "array",
         .structure => |structure_type| structure_type.source_name,
+        .protocol => |protocol_type| protocol_type.source_name,
         .enumeration => |enum_type| enum_type.source_name,
         .reference => |reference| if (reference.mutable) "reference&" else "reference@",
         .function => "func",
@@ -3117,6 +3342,30 @@ test "generate class references identity access and cycle tracing" {
     try std.testing.expect(std.mem.indexOf(u8, cpp, "silexValue1->method0_0()") != null);
     try std.testing.expect(std.mem.indexOf(u8, cpp, "(silexValue0 == silexValue1)") != null);
     try std.testing.expect(std.mem.indexOf(u8, cpp, "unreachable class graph was not collected") != null);
+}
+
+test "generate erased protocol storage witnesses and dynamic calls" {
+    const Parser = @import("Parser.zig").Parser;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var parser = Parser.init(allocator,
+        \\protocol Drawable { func draw() str }
+        \\struct Icon : Drawable { func draw() str { return "icon" } }
+        \\class Player : Drawable { pub func draw() str { return "player" } }
+        \\func main() { var value:Drawable = Icon(); value = Player(); print(value.draw()) }
+    );
+    var analyzer = Semantic.Analyzer.init(allocator);
+    const cpp = try generate(allocator, try analyzer.analyze(try resolveSingleTestProgram(allocator, try parser.parse())));
+
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "struct SilexProtocol0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "std::unique_ptr<StorageBase> clone() const") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "SilexWitness0_0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "SilexWitness0_1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "SilexProtocol0::make(SilexStruct0{}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "SilexProtocol0::make(silexMake<SilexClass1>()") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, ".method0_0()") != null);
 }
 
 test "generate drop before field clearing with automatic base chaining" {

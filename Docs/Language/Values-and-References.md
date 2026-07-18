@@ -35,8 +35,16 @@ print(second[0]) // 2
 
 The compiler may optimize list copies internally, but the value behaviour above
 is guaranteed, including for nested lists and structures that contain lists.
-Copying a list of classes copies its class references: the list remains an
+Copying a list of classes copies its class references: the list remains a
 distinct container value, while its elements retain their shared identities.
+
+A dynamic protocol value follows the contained kind. When it contains a
+structure, assignment copies an independent structure value. When it contains
+a class, assignment copies the reference and preserves the same object
+identity. Because the protocol type can hide a class reference, it is not an
+independent type and must use `var`, including inside a structure or
+collection. Hidden class references remain visible to reference counting and
+cycle tracing. See [Protocols](Protocols.md#dynamic-protocol-values).
 
 An ordinary parameter is a local value. A function may change it without
 changing its caller.

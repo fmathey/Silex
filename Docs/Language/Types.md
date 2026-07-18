@@ -52,6 +52,15 @@ implicitly convert to one.
 `func(&int)` has a mutable-reference parameter. Its calls use `&place`, exactly
 like calls to a named function whose parameter is written `value:&int`.
 
+## Protocol types
+
+A protocol name such as `Drawable` is a dynamic value type. It can contain any
+structure or class that explicitly declares that conformance, while exposing
+only the methods required by the protocol. The source spelling is simply
+`value:Drawable`; Silex does not use an `any` prefix. See
+[Protocols](Protocols.md#dynamic-protocol-values) for dispatch, copy, and
+lifetime rules.
+
 ## Type suffixes and grouping
 
 `?`, `[]`, and `[N]` are type suffixes applied from left to right. Thus

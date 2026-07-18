@@ -14,6 +14,11 @@ func main() {
     let remote = RemoteUser(value:"remote")
     print(name_of<RemoteUser>(remote))
 
+    var named:Named = remote
+    assert(named.name() == "remote", "imported protocol value")
+
     var local = LocalUser()
     print(name_of<LocalUser>(local))
+    named = local
+    assert(named.name() == "local", "imported protocol replacement")
 }

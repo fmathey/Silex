@@ -1284,7 +1284,7 @@ pub fn build(b: *std.Build) void {
         "silex: native compilation failed for target 'x86_64-linux-musl'; target support, SDKs, or native sources may be unavailable or incomplete\n",
     );
     backend_discovered_target_failure_command.expectStdErrMatch(b.fmt(
-        "silex: backend details: .silex{c}build{c}v34{c}x86_64-linux-musl{c}",
+        "silex: backend details: .silex{c}build{c}v35{c}x86_64-linux-musl{c}",
         .{
             std.fs.path.sep,
             std.fs.path.sep,
@@ -2002,8 +2002,13 @@ pub fn build(b: *std.Build) void {
     protocols_command.addArgs(&.{ "run", "Smokes/Protocols.sx" });
     protocols_command.expectStdOutEqual(hostText(b, "Ada\nAda\nplayer\ndraw\n"));
 
+    const protocol_values_command = b.addRunArtifact(executable);
+    protocol_values_command.step.dependOn(&protocols_command.step);
+    protocol_values_command.addArgs(&.{ "run", "Smokes/ProtocolValues.sx" });
+    protocol_values_command.expectStdOutEqual("");
+
     const protocol_modules_command = b.addRunArtifact(executable);
-    protocol_modules_command.step.dependOn(&protocols_command.step);
+    protocol_modules_command.step.dependOn(&protocol_values_command.step);
     protocol_modules_command.addArgs(&.{ "run", "Smokes/ProtocolModules/silex.json" });
     protocol_modules_command.expectStdOutEqual(hostText(b, "remote\nlocal\n"));
 

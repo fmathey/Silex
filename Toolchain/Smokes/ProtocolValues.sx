@@ -1,0 +1,102 @@
+protocol Describable {
+    func describe() str
+}
+
+protocol Counter {
+    func bump() int
+}
+
+struct Icon : Describable {
+    var name:str
+
+    func describe() str {
+        return self.name
+    }
+}
+
+class Player : Describable {
+    pub var name:str
+
+    pub func describe() str {
+        return self.name
+    }
+}
+
+struct MutableCounter : Counter {
+    var value:int
+
+    func bump() int {
+        self.value += 1
+        return self.value
+    }
+}
+
+struct Label {
+    var value:Describable
+
+    func text() str {
+        return self.value.describe()
+    }
+}
+
+class Link : Describable {
+    var next:Describable?
+
+    pub init() {
+        self.next = null
+    }
+
+    pub func describe() str {
+        return "link"
+    }
+
+    pub func connect(other:Describable) {
+        self.next = other
+    }
+}
+
+func describe(value:Describable) str {
+    return value.describe()
+}
+
+func make_icon() Describable {
+    return Icon(name:"icon")
+}
+
+func main() {
+    var value:Describable = Icon(name:"first")
+    assert(value.describe() == "first", "struct dispatch")
+
+    var copied = value
+    value = Icon(name:"second")
+    assert(copied.describe() == "first", "protocol struct copy")
+    assert(value.describe() == "second", "protocol replacement")
+
+    var player = Player(name:"player")
+    value = player
+    assert(value.describe() == "player", "class dispatch")
+    player.name = "same instance"
+    assert(value.describe() == "same instance", "class identity")
+
+    assert(describe(Icon(name:"parameter")) == "parameter", "parameter conversion")
+    var returned = make_icon()
+    assert(returned.describe() == "icon", "return conversion")
+
+    var values:Describable[] = [Icon(name:"list"), player]
+    assert(values[0].describe() == "list", "collection struct")
+    assert(values[1].describe() == "same instance", "collection class")
+
+    var label = Label(value:Icon(name:"field"))
+    assert(label.text() == "field", "protocol field")
+
+    var counter:Counter = MutableCounter(value:0)
+    var counter_copy = counter
+    assert(counter.bump() == 1, "mutating protocol dispatch")
+    assert(counter.bump() == 2, "mutating protocol state")
+    assert(counter_copy.bump() == 1, "mutating protocol copy")
+
+    var left = Link()
+    var right = Link()
+    left.connect(right)
+    right.connect(left)
+}

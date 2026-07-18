@@ -670,8 +670,13 @@ pub const Resolver = struct {
                 value
             else if (try self.visibleTypeAlias(position.file, name)) |alias|
                 try self.resolveAliasType(alias)
-            else
-                .{ .structure = (try self.resolveName(position.file, name, .structure, position)).canonical_name },
+            else type_name: {
+                const kind = try self.visibleDeclarationKind(position.file, name);
+                if (kind == .protocol) {
+                    break :type_name .{ .structure = (try self.resolveName(position.file, name, .protocol, position)).canonical_name };
+                }
+                break :type_name .{ .structure = (try self.resolveName(position.file, name, .structure, position)).canonical_name };
+            },
             .generic_structure => |generic| generic_type: {
                 if (self.isCurrentTypeParameter(generic.name)) {
                     return self.fail(position, "a type parameter cannot accept type arguments");
