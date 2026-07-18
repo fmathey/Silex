@@ -260,7 +260,10 @@ module.exports = grammar({
         optional(choice($.void_type, $.type)),
       ),
     function_type_parameter: ($) =>
-      seq(optional(field("mutable_reference", "&")), field("type", $.type)),
+      seq(
+        optional(choice(field("read_borrow", "borrow"), field("mutable_reference", "&"))),
+        field("type", $.type),
+      ),
     grouped_type: ($) => seq("(", field("type", $.type), ")"),
     optional_type: ($) =>
       prec.left(
@@ -288,6 +291,7 @@ module.exports = grammar({
 
     parameter: ($) =>
       seq(
+        optional(field("read_borrow", "borrow")),
         field("name", $.identifier),
         ":",
         optional(field("mutable_reference", "&")),
@@ -464,6 +468,7 @@ module.exports = grammar({
         $.binary_expression,
         $.try_expression,
         $.move_expression,
+        $.read_borrow_expression,
         $.unary_expression,
         $.borrow_expression,
         $.conversion_expression,
@@ -954,6 +959,9 @@ module.exports = grammar({
 
     move_expression: ($) =>
       prec(PREC.unary, seq("move", field("operand", $.expression))),
+
+    read_borrow_expression: ($) =>
+      prec(PREC.unary, seq("borrow", field("operand", $.expression))),
 
     borrow_expression: ($) => prec(PREC.unary, seq(field("operator", "&"), field("operand", $.expression))),
 

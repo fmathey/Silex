@@ -281,7 +281,7 @@ pub const Specializer = struct {
                 }
                 break :function_type .{ .function = .{
                     .parameters = try parameters.toOwnedSlice(self.allocator),
-                    .parameter_is_mutable_references = try self.allocator.dupe(bool, function.parameter_is_mutable_references),
+                    .parameter_modes = try self.allocator.dupe(Ast.ParameterMode, function.parameter_modes),
                     .return_type = if (function.return_type) |return_type| try self.rewriteTypePointer(return_type.*, bindings, position) else null,
                 } };
             },
@@ -1165,9 +1165,10 @@ fn appendTypeName(
         },
         .function => |function| {
             try output.appendSlice(allocator, "func(");
-            for (function.parameters, function.parameter_is_mutable_references, 0..) |parameter, is_mutable_reference, index| {
+            for (function.parameters, function.parameter_modes, 0..) |parameter, mode, index| {
                 if (index != 0) try output.appendSlice(allocator, ", ");
-                if (is_mutable_reference) try output.append(allocator, '&');
+                if (mode == .borrow) try output.appendSlice(allocator, "borrow ");
+                if (mode == .mutable_reference) try output.append(allocator, '&');
                 try appendTypeName(allocator, output, parameter);
             }
             try output.append(allocator, ')');

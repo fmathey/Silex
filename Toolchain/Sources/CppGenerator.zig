@@ -1201,10 +1201,9 @@ fn generateProtocolTypes(
             try output.appendSlice(allocator, " (*");
             try output.appendSlice(allocator, requirement.generated_name);
             try output.appendSlice(allocator, ")(void*");
-            for (requirement.parameter_types, requirement.parameter_is_mutable_references) |parameter_type, is_mutable_reference| {
+            for (requirement.parameter_types, requirement.parameter_modes) |parameter_type, mode| {
                 try output.appendSlice(allocator, ", ");
-                try appendCppType(allocator, output, parameter_type);
-                if (is_mutable_reference) try output.append(allocator, '&');
+                try appendCppParameterType(allocator, output, parameter_type, mode);
             }
             try output.appendSlice(allocator, ");\n");
         }
@@ -1262,10 +1261,9 @@ fn generateProtocolTypes(
             try output.append(allocator, ' ');
             try output.appendSlice(allocator, requirement.generated_name);
             try output.append(allocator, '(');
-            for (requirement.parameter_types, requirement.parameter_is_mutable_references, 0..) |parameter_type, is_mutable_reference, index| {
+            for (requirement.parameter_types, requirement.parameter_modes, 0..) |parameter_type, mode, index| {
                 if (index != 0) try output.appendSlice(allocator, ", ");
-                try appendCppType(allocator, output, parameter_type);
-                if (is_mutable_reference) try output.append(allocator, '&');
+                try appendCppParameterType(allocator, output, parameter_type, mode);
                 try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, " silexProtocolArgument{d}", .{index}));
             }
             try output.appendSlice(allocator, ");\n");
@@ -1305,10 +1303,9 @@ fn generateProtocolMethodDefinitions(
             try output.appendSlice(allocator, "::");
             try output.appendSlice(allocator, requirement.generated_name);
             try output.append(allocator, '(');
-            for (requirement.parameter_types, requirement.parameter_is_mutable_references, 0..) |parameter_type, is_mutable_reference, index| {
+            for (requirement.parameter_types, requirement.parameter_modes, 0..) |parameter_type, mode, index| {
                 if (index != 0) try output.appendSlice(allocator, ", ");
-                try appendCppType(allocator, output, parameter_type);
-                if (is_mutable_reference) try output.append(allocator, '&');
+                try appendCppParameterType(allocator, output, parameter_type, mode);
                 try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, " silexProtocolArgument{d}", .{index}));
             }
             try output.appendSlice(allocator, ") { return witness_->");
@@ -1336,10 +1333,9 @@ fn generateProtocolWitnesses(
                 try output.append(allocator, ' ');
                 try output.appendSlice(allocator, conformance.witness_name);
                 try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "Method{d}(void* raw", .{requirement_index}));
-                for (requirement.parameter_types, requirement.parameter_is_mutable_references, 0..) |parameter_type, is_mutable_reference, index| {
+                for (requirement.parameter_types, requirement.parameter_modes, 0..) |parameter_type, mode, index| {
                     try output.appendSlice(allocator, ", ");
-                    try appendCppType(allocator, output, parameter_type);
-                    if (is_mutable_reference) try output.append(allocator, '&');
+                    try appendCppParameterType(allocator, output, parameter_type, mode);
                     try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, " argument{d}", .{index}));
                 }
                 try output.appendSlice(allocator, ") { auto& value = *static_cast<");
@@ -1391,8 +1387,7 @@ fn generateMethodSignature(
     try output.append(allocator, '(');
     for (method.parameters, 0..) |parameter, index| {
         if (index != 0) try output.appendSlice(allocator, ", ");
-        try appendCppType(allocator, output, parameter.type);
-        if (parameter.is_mutable_reference) try output.append(allocator, '&');
+        try appendCppParameterType(allocator, output, parameter.type, parameter.mode);
         if (include_names) {
             try output.append(allocator, ' ');
             try output.appendSlice(allocator, parameter.generated_name);
@@ -1456,8 +1451,7 @@ fn generateConstructorSignature(
     try output.append(allocator, '(');
     for (constructor.parameters, 0..) |parameter, index| {
         if (index != 0) try output.appendSlice(allocator, ", ");
-        try appendCppType(allocator, output, parameter.type);
-        if (parameter.is_mutable_reference) try output.append(allocator, '&');
+        try appendCppParameterType(allocator, output, parameter.type, parameter.mode);
         if (include_names) {
             try output.append(allocator, ' ');
             try output.appendSlice(allocator, parameter.generated_name);
@@ -1478,8 +1472,7 @@ fn generateFunctionSignature(allocator: Allocator, output: *std.ArrayList(u8), f
     try output.append(allocator, '(');
     for (function.parameters, 0..) |parameter, index| {
         if (index != 0) try output.appendSlice(allocator, ", ");
-        try appendCppType(allocator, output, parameter.type);
-        if (parameter.is_mutable_reference) try output.append(allocator, '&');
+        try appendCppParameterType(allocator, output, parameter.type, parameter.mode);
         if (include_names) {
             try output.append(allocator, ' ');
             try output.appendSlice(allocator, parameter.generated_name);
@@ -1683,6 +1676,7 @@ fn generateTryPreludes(
 ) GenerateError!void {
     switch (expression.value) {
         .move_expression => |move_value| try generateTryPreludes(allocator, output, move_value.operand, indentation),
+        .borrow_expression => |borrow_value| try generateTryPreludes(allocator, output, borrow_value.operand, indentation),
         .try_expression => |try_value| {
             try generateTryPreludes(allocator, output, try_value.operand, indentation);
             if (expression.type != .void) {
@@ -2389,6 +2383,7 @@ fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expressi
             try generateExpression(allocator, output, move_value.operand);
             try output.append(allocator, ')');
         },
+        .borrow_expression => |borrow_value| try generateExpression(allocator, output, borrow_value.operand),
         .variable => |variable| {
             try output.appendSlice(allocator, variable.generated_name);
             if (variable.capture_box.*) try output.appendSlice(allocator, "->value");
@@ -2455,8 +2450,7 @@ fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expressi
             }
             for (lambda.parameters) |parameter| {
                 if (parameter_index != 0) try output.appendSlice(allocator, ", ");
-                try appendCppType(allocator, output, parameter.type);
-                if (parameter.is_mutable_reference) try output.append(allocator, '&');
+                try appendCppParameterType(allocator, output, parameter.type, parameter.mode);
                 try output.append(allocator, ' ');
                 try output.appendSlice(allocator, parameter.generated_name);
                 if (parameter.capture_box.*) try output.appendSlice(allocator, "Input");
@@ -2603,10 +2597,9 @@ fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expressi
                 "[&silexBoundOwner = ");
             try generateExpression(allocator, output, member.object);
             try output.appendSlice(allocator, "](");
-            for (expression.type.function.parameters, expression.type.function.parameter_is_mutable_references, 0..) |parameter_type, is_mutable_reference, index| {
+            for (expression.type.function.parameters, expression.type.function.parameter_modes, 0..) |parameter_type, mode, index| {
                 if (index != 0) try output.appendSlice(allocator, ", ");
-                try appendCppType(allocator, output, parameter_type);
-                if (is_mutable_reference) try output.append(allocator, '&');
+                try appendCppParameterType(allocator, output, parameter_type, mode);
                 try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, " silexBoundArgument{d}", .{index}));
             }
             try output.appendSlice(allocator, if (isClassType(member.object.type))
@@ -2638,10 +2631,9 @@ fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expressi
             const function = expression.type.function;
             try output.appendSlice(allocator, function.owner.?.generated_name);
             try output.appendSlice(allocator, "&");
-            for (function.parameters, function.parameter_is_mutable_references, 0..) |parameter_type, is_mutable_reference, index| {
+            for (function.parameters, function.parameter_modes, 0..) |parameter_type, mode, index| {
                 try output.appendSlice(allocator, ", ");
-                try appendCppType(allocator, output, parameter_type);
-                if (is_mutable_reference) try output.append(allocator, '&');
+                try appendCppParameterType(allocator, output, parameter_type, mode);
                 try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, " silexAdaptedArgument{d}", .{index}));
             }
             try output.appendSlice(allocator, ") { return silexCallback(");
@@ -2890,7 +2882,7 @@ fn cppType(type_name: Semantic.Type) []const u8 {
     };
 }
 
-fn appendCppType(allocator: Allocator, output: *std.ArrayList(u8), type_name: Semantic.Type) !void {
+fn appendCppType(allocator: Allocator, output: *std.ArrayList(u8), type_name: Semantic.Type) Allocator.Error!void {
     switch (type_name) {
         .reference => |reference| {
             if (!reference.mutable) try output.appendSlice(allocator, "const ");
@@ -2917,10 +2909,9 @@ fn appendCppType(allocator: Allocator, output: *std.ArrayList(u8), type_name: Se
                 try output.append(allocator, '&');
                 index += 1;
             }
-            for (function.parameters, function.parameter_is_mutable_references) |parameter, is_mutable_reference| {
+            for (function.parameters, function.parameter_modes) |parameter, mode| {
                 if (index != 0) try output.appendSlice(allocator, ", ");
-                try appendCppType(allocator, output, parameter);
-                if (is_mutable_reference) try output.append(allocator, '&');
+                try appendCppParameterType(allocator, output, parameter, mode);
                 index += 1;
             }
             try output.appendSlice(allocator, ")>");
@@ -2944,6 +2935,17 @@ fn appendCppType(allocator: Allocator, output: *std.ArrayList(u8), type_name: Se
         .null => unreachable,
         else => try output.appendSlice(allocator, cppType(type_name)),
     }
+}
+
+fn appendCppParameterType(
+    allocator: Allocator,
+    output: *std.ArrayList(u8),
+    type_name: Semantic.Type,
+    mode: Ast.ParameterMode,
+) Allocator.Error!void {
+    if (mode == .borrow) try output.appendSlice(allocator, "const ");
+    try appendCppType(allocator, output, type_name);
+    if (mode != .value) try output.append(allocator, '&');
 }
 
 fn isClassType(type_name: Semantic.Type) bool {
@@ -3569,4 +3571,22 @@ test "generate cascades through one stable receiver" {
     try std.testing.expect(std.mem.indexOf(u8, cpp, "silexCascade(std::vector<std::int64_t>{}, [&](auto& silexCascadeValue) {") != null);
     try std.testing.expect(std.mem.indexOf(u8, cpp, "silexCascadeValue.push_back(std::int64_t{1});") != null);
     try std.testing.expect(std.mem.indexOf(u8, cpp, "std::reverse(silexCascadeValue.begin(), silexCascadeValue.end());") != null);
+}
+
+test "generate read borrow parameters as const references" {
+    const Parser = @import("Parser.zig").Parser;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var parser = Parser.init(allocator,
+        \\struct Resource { let handle:int; drop {} }
+        \\func inspect(borrow resource:Resource) int { return resource.handle }
+        \\func main() { let resource = Resource(handle:1); print(inspect(borrow resource)) }
+    );
+    var analyzer = Semantic.Analyzer.init(allocator);
+    const cpp = try generate(allocator, try analyzer.analyze(try resolveSingleTestProgram(allocator, try parser.parse())));
+
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "std::int64_t silexFunction0(const SilexStruct0&") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "silexFunction0(silexValue") != null);
 }

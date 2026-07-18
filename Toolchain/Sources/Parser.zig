@@ -560,6 +560,8 @@ pub const Parser = struct {
         try self.expect(.left_parenthesis, "expected '('");
         var parameters: std.ArrayList(Ast.Parameter) = .empty;
         while (self.current.tag != .right_parenthesis) {
+            const is_borrow = self.current.tag == .keyword_borrow;
+            if (is_borrow) try self.advance();
             if (self.current.tag != .identifier) return self.fail("expected parameter name");
             const name = self.current.lexeme;
             const position = self.current.position;
@@ -567,11 +569,12 @@ pub const Parser = struct {
             try self.expect(.colon, "expected ':' after parameter name");
             const is_mutable_reference = self.current.tag == .amp;
             if (is_mutable_reference) try self.advance();
+            if (is_borrow and is_mutable_reference) return self.fail("a parameter cannot combine 'borrow' and '&'");
             try parameters.append(self.allocator, .{
                 .name = name,
                 .position = position,
                 .type = try self.parseTypeName(),
-                .is_mutable_reference = is_mutable_reference,
+                .mode = if (is_borrow) .borrow else if (is_mutable_reference) .mutable_reference else .value,
             });
             if (self.current.tag != .comma) break;
             try self.advance();
@@ -762,12 +765,15 @@ pub const Parser = struct {
         try self.expect(.keyword_func, "expected 'func'");
         try self.expect(.left_parenthesis, "expected '(' after 'func'");
         var parameters: std.ArrayList(Ast.TypeName) = .empty;
-        var parameter_is_mutable_references: std.ArrayList(bool) = .empty;
+        var parameter_modes: std.ArrayList(Ast.ParameterMode) = .empty;
         while (self.current.tag != .right_parenthesis) {
+            const is_borrow = self.current.tag == .keyword_borrow;
+            if (is_borrow) try self.advance();
             const is_mutable_reference = self.current.tag == .amp;
             if (is_mutable_reference) try self.advance();
+            if (is_borrow and is_mutable_reference) return self.fail("a function parameter type cannot combine 'borrow' and '&'");
             try parameters.append(self.allocator, try self.parseTypeNameAfter("expected function parameter type"));
-            try parameter_is_mutable_references.append(self.allocator, is_mutable_reference);
+            try parameter_modes.append(self.allocator, if (is_borrow) .borrow else if (is_mutable_reference) .mutable_reference else .value);
             if (self.current.tag != .comma) break;
             try self.advance();
         }
@@ -781,7 +787,7 @@ pub const Parser = struct {
         }
         return .{ .function = .{
             .parameters = try parameters.toOwnedSlice(self.allocator),
-            .parameter_is_mutable_references = try parameter_is_mutable_references.toOwnedSlice(self.allocator),
+            .parameter_modes = try parameter_modes.toOwnedSlice(self.allocator),
             .return_type = return_type,
         } };
     }
@@ -1142,6 +1148,18 @@ pub const Parser = struct {
     }
 
     fn parseUnary(self: *Parser, allow_line_breaks: bool) ParseError!*Ast.Expression {
+        if (self.current.tag == .keyword_borrow) {
+            const operator_position = self.current.position;
+            try self.advance();
+            const operand = try self.parseUnary(allow_line_breaks);
+            return self.newExpression(.{
+                .position = operator_position,
+                .value = .{ .borrow_expression = .{
+                    .operator_position = operator_position,
+                    .operand = operand,
+                } },
+            });
+        }
         if (self.current.tag == .keyword_move) {
             const operator_position = self.current.position;
             try self.advance();
@@ -2431,7 +2449,7 @@ test "parse protocols structure conformances and generic constraints" {
     try std.testing.expectEqual(@as(usize, 2), program.protocols[0].requirements.len);
     try std.testing.expectEqualStrings("describe", program.protocols[0].requirements[0].name);
     try std.testing.expectEqual(Ast.ReturnType.str, program.protocols[0].requirements[0].return_type);
-    try std.testing.expect(program.protocols[0].requirements[1].parameters[0].is_mutable_reference);
+    try std.testing.expectEqual(Ast.ParameterMode.mutable_reference, program.protocols[0].requirements[1].parameters[0].mode);
     try std.testing.expectEqualStrings("Describable", program.structures[0].conformances[0].name);
     try std.testing.expectEqualStrings("Describable", program.functions[0].type_parameters[0].constraint.?.name);
 }
@@ -3278,4 +3296,19 @@ test "parse protocol conformances on a type extension" {
     var missing = Parser.init(arena.allocator(), "extend Sprite : { } func main() {}");
     try std.testing.expectError(error.InvalidSource, missing.parse());
     try std.testing.expectEqualStrings("expected protocol name after ':'", missing.diagnostic.?.message);
+}
+
+test "parse read borrow parameters and arguments" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var parser = Parser.init(arena.allocator(),
+        \\struct Data { let value:int }
+        \\func inspect(borrow value:Data) int { return value.value }
+        \\func main() { let data = Data(value:1); inspect(borrow data) }
+    );
+    const program = try parser.parse();
+    try std.testing.expectEqual(Ast.ParameterMode.borrow, program.functions[0].parameters[0].mode);
+    const call = program.functions[1].statements[1].expression_statement.value.call;
+    try std.testing.expect(call.arguments[0].value == .borrow_expression);
+    try std.testing.expect(call.arguments[0].value.borrow_expression.operand.value == .identifier);
 }

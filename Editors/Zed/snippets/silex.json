@@ -149,6 +149,20 @@
     ],
     "description": "Transfer a unique resource explicitly"
   },
+  "Read borrow parameter": {
+    "prefix": "borrowparam",
+    "body": [
+      "borrow ${1:name}:${2:Type}"
+    ],
+    "description": "Declare a temporary read-only borrow parameter"
+  },
+  "Read borrow argument": {
+    "prefix": "borrow",
+    "body": [
+      "borrow ${1:value}"
+    ],
+    "description": "Pass a value through a temporary read-only borrow"
+  },
   "Transform Result error": {
     "prefix": "maperror",
     "body": [

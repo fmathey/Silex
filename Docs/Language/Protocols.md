@@ -48,8 +48,8 @@ class. For a structure, every name is a protocol; structures do not inherit
 from structures.
 
 The compiler verifies every declared conformance, even when no generic code
-uses it. A matching method has the same name, ordered parameter types, `&`
-markers, and return type. It must be an instance method and public. Structure
+uses it. A matching method has the same name, ordered parameter types,
+`borrow` or `&` markers, and return type. It must be an instance method and public. Structure
 methods are already public; a class implementation therefore writes `pub`.
 An inherited public class method can satisfy a requirement. A child class also
 inherits every valid conformance of its base class.

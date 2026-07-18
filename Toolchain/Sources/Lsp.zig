@@ -541,7 +541,8 @@ fn appendSignatureHelp(
     try label.append(allocator, '(');
     for (function.parameters, 0..) |parameter, index| {
         if (index != 0) try label.appendSlice(allocator, ", ");
-        if (parameter.is_mutable_reference) try label.append(allocator, '&');
+        if (parameter.mode == .borrow) try label.appendSlice(allocator, "borrow ");
+        if (parameter.mode == .mutable_reference) try label.append(allocator, '&');
         try appendAstTypeName(allocator, &label, parameter.type);
     }
     try label.append(allocator, ')');
@@ -595,9 +596,10 @@ fn appendAstTypeName(allocator: Allocator, output: *std.ArrayList(u8), type_name
         },
         .function => |function| {
             try output.appendSlice(allocator, "func(");
-            for (function.parameters, function.parameter_is_mutable_references, 0..) |parameter, is_mutable_reference, index| {
+            for (function.parameters, function.parameter_modes, 0..) |parameter, mode, index| {
                 if (index != 0) try output.appendSlice(allocator, ", ");
-                if (is_mutable_reference) try output.append(allocator, '&');
+                if (mode == .borrow) try output.appendSlice(allocator, "borrow ");
+                if (mode == .mutable_reference) try output.append(allocator, '&');
                 try appendAstTypeName(allocator, output, parameter);
             }
             try output.append(allocator, ')');
@@ -2799,6 +2801,7 @@ const language_completions = [_]CompletionItem{
     .{ .label = "return", .kind = 14, .detail = "Silex keyword" },
     .{ .label = "try", .kind = 14, .detail = "Silex keyword" },
     .{ .label = "move", .kind = 14, .detail = "Silex keyword" },
+    .{ .label = "borrow", .kind = 14, .detail = "Silex keyword" },
     .{ .label = "use", .kind = 14, .detail = "Silex keyword" },
     .{ .label = "pub", .kind = 14, .detail = "Silex keyword" },
     .{ .label = "sub", .kind = 14, .detail = "Silex keyword" },
@@ -2845,6 +2848,7 @@ test "completion items include language terms and document identifiers" {
     try std.testing.expect(containsCompletion(items, "match"));
     try std.testing.expect(containsCompletion(items, "try"));
     try std.testing.expect(containsCompletion(items, "move"));
+    try std.testing.expect(containsCompletion(items, "borrow"));
     try std.testing.expect(containsCompletion(items, "total"));
     try std.testing.expect(!containsCompletion(items, "import"));
 }
@@ -3826,16 +3830,18 @@ test "signature help lists overloaded functions once each" {
     const source =
         \\func measure() int { return 1 }
         \\func measure(value:int) int { return value }
+        \\func measure(borrow value:int) int { return value }
         \\func measure(value:float) float { return value }
-        \\func main() { print(measure(1)) }
+        \\func main() { print(measure(borrow 1)) }
     ;
-    const signatures = try signatureHelpItems(std.testing.allocator, source, .{ .line = 3, .character = 28 });
+    const signatures = try signatureHelpItems(std.testing.allocator, source, .{ .line = 4, .character = 35 });
     defer std.testing.allocator.free(signatures);
     defer for (signatures) |signature| std.testing.allocator.free(signature.label);
-    try std.testing.expectEqual(@as(usize, 3), signatures.len);
+    try std.testing.expectEqual(@as(usize, 4), signatures.len);
     try std.testing.expectEqualStrings("measure()", signatures[0].label);
     try std.testing.expectEqualStrings("measure(int)", signatures[1].label);
-    try std.testing.expectEqualStrings("measure(float)", signatures[2].label);
+    try std.testing.expectEqualStrings("measure(borrow int)", signatures[2].label);
+    try std.testing.expectEqualStrings("measure(float)", signatures[3].label);
 }
 
 test "signature help recognizes explicit generic arguments" {

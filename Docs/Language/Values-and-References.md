@@ -66,6 +66,51 @@ reset(source)
 print(source[0]) // 10
 ```
 
+## Reading without copying
+
+Use `borrow name:T` when a function only needs to inspect a value without
+copying or consuming it. The call repeats the marker as `borrow value`, making
+the temporary alias visible at both ends:
+
+```sx
+func describe(borrow file:File) str {
+    return file.get_path()
+}
+
+let file = File.open("notes.txt")
+print(describe(borrow file))
+print(file.get_path())
+```
+
+The parameter remains nominally `T`; `borrow` is a passing mode, not a
+reference type. It accepts a readable `let` or `var`, field, indexed element,
+or temporary. The alias ends when the synchronous call returns, and a
+temporary lives through that call. Several read borrows of one root may be
+arguments of the same call.
+
+A borrowed parameter is read-only. It may inspect fields, index collections,
+call non-mutating methods, and forward the alias to another `borrow` parameter.
+It cannot be assigned, passed with `&`, used as a mutating receiver, consumed
+with `move`, returned, stored beyond the call, or captured by a lambda. While a
+read borrow is active, the same root cannot be mutated, moved, or passed with
+`&`.
+
+`borrow` works with copyable and noncopyable value types, including unique
+resources. It is invalid for a class, whose ordinary value already carries a
+shared identity, and for a dynamic protocol value that may hide such an
+identity. Native functions do not declare `borrow` parameters.
+
+The marker participates in overload resolution and function types. These are
+three distinct signatures:
+
+```sx
+func inspect(value:Data) {}
+func inspect(borrow value:Data) {}
+func inspect(value:&Data) {}
+
+var callback:func(borrow Data) = func(borrow value:Data) {}
+```
+
 ## Mutating an argument
 
 Use `name:&T` when a function deliberately changes a place owned by its
@@ -99,7 +144,8 @@ A `let` binding or field, including any nested field or element reached through
 it, cannot be passed with `&`.
 Several `&` arguments may name the same place at runtime. They are temporary
 aliases for the duration of that call, and writes follow the function body's
-normal execution order.
+normal execution order. An `&` argument cannot overlap a `borrow` argument of
+the same root in that call.
 
 `&T` exists only in a function or method parameter. Silex has no general
 reference type: references cannot be declared locally, stored, returned, or

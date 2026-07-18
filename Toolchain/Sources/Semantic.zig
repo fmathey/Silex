@@ -33,7 +33,7 @@ pub const Type = union(enum) {
 
 pub const FunctionType = struct {
     parameters: []const Type,
-    parameter_is_mutable_references: []const bool,
+    parameter_modes: []const Ast.ParameterMode,
     return_type: *const Type,
     owner: ?StructureType = null,
 };
@@ -69,17 +69,20 @@ pub const FixedArrayType = struct {
 const BindingState = struct {
     immutable_borrows: usize = 0,
     mutable_borrow: bool = false,
+    transient_mutable_borrows: usize = 0,
     reference: ?Borrow = null,
     lifetime_depth: usize = 0,
     narrowed_valid: bool = true,
     capture_box: bool = false,
     owner_available: bool = true,
     consumed_at: ?Source.Position = null,
+    borrowed_parameter: bool = false,
 };
 
 const Borrow = struct {
     root: ?*BindingState,
     mutable: bool,
+    transient: bool = false,
 };
 
 pub const Expression = struct {
@@ -88,6 +91,7 @@ pub const Expression = struct {
     lifetime_depth: usize = 0,
     borrow: ?Borrow = null,
     owns_borrow: bool = false,
+    borrowed_parameter: bool = false,
     value: union(enum) {
         integer: u64,
         floating: []const u8,
@@ -125,6 +129,7 @@ pub const Expression = struct {
         slice_access: SliceAccess,
         try_expression: Try,
         move_expression: Move,
+        borrow_expression: BorrowExpression,
         unary: Unary,
         binary: Binary,
         conversion: Conversion,
@@ -202,6 +207,10 @@ pub const Expression = struct {
     };
 
     pub const Move = struct {
+        operand: *Expression,
+    };
+
+    pub const BorrowExpression = struct {
         operand: *Expression,
     };
 
@@ -444,7 +453,7 @@ pub const ProtocolMethod = struct {
     generated_name: []const u8,
     return_type: Type,
     parameter_types: []const Type,
-    parameter_is_mutable_references: []const bool,
+    parameter_modes: []const Ast.ParameterMode,
 };
 
 pub const ProtocolConformance = struct {
@@ -509,7 +518,7 @@ pub const Drop = struct {
 pub const Parameter = struct {
     generated_name: []const u8,
     type: Type,
-    is_mutable_reference: bool,
+    mode: Ast.ParameterMode,
     capture_box: *const bool,
 };
 
@@ -603,7 +612,11 @@ const LambdaContext = struct {
 fn releaseBorrow(borrow: Borrow) void {
     const root = borrow.root orelse return;
     if (borrow.mutable) {
-        root.mutable_borrow = false;
+        if (borrow.transient) {
+            root.transient_mutable_borrows -= 1;
+        } else {
+            root.mutable_borrow = false;
+        }
     } else {
         root.immutable_borrows -= 1;
     }
@@ -614,7 +627,7 @@ const FunctionSymbol = struct {
     generated_name: []const u8,
     return_type: Type,
     parameter_types: []const Type,
-    parameter_is_mutable_references: []const bool,
+    parameter_modes: []const Ast.ParameterMode,
     parameter_stored: []const bool,
     position: Source.Position,
     is_main: bool,
@@ -657,7 +670,7 @@ const ProtocolRequirement = struct {
     generated_name: []const u8,
     return_type: Type,
     parameter_types: []const Type,
-    parameter_is_mutable_references: []const bool,
+    parameter_modes: []const Ast.ParameterMode,
     position: Source.Position,
 };
 
@@ -678,7 +691,7 @@ const EnumVariantSymbol = struct {
 
 const ConstructorSymbol = struct {
     parameter_types: []const Type,
-    parameter_is_mutable_references: []const bool,
+    parameter_modes: []const Ast.ParameterMode,
     parameter_stored: []const bool,
     position: Source.Position,
     visibility: Ast.MemberVisibility,
@@ -699,7 +712,7 @@ const MethodSymbol = struct {
     generated_name: []const u8,
     return_type: Type,
     parameter_types: []const Type,
-    parameter_is_mutable_references: []const bool,
+    parameter_modes: []const Ast.ParameterMode,
     parameter_stored: []const bool,
     position: Source.Position,
     visibility: Ast.MemberVisibility,
@@ -821,7 +834,7 @@ pub const Analyzer = struct {
                 .generated_name = requirement.generated_name,
                 .return_type = requirement.return_type,
                 .parameter_types = requirement.parameter_types,
-                .parameter_is_mutable_references = requirement.parameter_is_mutable_references,
+                .parameter_modes = requirement.parameter_modes,
             });
             try protocols.append(self.allocator, .{
                 .generated_name = symbol.generated_name,
@@ -1132,14 +1145,13 @@ pub const Analyzer = struct {
             var constructors: std.ArrayList(ConstructorSymbol) = .empty;
             for (ast_structure.constructors) |ast_constructor| {
                 var parameter_types: std.ArrayList(Type) = .empty;
-                var parameter_is_mutable_references: std.ArrayList(bool) = .empty;
+                var parameter_modes: std.ArrayList(Ast.ParameterMode) = .empty;
                 var parameter_stored_values: std.ArrayList(bool) = .empty;
                 for (ast_constructor.parameters) |parameter| {
                     const parameter_type = try typeFromAnnotation(self, parameter.type, parameter.position);
-                    try self.rejectClassMutableReference(parameter_type, parameter.is_mutable_reference, parameter.position);
-                    try self.rejectUniqueOwnerParameter(parameter_type, parameter.is_mutable_reference, parameter.position);
+                    try self.validateParameterMode(parameter_type, parameter.mode, parameter.position, false);
                     try parameter_types.append(self.allocator, parameter_type);
-                    try parameter_is_mutable_references.append(self.allocator, parameter.is_mutable_reference);
+                    try parameter_modes.append(self.allocator, parameter.mode);
                     var stored = parameterStored(ast_constructor.statements, parameter.name);
                     if (ast_constructor.super_arguments) |arguments| {
                         for (arguments) |argument| stored = stored or astExpressionUsesIdentifier(argument, parameter.name);
@@ -1149,14 +1161,14 @@ pub const Analyzer = struct {
                 for (constructors.items) |existing| {
                     if (sameSignature(
                         existing.parameter_types,
-                        existing.parameter_is_mutable_references,
+                        existing.parameter_modes,
                         parameter_types.items,
-                        parameter_is_mutable_references.items,
+                        parameter_modes.items,
                     )) return self.fail(ast_constructor.position, "constructor 'init' with this signature is already declared in this class");
                 }
                 try constructors.append(self.allocator, .{
                     .parameter_types = try parameter_types.toOwnedSlice(self.allocator),
-                    .parameter_is_mutable_references = try parameter_is_mutable_references.toOwnedSlice(self.allocator),
+                    .parameter_modes = try parameter_modes.toOwnedSlice(self.allocator),
                     .parameter_stored = try parameter_stored_values.toOwnedSlice(self.allocator),
                     .position = ast_constructor.position,
                     .visibility = ast_constructor.visibility,
@@ -1167,23 +1179,22 @@ pub const Analyzer = struct {
             var methods: std.ArrayList(MethodSymbol) = .empty;
             for (ast_structure.methods, 0..) |ast_method, method_index| {
                 var parameter_types: std.ArrayList(Type) = .empty;
-                var parameter_is_mutable_references: std.ArrayList(bool) = .empty;
+                var parameter_modes: std.ArrayList(Ast.ParameterMode) = .empty;
                 var parameter_stored_values: std.ArrayList(bool) = .empty;
                 for (ast_method.parameters) |parameter| {
                     const parameter_type = try typeFromAnnotation(self, parameter.type, parameter.position);
-                    try self.rejectClassMutableReference(parameter_type, parameter.is_mutable_reference, parameter.position);
-                    try self.rejectUniqueOwnerParameter(parameter_type, parameter.is_mutable_reference, parameter.position);
+                    try self.validateParameterMode(parameter_type, parameter.mode, parameter.position, false);
                     try parameter_types.append(self.allocator, parameter_type);
-                    try parameter_is_mutable_references.append(self.allocator, parameter.is_mutable_reference);
+                    try parameter_modes.append(self.allocator, parameter.mode);
                     try parameter_stored_values.append(self.allocator, parameterStored(ast_method.statements, parameter.name));
                 }
                 for (methods.items) |existing| {
                     if (existing.is_static == ast_method.is_static and
                         std.mem.eql(u8, existing.source_name, ast_method.name) and sameSignature(
                         existing.parameter_types,
-                        existing.parameter_is_mutable_references,
+                        existing.parameter_modes,
                         parameter_types.items,
-                        parameter_is_mutable_references.items,
+                        parameter_modes.items,
                     )) duplicate: {
                         const existing_extension = existing.extension_visible_files;
                         const current_extension = ast_method.extension_visible_files;
@@ -1213,7 +1224,7 @@ pub const Analyzer = struct {
                         try std.fmt.allocPrint(self.allocator, "method{d}", .{method_index}),
                     .return_type = return_type,
                     .parameter_types = try parameter_types.toOwnedSlice(self.allocator),
-                    .parameter_is_mutable_references = try parameter_is_mutable_references.toOwnedSlice(self.allocator),
+                    .parameter_modes = try parameter_modes.toOwnedSlice(self.allocator),
                     .parameter_stored = try parameter_stored_values.toOwnedSlice(self.allocator),
                     .position = ast_method.name_position,
                     .visibility = ast_method.member_visibility.?,
@@ -1272,20 +1283,19 @@ pub const Analyzer = struct {
             var requirements: std.ArrayList(ProtocolRequirement) = .empty;
             for (ast_protocol.requirements, 0..) |requirement, requirement_index| {
                 var parameter_types: std.ArrayList(Type) = .empty;
-                var parameter_references: std.ArrayList(bool) = .empty;
+                var parameter_modes: std.ArrayList(Ast.ParameterMode) = .empty;
                 for (requirement.parameters) |parameter| {
                     const parameter_type = try typeFromAnnotation(self, parameter.type, parameter.position);
-                    try self.rejectClassMutableReference(parameter_type, parameter.is_mutable_reference, parameter.position);
-                    try self.rejectUniqueOwnerParameter(parameter_type, parameter.is_mutable_reference, parameter.position);
+                    try self.validateParameterMode(parameter_type, parameter.mode, parameter.position, false);
                     try parameter_types.append(self.allocator, parameter_type);
-                    try parameter_references.append(self.allocator, parameter.is_mutable_reference);
+                    try parameter_modes.append(self.allocator, parameter.mode);
                 }
                 for (requirements.items) |existing| {
                     if (std.mem.eql(u8, existing.source_name, requirement.name) and sameSignature(
                         existing.parameter_types,
-                        existing.parameter_is_mutable_references,
+                        existing.parameter_modes,
                         parameter_types.items,
-                        parameter_references.items,
+                        parameter_modes.items,
                     )) {
                         const message = try std.fmt.allocPrint(self.allocator, "protocol method '{s}' with this signature is already declared", .{requirement.name});
                         return self.fail(requirement.name_position, message);
@@ -1299,7 +1309,7 @@ pub const Analyzer = struct {
                     .generated_name = try std.fmt.allocPrint(self.allocator, "method{d}_{d}", .{ protocol_index, requirement_index }),
                     .return_type = return_type,
                     .parameter_types = try parameter_types.toOwnedSlice(self.allocator),
-                    .parameter_is_mutable_references = try parameter_references.toOwnedSlice(self.allocator),
+                    .parameter_modes = try parameter_modes.toOwnedSlice(self.allocator),
                     .position = requirement.name_position,
                 });
             }
@@ -1350,9 +1360,9 @@ pub const Analyzer = struct {
                 if (!std.mem.eql(u8, method_symbol.source_name, requirement.source_name)) continue;
                 if (!sameSignature(
                     method_symbol.parameter_types,
-                    method_symbol.parameter_is_mutable_references,
+                    method_symbol.parameter_modes,
                     requirement.parameter_types,
-                    requirement.parameter_is_mutable_references,
+                    requirement.parameter_modes,
                 )) continue;
                 if (typeEqual(method_symbol.return_type, requirement.return_type)) return .{
                     .symbol = method_symbol,
@@ -1485,9 +1495,9 @@ pub const Analyzer = struct {
                     if (base_method.is_static) continue;
                     if (!std.mem.eql(u8, method_symbol.source_name, base_method.source_name) or !sameSignature(
                         method_symbol.parameter_types,
-                        method_symbol.parameter_is_mutable_references,
+                        method_symbol.parameter_modes,
                         base_method.parameter_types,
-                        base_method.parameter_is_mutable_references,
+                        base_method.parameter_modes,
                     )) continue;
                     if (base_method.visibility == .private_access) {
                         private_match = true;
@@ -1550,22 +1560,21 @@ pub const Analyzer = struct {
                 if (ast_function.is_public) return self.fail(ast_function.position, "native functions cannot be public");
             }
             var parameter_types: std.ArrayList(Type) = .empty;
-            var parameter_is_mutable_references: std.ArrayList(bool) = .empty;
+            var parameter_modes: std.ArrayList(Ast.ParameterMode) = .empty;
             var parameter_stored_values: std.ArrayList(bool) = .empty;
             for (ast_function.parameters) |parameter| {
                 const parameter_type = try typeFromAnnotation(self, parameter.type, parameter.position);
-                try self.rejectClassMutableReference(parameter_type, parameter.is_mutable_reference, parameter.position);
-                try self.rejectUniqueOwnerParameter(parameter_type, parameter.is_mutable_reference, parameter.position);
+                try self.validateParameterMode(parameter_type, parameter.mode, parameter.position, ast_function.is_native);
                 try parameter_types.append(self.allocator, parameter_type);
-                try parameter_is_mutable_references.append(self.allocator, parameter.is_mutable_reference);
+                try parameter_modes.append(self.allocator, parameter.mode);
                 try parameter_stored_values.append(self.allocator, parameterStored(ast_function.statements, parameter.name));
             }
             for (self.functions.items) |existing| {
                 if (std.mem.eql(u8, existing.source_name, ast_function.name) and sameSignature(
                     existing.parameter_types,
-                    existing.parameter_is_mutable_references,
+                    existing.parameter_modes,
                     parameter_types.items,
-                    parameter_is_mutable_references.items,
+                    parameter_modes.items,
                 )) {
                     const message = try std.fmt.allocPrint(self.allocator, "function '{s}' with this signature is already declared", .{ast_function.name});
                     return self.fail(ast_function.name_position, message);
@@ -1588,8 +1597,8 @@ pub const Analyzer = struct {
                     );
                     return self.fail(ast_function.position, message);
                 }
-                for (ast_function.parameters, parameter_types.items, parameter_is_mutable_references.items) |parameter, parameter_type, is_mutable_reference| {
-                    if (!isNativeParameterType(parameter_type) or is_mutable_reference) {
+                for (ast_function.parameters, parameter_types.items, parameter_modes.items) |parameter, parameter_type, mode| {
+                    if (!isNativeParameterType(parameter_type) or mode != .value) {
                         const parameter_name = try allocatedTypeName(self.allocator, parameter_type);
                         const message = try std.fmt.allocPrint(
                             self.allocator,
@@ -1610,7 +1619,7 @@ pub const Analyzer = struct {
                     try std.fmt.allocPrint(self.allocator, "silexFunction{d}", .{index}),
                 .return_type = return_type,
                 .parameter_types = try parameter_types.toOwnedSlice(self.allocator),
-                .parameter_is_mutable_references = try parameter_is_mutable_references.toOwnedSlice(self.allocator),
+                .parameter_modes = try parameter_modes.toOwnedSlice(self.allocator),
                 .parameter_stored = try parameter_stored_values.toOwnedSlice(self.allocator),
                 .position = ast_function.name_position,
                 .is_main = is_main,
@@ -1729,7 +1738,7 @@ pub const Analyzer = struct {
         var scope = Scope{ .parent = null, .depth = 1 };
         self.function_scope_depth = scope.depth;
         var parameters: std.ArrayList(Parameter) = .empty;
-        for (ast.parameters, symbol.parameter_types, symbol.parameter_is_mutable_references) |parameter, parameter_type, is_mutable_reference| {
+        for (ast.parameters, symbol.parameter_types, symbol.parameter_modes) |parameter, parameter_type, mode| {
             if (findInCurrentScope(&scope, parameter.name) != null) {
                 const message = try std.fmt.allocPrint(self.allocator, "parameter '{s}' is already declared", .{parameter.name});
                 return self.fail(parameter.position, message);
@@ -1737,11 +1746,12 @@ pub const Analyzer = struct {
             const generated_name = try std.fmt.allocPrint(self.allocator, "silexValue{d}", .{self.next_symbol_id});
             self.next_symbol_id += 1;
             const state = try self.newBindingState(parameter_type);
-            try scope.symbols.append(self.allocator, .{ .source_name = parameter.name, .generated_name = generated_name, .type = parameter_type, .mutability = .mutable, .state = state, .scope_depth = scope.depth });
+            state.borrowed_parameter = mode == .borrow;
+            try scope.symbols.append(self.allocator, .{ .source_name = parameter.name, .generated_name = generated_name, .type = parameter_type, .mutability = if (mode == .borrow) .immutable else .mutable, .state = state, .scope_depth = scope.depth });
             try parameters.append(self.allocator, .{
                 .generated_name = generated_name,
                 .type = parameter_type,
-                .is_mutable_reference = is_mutable_reference,
+                .mode = mode,
                 .capture_box = &state.capture_box,
             });
         }
@@ -1785,7 +1795,7 @@ pub const Analyzer = struct {
         var scope = Scope{ .parent = null, .depth = 1 };
         self.function_scope_depth = scope.depth;
         var parameters: std.ArrayList(Parameter) = .empty;
-        for (ast.parameters, symbol.parameter_types, symbol.parameter_is_mutable_references) |parameter, parameter_type, is_mutable_reference| {
+        for (ast.parameters, symbol.parameter_types, symbol.parameter_modes) |parameter, parameter_type, mode| {
             if (findInCurrentScope(&scope, parameter.name) != null) {
                 const message = try std.fmt.allocPrint(self.allocator, "parameter '{s}' is already declared", .{parameter.name});
                 return self.fail(parameter.position, message);
@@ -1793,18 +1803,19 @@ pub const Analyzer = struct {
             const generated_name = try std.fmt.allocPrint(self.allocator, "silexValue{d}", .{self.next_symbol_id});
             self.next_symbol_id += 1;
             const state = try self.newBindingState(parameter_type);
+            state.borrowed_parameter = mode == .borrow;
             try scope.symbols.append(self.allocator, .{
                 .source_name = parameter.name,
                 .generated_name = generated_name,
                 .type = parameter_type,
-                .mutability = .mutable,
+                .mutability = if (mode == .borrow) .immutable else .mutable,
                 .state = state,
                 .scope_depth = scope.depth,
             });
             try parameters.append(self.allocator, .{
                 .generated_name = generated_name,
                 .type = parameter_type,
-                .is_mutable_reference = is_mutable_reference,
+                .mode = mode,
                 .capture_box = &state.capture_box,
             });
         }
@@ -1852,7 +1863,7 @@ pub const Analyzer = struct {
         var scope = Scope{ .parent = null, .depth = 1 };
         self.function_scope_depth = scope.depth;
         var parameters: std.ArrayList(Parameter) = .empty;
-        for (ast.parameters, symbol.parameter_types, symbol.parameter_is_mutable_references) |parameter, parameter_type, is_mutable_reference| {
+        for (ast.parameters, symbol.parameter_types, symbol.parameter_modes) |parameter, parameter_type, mode| {
             if (findInCurrentScope(&scope, parameter.name) != null) {
                 const message = try std.fmt.allocPrint(self.allocator, "parameter '{s}' is already declared", .{parameter.name});
                 return self.fail(parameter.position, message);
@@ -1860,18 +1871,19 @@ pub const Analyzer = struct {
             const generated_name = try std.fmt.allocPrint(self.allocator, "silexValue{d}", .{self.next_symbol_id});
             self.next_symbol_id += 1;
             const state = try self.newBindingState(parameter_type);
+            state.borrowed_parameter = mode == .borrow;
             try scope.symbols.append(self.allocator, .{
                 .source_name = parameter.name,
                 .generated_name = generated_name,
                 .type = parameter_type,
-                .mutability = .mutable,
+                .mutability = if (mode == .borrow) .immutable else .mutable,
                 .state = state,
                 .scope_depth = scope.depth,
             });
             try parameters.append(self.allocator, .{
                 .generated_name = generated_name,
                 .type = parameter_type,
-                .is_mutable_reference = is_mutable_reference,
+                .mode = mode,
                 .capture_box = &state.capture_box,
             });
         }
@@ -1963,22 +1975,21 @@ pub const Analyzer = struct {
 
         const resolved = try self.resolveConstructorOverload(base.source_name, position, ast_arguments, scope, candidates.items);
         var arguments: std.ArrayList(*Expression) = .empty;
-        for (ast_arguments, resolved.symbol.parameter_types, resolved.symbol.parameter_is_mutable_references, resolved.symbol.parameter_stored, 0..) |argument, expected_type, is_mutable_reference, is_stored, index| {
-            var value = if (is_mutable_reference)
-                try self.mutableReferenceArgument(argument, scope, expected_type)
-            else
-                try self.expressionForExpected(argument, scope, expected_type);
+        var transient_borrows: std.ArrayList(Borrow) = .empty;
+        defer for (transient_borrows.items) |borrow| releaseBorrow(borrow);
+        for (ast_arguments, resolved.symbol.parameter_types, resolved.symbol.parameter_modes, resolved.symbol.parameter_stored, 0..) |argument, expected_type, mode, is_stored, index| {
+            var value = try self.argumentForMode(argument, scope, expected_type, mode);
             value = try self.coerce(value, expected_type);
             if (!typeEqual(value.type, expected_type)) {
                 const message = try std.fmt.allocPrint(self.allocator, "argument {d} of base constructor '{s}' expects '{s}', found '{s}'", .{ index + 1, base.source_name, typeName(expected_type), typeName(value.type) });
                 return self.fail(argument.position, message);
             }
-            if (!is_mutable_reference) try self.rejectUniqueOwnerArgument(value, argument.position);
+            if (mode == .value) try self.rejectUniqueOwnerArgument(value, argument.position);
             if (is_stored and value.lifetime_depth != 0) {
                 return self.fail(argument.position, "capturing callback cannot be passed to a base constructor parameter whose value escapes the call");
             }
             try arguments.append(self.allocator, value);
-            self.releaseTransientBorrow(value);
+            try self.retainTransientBorrow(&transient_borrows, value);
         }
         return .{ .generated_name = base.generated_name, .arguments = try arguments.toOwnedSlice(self.allocator) };
     }
@@ -2217,6 +2228,7 @@ pub const Analyzer = struct {
             },
             .try_expression => |try_value| try self.validateConstructorExpression(structure, try_value.operand, initialized),
             .move_expression => |move_value| try self.validateConstructorExpression(structure, move_value.operand, initialized),
+            .borrow_expression => |borrow_value| try self.validateConstructorExpression(structure, borrow_value.operand, initialized),
             .unary => |unary| try self.validateConstructorExpression(structure, unary.operand, initialized),
             .binary => |binary| {
                 try self.validateConstructorExpression(structure, binary.left, initialized);
@@ -2634,6 +2646,12 @@ pub const Analyzer = struct {
                         .lifetime_depth = value.?.lifetime_depth,
                         .value = .{ .adapt_function = value.? },
                     });
+                }
+                if (value.?.borrowed_parameter) {
+                    if (assignmentRoot(ast.target)) |root| switch (root) {
+                        .self, .static => return self.fail(ast.value.?.position, "a 'borrow' parameter cannot be stored beyond its call"),
+                        .variable => {},
+                    };
                 }
                 const destination_depth = assignmentDestinationDepth(ast.target, self, scope);
                 if (destination_depth < value.?.lifetime_depth) {
@@ -3072,6 +3090,9 @@ pub const Analyzer = struct {
                 const message = try typeMismatchMessage(self.allocator, self.current_return_type, value.type);
                 return self.fail(ast_value.position, message);
             }
+            if (value.borrowed_parameter) {
+                return self.fail(ast.position, "a 'borrow' parameter cannot be returned from its call");
+            }
             if (value.lifetime_depth != 0) {
                 return self.fail(ast.position, "capturing function value cannot be returned from its lexical scope");
             }
@@ -3104,6 +3125,9 @@ pub const Analyzer = struct {
         if (ast.value == .unary and ast.value.unary.operator == .borrow) {
             return self.fail(ast.value.unary.operator_position, "'&' is only valid for an argument of a parameter declared with '&'");
         }
+        if (ast.value == .borrow_expression) {
+            return self.fail(ast.value.borrow_expression.operator_position, "'borrow' is only valid for an argument of a parameter declared with 'borrow'");
+        }
         return switch (ast.value) {
             .integer => |lexeme| self.integerExpression(ast.position, lexeme),
             .floating => |lexeme| self.floatExpression(ast.position, lexeme),
@@ -3133,6 +3157,7 @@ pub const Analyzer = struct {
             .slice_access => |access| self.sliceAccessExpression(access, scope),
             .try_expression => |try_value| self.tryExpression(try_value, scope),
             .move_expression => |move_value| self.moveExpression(move_value, scope),
+            .borrow_expression => unreachable,
             .unary => |unary| self.unaryExpression(unary, scope),
             .conversion => |conversion| self.conversionExpression(conversion, scope),
             .binary => |binary| self.binaryExpression(binary, scope),
@@ -3404,6 +3429,7 @@ pub const Analyzer = struct {
             .position = position,
             .borrow = symbol.state.reference,
             .lifetime_depth = symbol.state.lifetime_depth,
+            .borrowed_parameter = symbol.state.borrowed_parameter,
             .value = if (narrowed)
                 .{ .optional_unwrap = .{ .generated_name = symbol.generated_name, .capture_box = &symbol.state.capture_box } }
             else
@@ -3668,22 +3694,21 @@ pub const Analyzer = struct {
         }
         const function_symbol = try self.resolveFunctionOverload(call.name, call.name_position, call.arguments, scope, candidates.items);
         var arguments: std.ArrayList(*Expression) = .empty;
-        for (call.arguments, function_symbol.parameter_types, function_symbol.parameter_is_mutable_references, function_symbol.parameter_stored, 0..) |argument, expected_type, is_mutable_reference, is_stored, index| {
-            var value = if (is_mutable_reference)
-                try self.mutableReferenceArgument(argument, scope, expected_type)
-            else
-                try self.expressionForExpected(argument, scope, expected_type);
+        var transient_borrows: std.ArrayList(Borrow) = .empty;
+        defer for (transient_borrows.items) |borrow| releaseBorrow(borrow);
+        for (call.arguments, function_symbol.parameter_types, function_symbol.parameter_modes, function_symbol.parameter_stored, 0..) |argument, expected_type, mode, is_stored, index| {
+            var value = try self.argumentForMode(argument, scope, expected_type, mode);
             value = try self.coerce(value, expected_type);
             if (!typeEqual(value.type, expected_type)) {
                 const message = try std.fmt.allocPrint(self.allocator, "argument {d} of '{s}' expects '{s}', found '{s}'", .{ index + 1, call.name, typeName(expected_type), typeName(value.type) });
                 return self.fail(argument.position, message);
             }
-            if (!is_mutable_reference) try self.rejectUniqueOwnerArgument(value, argument.position);
+            if (mode == .value) try self.rejectUniqueOwnerArgument(value, argument.position);
             if (is_stored and value.lifetime_depth != 0) {
                 return self.fail(argument.position, "capturing callback cannot be passed to a parameter whose value escapes the call");
             }
             try arguments.append(self.allocator, value);
-            self.releaseTransientBorrow(value);
+            try self.retainTransientBorrow(&transient_borrows, value);
         }
         return self.newExpression(.{
             .type = function_symbol.return_type,
@@ -3724,18 +3749,18 @@ pub const Analyzer = struct {
             return self.fail(position, message);
         }
         var arguments: std.ArrayList(*Expression) = .empty;
-        for (ast_arguments, function_type.parameters, function_type.parameter_is_mutable_references, 0..) |ast_argument, expected_type, is_mutable_reference, index| {
-            var argument = if (is_mutable_reference)
-                try self.mutableReferenceArgument(ast_argument, scope, expected_type)
-            else
-                try self.expressionForExpected(ast_argument, scope, expected_type);
+        var transient_borrows: std.ArrayList(Borrow) = .empty;
+        defer for (transient_borrows.items) |borrow| releaseBorrow(borrow);
+        for (ast_arguments, function_type.parameters, function_type.parameter_modes, 0..) |ast_argument, expected_type, mode, index| {
+            var argument = try self.argumentForMode(ast_argument, scope, expected_type, mode);
             argument = try self.coerce(argument, expected_type);
             if (!typeEqual(argument.type, expected_type)) {
                 const message = try std.fmt.allocPrint(self.allocator, "argument {d} expects '{s}', found '{s}'", .{ index + 1, typeName(expected_type), typeName(argument.type) });
                 return self.fail(ast_argument.position, message);
             }
-            if (!is_mutable_reference) try self.rejectUniqueOwnerArgument(argument, ast_argument.position);
+            if (mode == .value) try self.rejectUniqueOwnerArgument(argument, ast_argument.position);
             try arguments.append(self.allocator, argument);
+            try self.retainTransientBorrow(&transient_borrows, argument);
         }
         return self.newExpression(.{
             .type = function_type.return_type.*,
@@ -3756,7 +3781,7 @@ pub const Analyzer = struct {
         expected_type: ?Type,
     ) AnalyzeError!*Expression {
         var parameter_types: std.ArrayList(Type) = .empty;
-        var parameter_is_mutable_references: std.ArrayList(bool) = .empty;
+        var parameter_modes: std.ArrayList(Ast.ParameterMode) = .empty;
         var parameters: std.ArrayList(Parameter) = .empty;
         var scope = Scope{ .parent = parent_scope, .depth = parent_scope.depth + 1 };
         for (lambda.parameters) |parameter| {
@@ -3765,25 +3790,25 @@ pub const Analyzer = struct {
                 return self.fail(parameter.position, message);
             }
             const parameter_type = try typeFromAnnotation(self, parameter.type, parameter.position);
-            try self.rejectClassMutableReference(parameter_type, parameter.is_mutable_reference, parameter.position);
-            try self.rejectUniqueOwnerParameter(parameter_type, parameter.is_mutable_reference, parameter.position);
+            try self.validateParameterMode(parameter_type, parameter.mode, parameter.position, false);
             const generated_name = try std.fmt.allocPrint(self.allocator, "silexValue{d}", .{self.next_symbol_id});
             self.next_symbol_id += 1;
             try parameter_types.append(self.allocator, parameter_type);
-            try parameter_is_mutable_references.append(self.allocator, parameter.is_mutable_reference);
+            try parameter_modes.append(self.allocator, parameter.mode);
             const state = try self.newBindingState(parameter_type);
+            state.borrowed_parameter = parameter.mode == .borrow;
             try scope.symbols.append(self.allocator, .{
                 .source_name = parameter.name,
                 .generated_name = generated_name,
                 .type = parameter_type,
-                .mutability = .mutable,
+                .mutability = if (parameter.mode == .borrow) .immutable else .mutable,
                 .state = state,
                 .scope_depth = scope.depth,
             });
             try parameters.append(self.allocator, .{
                 .generated_name = generated_name,
                 .type = parameter_type,
-                .is_mutable_reference = parameter.is_mutable_reference,
+                .mode = parameter.mode,
                 .capture_box = &state.capture_box,
             });
         }
@@ -3793,7 +3818,7 @@ pub const Analyzer = struct {
         return_pointer.* = return_type;
         var lambda_type: Type = .{ .function = .{
             .parameters = try parameter_types.toOwnedSlice(self.allocator),
-            .parameter_is_mutable_references = try parameter_is_mutable_references.toOwnedSlice(self.allocator),
+            .parameter_modes = try parameter_modes.toOwnedSlice(self.allocator),
             .return_type = return_pointer,
         } };
         if (expected_type) |expected| {
@@ -3955,23 +3980,22 @@ pub const Analyzer = struct {
         const resolved = try self.resolveMethodOverload(call.name, call.name_position, call.arguments, scope, candidates.items);
         const method_symbol = resolved.symbol;
         var arguments: std.ArrayList(*Expression) = .empty;
+        var transient_borrows: std.ArrayList(Borrow) = .empty;
+        defer for (transient_borrows.items) |borrow| releaseBorrow(borrow);
         const receiver_depth = expressionScopeDepth(call.object, scope);
-        for (call.arguments, method_symbol.parameter_types, method_symbol.parameter_is_mutable_references, method_symbol.parameter_stored, 0..) |argument, expected_type, is_mutable_reference, is_stored, index| {
-            var value = if (is_mutable_reference)
-                try self.mutableReferenceArgument(argument, scope, expected_type)
-            else
-                try self.expressionForExpected(argument, scope, expected_type);
+        for (call.arguments, method_symbol.parameter_types, method_symbol.parameter_modes, method_symbol.parameter_stored, 0..) |argument, expected_type, mode, is_stored, index| {
+            var value = try self.argumentForMode(argument, scope, expected_type, mode);
             value = try self.coerce(value, expected_type);
             if (!typeEqual(value.type, expected_type)) {
                 const message = try std.fmt.allocPrint(self.allocator, "argument {d} of method '{s}' expects '{s}', found '{s}'", .{ index + 1, call.name, typeName(expected_type), typeName(value.type) });
                 return self.fail(argument.position, message);
             }
-            if (!is_mutable_reference) try self.rejectUniqueOwnerArgument(value, argument.position);
+            if (mode == .value) try self.rejectUniqueOwnerArgument(value, argument.position);
             if (is_stored and receiver_depth < value.lifetime_depth) {
                 return self.fail(argument.position, "capturing callback cannot be stored in a receiver that outlives one of its captures");
             }
             try arguments.append(self.allocator, value);
-            self.releaseTransientBorrow(value);
+            try self.retainTransientBorrow(&transient_borrows, value);
         }
         const method_id = MethodId{ .structure_index = resolved.structure_index, .method_index = resolved.index };
         if (receiver == .self and self.current_method_index != null) {
@@ -4023,7 +4047,7 @@ pub const Analyzer = struct {
                 call.arguments,
                 scope,
                 requirement.parameter_types,
-                requirement.parameter_is_mutable_references,
+                requirement.parameter_modes,
             ) orelse continue;
             if (best == null or overloadBetter(scores, best_scores.?)) {
                 best = index;
@@ -4043,11 +4067,10 @@ pub const Analyzer = struct {
         }
         const requirement = protocol.requirements[best.?];
         var arguments: std.ArrayList(*Expression) = .empty;
-        for (call.arguments, requirement.parameter_types, requirement.parameter_is_mutable_references, 0..) |argument, expected_type, is_mutable_reference, index| {
-            var value = if (is_mutable_reference)
-                try self.mutableReferenceArgument(argument, scope, expected_type)
-            else
-                try self.expressionForExpected(argument, scope, expected_type);
+        var transient_borrows: std.ArrayList(Borrow) = .empty;
+        defer for (transient_borrows.items) |borrow| releaseBorrow(borrow);
+        for (call.arguments, requirement.parameter_types, requirement.parameter_modes, 0..) |argument, expected_type, mode, index| {
+            var value = try self.argumentForMode(argument, scope, expected_type, mode);
             value = try self.coerce(value, expected_type);
             if (!typeEqual(value.type, expected_type)) {
                 const message = try std.fmt.allocPrint(
@@ -4057,9 +4080,9 @@ pub const Analyzer = struct {
                 );
                 return self.fail(argument.position, message);
             }
-            if (!is_mutable_reference) try self.rejectUniqueOwnerArgument(value, argument.position);
+            if (mode == .value) try self.rejectUniqueOwnerArgument(value, argument.position);
             try arguments.append(self.allocator, value);
-            self.releaseTransientBorrow(value);
+            try self.retainTransientBorrow(&transient_borrows, value);
         }
         return self.newExpression(.{
             .type = requirement.return_type,
@@ -4156,22 +4179,21 @@ pub const Analyzer = struct {
         const resolved = try self.resolveMethodOverload(call.name, call.name_position, call.arguments, scope, candidates.items);
         const method_symbol = resolved.symbol;
         var arguments: std.ArrayList(*Expression) = .empty;
-        for (call.arguments, method_symbol.parameter_types, method_symbol.parameter_is_mutable_references, method_symbol.parameter_stored, 0..) |argument, expected_type, is_mutable_reference, is_stored, index| {
-            var value = if (is_mutable_reference)
-                try self.mutableReferenceArgument(argument, scope, expected_type)
-            else
-                try self.expressionForExpected(argument, scope, expected_type);
+        var transient_borrows: std.ArrayList(Borrow) = .empty;
+        defer for (transient_borrows.items) |borrow| releaseBorrow(borrow);
+        for (call.arguments, method_symbol.parameter_types, method_symbol.parameter_modes, method_symbol.parameter_stored, 0..) |argument, expected_type, mode, is_stored, index| {
+            var value = try self.argumentForMode(argument, scope, expected_type, mode);
             value = try self.coerce(value, expected_type);
             if (!typeEqual(value.type, expected_type)) {
                 const message = try std.fmt.allocPrint(self.allocator, "argument {d} of static method '{s}' expects '{s}', found '{s}'", .{ index + 1, call.name, typeName(expected_type), typeName(value.type) });
                 return self.fail(argument.position, message);
             }
-            if (!is_mutable_reference) try self.rejectUniqueOwnerArgument(value, argument.position);
+            if (mode == .value) try self.rejectUniqueOwnerArgument(value, argument.position);
             if (is_stored and value.lifetime_depth != 0) {
                 return self.fail(argument.position, "capturing callback cannot be passed to a parameter whose value escapes the call");
             }
             try arguments.append(self.allocator, value);
-            self.releaseTransientBorrow(value);
+            try self.retainTransientBorrow(&transient_borrows, value);
         }
         return self.newExpression(.{
             .type = method_symbol.return_type,
@@ -4423,22 +4445,21 @@ pub const Analyzer = struct {
         const resolved = try self.resolveMethodOverload(call.name, call.name_position, call.arguments, scope, candidates.items);
         const method_symbol = resolved.symbol;
         var arguments: std.ArrayList(*Expression) = .empty;
-        for (call.arguments, method_symbol.parameter_types, method_symbol.parameter_is_mutable_references, method_symbol.parameter_stored, 0..) |argument, expected_type, is_mutable_reference, is_stored, index| {
-            var value = if (is_mutable_reference)
-                try self.mutableReferenceArgument(argument, scope, expected_type)
-            else
-                try self.expressionForExpected(argument, scope, expected_type);
+        var transient_borrows: std.ArrayList(Borrow) = .empty;
+        defer for (transient_borrows.items) |borrow| releaseBorrow(borrow);
+        for (call.arguments, method_symbol.parameter_types, method_symbol.parameter_modes, method_symbol.parameter_stored, 0..) |argument, expected_type, mode, is_stored, index| {
+            var value = try self.argumentForMode(argument, scope, expected_type, mode);
             value = try self.coerce(value, expected_type);
             if (!typeEqual(value.type, expected_type)) {
                 const message = try std.fmt.allocPrint(self.allocator, "argument {d} of method '{s}' expects '{s}', found '{s}'", .{ index + 1, call.name, typeName(expected_type), typeName(value.type) });
                 return self.fail(argument.position, message);
             }
-            if (!is_mutable_reference) try self.rejectUniqueOwnerArgument(value, argument.position);
+            if (mode == .value) try self.rejectUniqueOwnerArgument(value, argument.position);
             if (is_stored and value.lifetime_depth > 1) {
                 return self.fail(argument.position, "capturing callback cannot be stored in a receiver that outlives one of its captures");
             }
             try arguments.append(self.allocator, value);
-            self.releaseTransientBorrow(value);
+            try self.retainTransientBorrow(&transient_borrows, value);
         }
         const method_id = MethodId{ .structure_index = resolved.structure_index, .method_index = resolved.index };
         try self.current_method_dependencies.append(self.allocator, method_id);
@@ -4691,6 +4712,12 @@ pub const Analyzer = struct {
                                 });
                             }
                             resolved_operation = .append_range;
+                            if (value.borrowed_parameter) {
+                                if (assignmentRoot(call.object)) |root| switch (root) {
+                                    .self, .static => return self.fail(argument.position, "a 'borrow' parameter cannot be stored beyond its call"),
+                                    .variable => {},
+                                };
+                            }
                             if (expressionScopeDepth(call.object, scope) < value.lifetime_depth) {
                                 return self.fail(argument.position, "capturing function value cannot be stored in a longer-lived collection");
                             }
@@ -4712,6 +4739,12 @@ pub const Analyzer = struct {
                 .insert, .replace => index == 1,
                 else => false,
             };
+            if (stores_value and value.borrowed_parameter) {
+                if (assignmentRoot(call.object)) |root| switch (root) {
+                    .self, .static => return self.fail(argument.position, "a 'borrow' parameter cannot be stored beyond its call"),
+                    .variable => {},
+                };
+            }
             if (stores_value and expressionScopeDepth(call.object, scope) < value.lifetime_depth) {
                 return self.fail(argument.position, "capturing function value cannot be stored in a longer-lived collection");
             }
@@ -4799,7 +4832,7 @@ pub const Analyzer = struct {
         var best_scores: ?[]const u8 = null;
         var ambiguous: std.ArrayList(FunctionSymbol) = .empty;
         for (candidates) |candidate| {
-            const scores = try self.overloadScores(arguments, scope, candidate.parameter_types, candidate.parameter_is_mutable_references);
+            const scores = try self.overloadScores(arguments, scope, candidate.parameter_types, candidate.parameter_modes);
             if (scores == null) continue;
             if (best == null) {
                 best = candidate;
@@ -4832,7 +4865,7 @@ pub const Analyzer = struct {
         var best_scores: ?[]const u8 = null;
         var ambiguous: std.ArrayList(MethodCandidate) = .empty;
         for (candidates) |candidate| {
-            const scores = try self.overloadScores(arguments, scope, candidate.symbol.parameter_types, candidate.symbol.parameter_is_mutable_references);
+            const scores = try self.overloadScores(arguments, scope, candidate.symbol.parameter_types, candidate.symbol.parameter_modes);
             if (scores == null) continue;
             if (best == null) {
                 best = candidate;
@@ -4865,7 +4898,7 @@ pub const Analyzer = struct {
         var best_scores: ?[]const u8 = null;
         var ambiguous: std.ArrayList(ConstructorCandidate) = .empty;
         for (candidates) |candidate| {
-            const scores = try self.overloadScores(arguments, scope, candidate.symbol.parameter_types, candidate.symbol.parameter_is_mutable_references);
+            const scores = try self.overloadScores(arguments, scope, candidate.symbol.parameter_types, candidate.symbol.parameter_modes);
             if (scores == null) continue;
             if (best == null) {
                 best = candidate;
@@ -4899,18 +4932,23 @@ pub const Analyzer = struct {
         arguments: []const *Ast.Expression,
         scope: *const Scope,
         parameter_types: []const Type,
-        parameter_is_mutable_references: []const bool,
+        parameter_modes: []const Ast.ParameterMode,
     ) AnalyzeError!?[]const u8 {
         if (arguments.len != parameter_types.len) return null;
         const owner_states = try self.snapshotOwnerStates(scope);
         defer restoreOwnerStates(owner_states);
         var scores: std.ArrayList(u8) = .empty;
-        for (arguments, parameter_types, parameter_is_mutable_references) |argument, parameter_type, is_mutable_reference| {
-            const is_borrow = argument.value == .unary and argument.value.unary.operator == .borrow;
-            if (is_borrow != is_mutable_reference) return null;
+        for (arguments, parameter_types, parameter_modes) |argument, parameter_type, parameter_mode| {
+            const argument_mode: Ast.ParameterMode = if (argument.value == .borrow_expression)
+                .borrow
+            else if (argument.value == .unary and argument.value.unary.operator == .borrow)
+                .mutable_reference
+            else
+                .value;
+            if (argument_mode != parameter_mode) return null;
             const argument_value = if (argument.value == .null)
                 try self.newExpression(.{ .type = .null, .position = argument.position, .value = .null })
-            else if (is_borrow and argument.value.unary.operand.value == .identifier and
+            else if (argument_mode == .mutable_reference and argument.value.unary.operand.value == .identifier and
                 findSymbol(scope, argument.value.unary.operand.value.identifier) != null and
                 findSymbol(scope, argument.value.unary.operand.value.identifier).?.unwrap_optional)
                 try self.newExpression(.{
@@ -4921,8 +4959,10 @@ pub const Analyzer = struct {
                         .capture_box = &findSymbol(scope, argument.value.unary.operand.value.identifier).?.state.capture_box,
                     } },
                 })
-            else if (is_borrow)
+            else if (argument_mode == .mutable_reference)
                 try self.expression(argument.value.unary.operand, scope)
+            else if (argument_mode == .borrow)
+                try self.expression(argument.value.borrow_expression.operand, scope)
             else
                 try self.expressionForExpected(argument, scope, null);
             const score = self.implicitConversionScore(argument_value.type, parameter_type, argument_value.position.file) orelse literalOverloadScore(argument_value, parameter_type) orelse return null;
@@ -5385,24 +5425,23 @@ pub const Analyzer = struct {
         const resolved = try self.resolveConstructorOverload(structure.source_name, initializer.name_position, initializer.arguments, scope, candidates.items);
         const constructor_symbol = resolved.symbol;
         var arguments: std.ArrayList(*Expression) = .empty;
+        var transient_borrows: std.ArrayList(Borrow) = .empty;
+        defer for (transient_borrows.items) |borrow| releaseBorrow(borrow);
         var lifetime_depth: usize = 0;
-        for (initializer.arguments, constructor_symbol.parameter_types, constructor_symbol.parameter_is_mutable_references, constructor_symbol.parameter_stored, 0..) |argument, expected_type, is_mutable_reference, is_stored, index| {
-            var value = if (is_mutable_reference)
-                try self.mutableReferenceArgument(argument, scope, expected_type)
-            else
-                try self.expressionForExpected(argument, scope, expected_type);
+        for (initializer.arguments, constructor_symbol.parameter_types, constructor_symbol.parameter_modes, constructor_symbol.parameter_stored, 0..) |argument, expected_type, mode, is_stored, index| {
+            var value = try self.argumentForMode(argument, scope, expected_type, mode);
             value = try self.coerce(value, expected_type);
             if (!typeEqual(value.type, expected_type)) {
                 const message = try std.fmt.allocPrint(self.allocator, "argument {d} of constructor '{s}' expects '{s}', found '{s}'", .{ index + 1, structure.source_name, typeName(expected_type), typeName(value.type) });
                 return self.fail(argument.position, message);
             }
-            if (!is_mutable_reference) try self.rejectUniqueOwnerArgument(value, argument.position);
+            if (mode == .value) try self.rejectUniqueOwnerArgument(value, argument.position);
             if (is_stored and value.lifetime_depth != 0) {
                 return self.fail(argument.position, "capturing callback cannot be passed to a constructor parameter whose value escapes the call");
             }
             try arguments.append(self.allocator, value);
+            try self.retainTransientBorrow(&transient_borrows, value);
             lifetime_depth = @max(lifetime_depth, value.lifetime_depth);
-            self.releaseTransientBorrow(value);
         }
         return self.newExpression(.{
             .type = .{ .structure = self.structureType(structure_index) },
@@ -5484,6 +5523,7 @@ pub const Analyzer = struct {
                 .type = field.type,
                 .position = member.name_position,
                 .lifetime_depth = object.lifetime_depth,
+                .borrowed_parameter = object.borrowed_parameter,
                 .value = .{ .member_access = .{
                     .object = object,
                     .generated_name = field.generated_name,
@@ -5559,6 +5599,7 @@ pub const Analyzer = struct {
             .type = element_type,
             .position = access.bracket_position,
             .lifetime_depth = object.lifetime_depth,
+            .borrowed_parameter = object.borrowed_parameter,
             .value = .{ .index_access = .{
                 .object = object,
                 .index = index,
@@ -5609,35 +5650,43 @@ pub const Analyzer = struct {
         return null;
     }
 
-    fn rejectClassMutableReference(
+    fn validateParameterMode(
         self: *Analyzer,
         type_value: Type,
-        is_mutable_reference: bool,
+        mode: Ast.ParameterMode,
         position: Source.Position,
-    ) AnalyzeError!void {
-        if (!is_mutable_reference or type_value != .structure or !type_value.structure.is_class) return;
-        const message = try std.fmt.allocPrint(
-            self.allocator,
-            "class '{s}' already has reference semantics; '&{s}' is invalid",
-            .{ type_value.structure.source_name, type_value.structure.source_name },
-        );
-        return self.fail(position, message);
-    }
-
-    fn rejectUniqueOwnerParameter(
-        self: *Analyzer,
-        type_value: Type,
-        is_mutable_reference: bool,
-        position: Source.Position,
+        is_native: bool,
     ) AnalyzeError!void {
         try self.rejectUniqueOwnerComposition(type_value, true, position);
-        if (!isUniqueOwnerType(type_value) or !is_mutable_reference) return;
-        const message = try std.fmt.allocPrint(
-            self.allocator,
-            "unique resource '{s}' cannot be passed with '&'",
-            .{typeName(type_value)},
-        );
-        return self.fail(position, message);
+        if (mode == .value) return;
+        if (is_native and mode == .borrow) return self.fail(position, "a native function cannot declare a 'borrow' parameter");
+        if (type_value == .structure and type_value.structure.is_class) {
+            if (mode == .mutable_reference) {
+                const message = try std.fmt.allocPrint(
+                    self.allocator,
+                    "class '{s}' already has reference semantics; '&{s}' is invalid",
+                    .{ type_value.structure.source_name, type_value.structure.source_name },
+                );
+                return self.fail(position, message);
+            }
+            const message = try std.fmt.allocPrint(
+                self.allocator,
+                "class '{s}' already has shared identity; parameter mode 'borrow' is invalid",
+                .{type_value.structure.source_name},
+            );
+            return self.fail(position, message);
+        }
+        if (type_value == .protocol and mode == .borrow) {
+            return self.fail(position, "a dynamic protocol value cannot be passed with 'borrow'");
+        }
+        if (isUniqueOwnerType(type_value) and mode == .mutable_reference) {
+            const message = try std.fmt.allocPrint(
+                self.allocator,
+                "unique resource '{s}' cannot be passed with '&'",
+                .{typeName(type_value)},
+            );
+            return self.fail(position, message);
+        }
     }
 
     fn rejectUniqueOwnerArgument(
@@ -6028,6 +6077,7 @@ pub const Analyzer = struct {
                 try self.validateExpression(access.end);
             },
             .move_expression => |move_value| try self.validateExpression(move_value.operand),
+            .borrow_expression => |borrow_value| try self.validateExpression(borrow_value.operand),
             .try_expression => |try_value| try self.validateExpression(try_value.operand),
             .unary => |unary| {
                 if (unary.operator == .numeric_negate and unary.operand.value == .integer and isInteger(expression_value.type)) {
@@ -6111,8 +6161,11 @@ pub const Analyzer = struct {
             );
             return self.fail(move_value.operator_position, message);
         }
+        if (symbol.state.borrowed_parameter) {
+            return self.fail(move_value.operator_position, "a 'borrow' parameter cannot be consumed with 'move'");
+        }
         const operand = try self.variableExpression(move_value.operand.position, name, scope);
-        if (symbol.state.immutable_borrows != 0 or symbol.state.mutable_borrow) {
+        if (symbol.state.immutable_borrows != 0 or symbol.state.mutable_borrow or symbol.state.transient_mutable_borrows != 0) {
             const message = try std.fmt.allocPrint(self.allocator, "cannot move borrowed unique resource '{s}'", .{name});
             return self.fail(move_value.operator_position, message);
         }
@@ -6199,6 +6252,62 @@ pub const Analyzer = struct {
         });
     }
 
+    fn argumentForMode(
+        self: *Analyzer,
+        argument: *const Ast.Expression,
+        scope: *const Scope,
+        expected_type: Type,
+        mode: Ast.ParameterMode,
+    ) AnalyzeError!*Expression {
+        return switch (mode) {
+            .value => self.expressionForExpected(argument, scope, expected_type),
+            .mutable_reference => self.mutableReferenceArgument(argument, scope, expected_type),
+            .borrow => self.readBorrowArgument(argument, scope, expected_type),
+        };
+    }
+
+    fn readBorrowArgument(
+        self: *Analyzer,
+        argument: *const Ast.Expression,
+        scope: *const Scope,
+        expected_type: Type,
+    ) AnalyzeError!*Expression {
+        if (argument.value != .borrow_expression) {
+            return self.fail(argument.position, "a parameter declared with 'borrow' requires an argument written as 'borrow value'");
+        }
+        const borrow_value = argument.value.borrow_expression;
+        var root: ?*BindingState = null;
+        if (assignmentRoot(borrow_value.operand)) |assignment_root| switch (assignment_root) {
+            .static => {},
+            .self => root = &self.current_self_state,
+            .variable => |name| {
+                const symbol = findSymbol(scope, name) orelse {
+                    const message = try std.fmt.allocPrint(self.allocator, "unknown variable '{s}'", .{name});
+                    return self.fail(borrow_value.operator_position, message);
+                };
+                root = symbol.state;
+            },
+        };
+        if (root) |state| {
+            if (state.mutable_borrow or state.transient_mutable_borrows != 0) {
+                return self.fail(borrow_value.operator_position, "cannot read-borrow a value while it is mutably borrowed");
+            }
+        }
+        var operand = try self.expressionForExpected(borrow_value.operand, scope, expected_type);
+        operand = try self.coerce(operand, expected_type);
+        if (!typeEqual(operand.type, expected_type)) return operand;
+        const borrow = Borrow{ .root = root, .mutable = false };
+        if (root) |state| state.immutable_borrows += 1;
+        return self.newExpression(.{
+            .type = operand.type,
+            .position = borrow_value.operator_position,
+            .borrow = borrow,
+            .owns_borrow = true,
+            .borrowed_parameter = operand.borrowed_parameter,
+            .value = .{ .borrow_expression = .{ .operand = operand } },
+        });
+    }
+
     fn mutableReferenceArgument(
         self: *Analyzer,
         argument: *const Ast.Expression,
@@ -6212,10 +6321,12 @@ pub const Analyzer = struct {
         const root = assignmentRoot(unary.operand) orelse {
             return self.fail(unary.operator_position, "'&' requires a variable, field, or collection element");
         };
+        var root_state: ?*BindingState = null;
         switch (root) {
             .static => {},
             .self => {
                 if (self.current_method_index == null and !self.current_constructor and !self.current_drop) return self.fail(unary.operator_position, "'self' is only available inside a method, constructor, or drop block");
+                root_state = &self.current_self_state;
                 self.current_method_direct_mutation = true;
             },
             .variable => |name| {
@@ -6230,7 +6341,13 @@ pub const Analyzer = struct {
                         try std.fmt.allocPrint(self.allocator, "cannot pass immutable variable '{s}' with '&'", .{name});
                     return self.fail(unary.operator_position, message);
                 }
+                root_state = symbol.state;
             },
+        }
+        if (root_state) |state| {
+            if (state.immutable_borrows != 0) {
+                return self.fail(unary.operator_position, "cannot pass a value with '&' while it is read-borrowed");
+            }
         }
         const operand = if (unary.operand.value == .identifier and findSymbol(scope, unary.operand.value.identifier) != null and
             findSymbol(scope, unary.operand.value.identifier).?.unwrap_optional)
@@ -6250,9 +6367,13 @@ pub const Analyzer = struct {
             return self.fail(unary.operator_position, message);
         }
         if (!typeEqual(operand.type, expected_type)) return operand;
+        const borrow = Borrow{ .root = root_state, .mutable = true, .transient = true };
+        if (root_state) |state| state.transient_mutable_borrows += 1;
         return self.newExpression(.{
             .type = operand.type,
             .position = unary.operator_position,
+            .borrow = borrow,
+            .owns_borrow = true,
             .value = .{ .unary = .{ .operator = .borrow, .operand = operand } },
         });
     }
@@ -6513,6 +6634,9 @@ pub const Analyzer = struct {
         var lambda_context = self.current_lambda;
         while (lambda_context) |lambda| : (lambda_context = lambda.parent) {
             if (symbol.scope_depth < lambda.local_depth) {
+                if (symbol.state.borrowed_parameter) {
+                    return self.fail(position, "a 'borrow' parameter cannot be captured by a lambda");
+                }
                 if (isUniqueOwnerType(symbol.type)) {
                     const message = try std.fmt.allocPrint(
                         self.allocator,
@@ -6591,6 +6715,12 @@ pub const Analyzer = struct {
             releaseBorrow(expression_value.borrow.?);
             expression_value.owns_borrow = false;
         }
+    }
+
+    fn retainTransientBorrow(self: *Analyzer, borrows: *std.ArrayList(Borrow), expression_value: *Expression) !void {
+        if (!expression_value.owns_borrow) return;
+        try borrows.append(self.allocator, expression_value.borrow.?);
+        expression_value.owns_borrow = false;
     }
 
     fn releaseScopeBorrows(_: *Analyzer, scope: *Scope) void {
@@ -6776,12 +6906,12 @@ fn typeFromFunction(
     position: Source.Position,
 ) AnalyzeError!Type {
     var parameters: std.ArrayList(Type) = .empty;
-    for (function.parameters, function.parameter_is_mutable_references) |parameter, is_mutable_reference| {
+    for (function.parameters, function.parameter_modes) |parameter, mode| {
         const parameter_type = try typeFromAnnotation(self, parameter, position);
         if (parameter_type == .void or parameter_type == .reference) {
             return self.fail(position, "a function value parameter cannot have this type");
         }
-        _ = is_mutable_reference;
+        try self.validateParameterMode(parameter_type, mode, position, false);
         try parameters.append(self.allocator, parameter_type);
     }
     const return_type = try self.allocator.create(Type);
@@ -6792,7 +6922,7 @@ fn typeFromFunction(
     if (return_type.* == .reference) return self.fail(position, "a function value cannot return a reference");
     return .{ .function = .{
         .parameters = try parameters.toOwnedSlice(self.allocator),
-        .parameter_is_mutable_references = try self.allocator.dupe(bool, function.parameter_is_mutable_references),
+        .parameter_modes = try self.allocator.dupe(Ast.ParameterMode, function.parameter_modes),
         .return_type = return_type,
     } };
 }
@@ -7087,8 +7217,8 @@ fn typeEqual(left: Type, right: Type) bool {
             .function => |right_function| function_type: {
                 if (left_function.parameters.len != right_function.parameters.len) break :function_type false;
                 if (!typeEqual(left_function.return_type.*, right_function.return_type.*)) break :function_type false;
-                for (left_function.parameters, left_function.parameter_is_mutable_references, right_function.parameters, right_function.parameter_is_mutable_references) |left_parameter, left_mutable, right_parameter, right_mutable| {
-                    if (left_mutable != right_mutable or !typeEqual(left_parameter, right_parameter)) break :function_type false;
+                for (left_function.parameters, left_function.parameter_modes, right_function.parameters, right_function.parameter_modes) |left_parameter, left_mode, right_parameter, right_mode| {
+                    if (left_mode != right_mode or !typeEqual(left_parameter, right_parameter)) break :function_type false;
                 }
                 break :function_type true;
             },
@@ -7134,13 +7264,13 @@ fn rawEnumInteger(value: *const Expression) ?struct { magnitude: u64, negative: 
 
 fn sameSignature(
     left_types: []const Type,
-    left_mutable_references: []const bool,
+    left_modes: []const Ast.ParameterMode,
     right_types: []const Type,
-    right_mutable_references: []const bool,
+    right_modes: []const Ast.ParameterMode,
 ) bool {
     if (left_types.len != right_types.len) return false;
-    for (left_types, left_mutable_references, right_types, right_mutable_references) |left_type, left_mutable, right_type, right_mutable| {
-        if (left_mutable != right_mutable or !typeEqual(left_type, right_type)) return false;
+    for (left_types, left_modes, right_types, right_modes) |left_type, left_mode, right_type, right_mode| {
+        if (left_mode != right_mode or !typeEqual(left_type, right_type)) return false;
     }
     return true;
 }
@@ -7197,13 +7327,14 @@ fn appendSignature(
     output: *std.ArrayList(u8),
     name: []const u8,
     parameter_types: []const Type,
-    parameter_is_mutable_references: []const bool,
+    parameter_modes: []const Ast.ParameterMode,
 ) !void {
     try output.appendSlice(allocator, name);
     try output.append(allocator, '(');
-    for (parameter_types, parameter_is_mutable_references, 0..) |parameter_type, is_mutable_reference, index| {
+    for (parameter_types, parameter_modes, 0..) |parameter_type, mode, index| {
         if (index != 0) try output.appendSlice(allocator, ", ");
-        if (is_mutable_reference) try output.append(allocator, '&');
+        if (mode == .borrow) try output.appendSlice(allocator, "borrow ");
+        if (mode == .mutable_reference) try output.append(allocator, '&');
         try output.appendSlice(allocator, try allocatedSignatureTypeName(allocator, parameter_type));
     }
     try output.append(allocator, ')');
@@ -7213,7 +7344,7 @@ fn functionSignatures(allocator: Allocator, candidates: []const FunctionSymbol) 
     var output: std.ArrayList(u8) = .empty;
     for (candidates, 0..) |candidate, index| {
         if (index != 0) try output.appendSlice(allocator, ", ");
-        try appendSignature(allocator, &output, lastNameSegment(candidate.source_name), candidate.parameter_types, candidate.parameter_is_mutable_references);
+        try appendSignature(allocator, &output, lastNameSegment(candidate.source_name), candidate.parameter_types, candidate.parameter_modes);
     }
     return output.toOwnedSlice(allocator);
 }
@@ -7222,7 +7353,7 @@ fn methodSignatures(allocator: Allocator, candidates: []const MethodCandidate) !
     var output: std.ArrayList(u8) = .empty;
     for (candidates, 0..) |candidate, index| {
         if (index != 0) try output.appendSlice(allocator, ", ");
-        try appendSignature(allocator, &output, candidate.symbol.source_name, candidate.symbol.parameter_types, candidate.symbol.parameter_is_mutable_references);
+        try appendSignature(allocator, &output, candidate.symbol.source_name, candidate.symbol.parameter_types, candidate.symbol.parameter_modes);
     }
     return output.toOwnedSlice(allocator);
 }
@@ -7235,7 +7366,7 @@ fn constructorSignatures(
     var output: std.ArrayList(u8) = .empty;
     for (candidates, 0..) |candidate, index| {
         if (index != 0) try output.appendSlice(allocator, ", ");
-        try appendSignature(allocator, &output, lastNameSegment(class_name), candidate.symbol.parameter_types, candidate.symbol.parameter_is_mutable_references);
+        try appendSignature(allocator, &output, lastNameSegment(class_name), candidate.symbol.parameter_types, candidate.symbol.parameter_modes);
     }
     return output.toOwnedSlice(allocator);
 }
@@ -7311,9 +7442,10 @@ fn allocatedSignatureTypeName(allocator: Allocator, value: Type) Allocator.Error
         .function => |function| function_name: {
             var output: std.ArrayList(u8) = .empty;
             try output.appendSlice(allocator, "func(");
-            for (function.parameters, function.parameter_is_mutable_references, 0..) |parameter, is_mutable_reference, index| {
+            for (function.parameters, function.parameter_modes, 0..) |parameter, mode, index| {
                 if (index != 0) try output.appendSlice(allocator, ", ");
-                if (is_mutable_reference) try output.append(allocator, '&');
+                if (mode == .borrow) try output.appendSlice(allocator, "borrow ");
+                if (mode == .mutable_reference) try output.append(allocator, '&');
                 try output.appendSlice(allocator, try allocatedTypeName(allocator, parameter));
             }
             try output.append(allocator, ')');
@@ -8273,7 +8405,7 @@ test "unique resource structures reject implicit transfer and composition" {
         "type 'optional' cannot contain unique resource 'Resource' before unique-resource composition is available",
     );
     try expectResolvedSemanticError(
-        declaration ++ "func borrow(resource:&Resource) {} func main() {}",
+        declaration ++ "func mutate(resource:&Resource) {} func main() {}",
         "unique resource 'Resource' cannot be passed with '&'",
     );
     try expectResolvedSemanticError(
@@ -9116,5 +9248,135 @@ test "reject storing a capturing lambda in a longer-lived collection" {
         \\}
     ,
         "capturing function value cannot be stored in a longer-lived collection",
+    );
+}
+
+test "read borrows preserve owners and support overloads" {
+    const Parser = @import("Parser.zig").Parser;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var parser = Parser.init(allocator,
+        \\struct Resource {
+        \\    var handle:int
+        \\    func get_handle() int { return self.handle }
+        \\    drop {}
+        \\}
+        \\func inspect(value:int) int { return value }
+        \\func inspect(borrow value:int) int { return value + 1 }
+        \\func describe(borrow resource:Resource) int { return resource.get_handle() }
+        \\func forward(borrow resource:Resource) int { return describe(borrow resource) }
+        \\func pair(borrow left:Resource, borrow right:Resource) int { return left.get_handle() + right.get_handle() }
+        \\func main() {
+        \\    var resource = Resource(handle:4)
+        \\    let copied = inspect(4)
+        \\    let borrowed = inspect(borrow copied)
+        \\    let described = describe(borrow resource)
+        \\    let forwarded = forward(borrow resource)
+        \\    let paired = pair(borrow resource, borrow resource)
+        \\    let temporary = describe(borrow Resource(handle:5))
+        \\    let moved = move resource
+        \\}
+    );
+    var analyzer = Analyzer.init(allocator);
+    const program = try analyzer.analyze(try resolveSingleTestProgram(allocator, try parser.parse()));
+    try std.testing.expectEqual(Ast.ParameterMode.borrow, program.functions[2].parameters[0].mode);
+    try std.testing.expect(program.functions[5].statements[2].variable_declaration.initializer.value == .call);
+}
+
+test "read borrows reject mutation conflicts and escape" {
+    const resource =
+        \\struct Resource {
+        \\    var handle:int
+        \\    func get_handle() int { return self.handle }
+        \\    func increment() { self.handle += 1 }
+        \\    drop {}
+        \\}
+    ;
+    try expectResolvedSemanticError(
+        resource ++ "func invalid(borrow value:Resource) { value.increment() } func main() {}",
+        "cannot call mutating method 'increment' on immutable value 'value'",
+    );
+    try expectResolvedSemanticError(
+        resource ++ "func invalid(borrow value:Resource) Resource { return value } func main() {}",
+        "a 'borrow' parameter cannot be returned from its call",
+    );
+    try expectResolvedSemanticError(
+        resource ++ "func invalid(borrow value:Resource) { let callback = func() { print(value.handle) } } func main() {}",
+        "a 'borrow' parameter cannot be captured by a lambda",
+    );
+    try expectResolvedSemanticError(
+        "struct Data { var value:int } struct Holder { var saved:Data; func save(borrow value:Data) { self.saved = value } } func main() {}",
+        "a 'borrow' parameter cannot be stored beyond its call",
+    );
+    try expectResolvedSemanticError(
+        "struct Holder { var saved:int[]; func save(borrow value:int) { self.saved.append(value) } } func main() {}",
+        "a 'borrow' parameter cannot be stored beyond its call",
+    );
+    try expectResolvedSemanticError(
+        resource ++ "func invalid(borrow value:Resource) { let moved = move value } func main() {}",
+        "a 'borrow' parameter cannot be consumed with 'move'",
+    );
+    try expectResolvedSemanticError(
+        resource ++ "func conflict(borrow first:Resource, second:Resource) {} func main() { let value = Resource(handle:1); conflict(borrow value, move value) }",
+        "cannot move borrowed unique resource 'value'",
+    );
+    try expectResolvedSemanticError(
+        "func conflict(borrow first:int, second:&int) {} func main() { var value = 1; conflict(borrow value, &value) }",
+        "cannot pass a value with '&' while it is read-borrowed",
+    );
+    try expectResolvedSemanticError(
+        "func conflict(first:&int, borrow second:int) {} func main() { var value = 1; conflict(&value, borrow value) }",
+        "cannot read-borrow a value while it is mutably borrowed",
+    );
+    try expectResolvedSemanticError(
+        "class Shared {} func inspect(borrow value:Shared) {} func main() {}",
+        "class 'Shared' already has shared identity; parameter mode 'borrow' is invalid",
+    );
+    try expectResolvedSemanticError(
+        "protocol Shared { func read() } func inspect(borrow value:Shared) {} func main() {}",
+        "a dynamic protocol value cannot be passed with 'borrow'",
+    );
+}
+
+test "native functions reject read borrow parameters" {
+    const Parser = @import("Parser.zig").Parser;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var parser = Parser.init(allocator, "native func native_inspect(borrow value:int) void; func main() {}");
+    const parsed = try parser.parse();
+    const functions = try allocator.dupe(Ast.Function, parsed.functions);
+    functions[0].name = "Test.native_inspect";
+    var program = parsed;
+    program.functions = functions;
+    var analyzer = Analyzer.init(allocator);
+    analyzer.native_module_names = &.{"Test"};
+    try std.testing.expectError(error.InvalidSource, analyzer.analyze(program));
+    try std.testing.expectEqualStrings(
+        "a native function cannot declare a 'borrow' parameter",
+        analyzer.diagnostic.?.message,
+    );
+}
+
+test "protocol requirements preserve read borrow modes" {
+    const Parser = @import("Parser.zig").Parser;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var parser = Parser.init(allocator,
+        \\protocol Reader { func read(borrow value:int) int }
+        \\struct Counter : Reader {
+        \\    func read(borrow value:int) int { return value + 1 }
+        \\}
+        \\func main() { let counter = Counter(); let result = counter.read(borrow 1) }
+    );
+    var analyzer = Analyzer.init(allocator);
+    const program = try analyzer.analyze(try resolveSingleTestProgram(allocator, try parser.parse()));
+    try std.testing.expectEqual(Ast.ParameterMode.borrow, program.protocols[0].requirements[0].parameter_modes[0]);
+
+    try expectResolvedSemanticError(
+        "protocol Reader { func read(borrow value:int) int } struct Counter : Reader { func read(value:int) int { return value } } func main() {}",
+        "type 'Counter' does not satisfy method 'read' required by protocol 'Reader'",
     );
 }

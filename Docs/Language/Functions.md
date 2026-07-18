@@ -139,7 +139,9 @@ All arguments, return values, and return paths are checked statically. A
 non-void function must return a compatible value on every path. A void function
 may use `return` without a value. A unique-resource parameter owns its value;
 a named owner argument or return uses `move`, while a freshly produced
-temporary transfers implicitly. See
+temporary transfers implicitly. A `borrow name:T` parameter instead observes
+the caller's value through the matching `borrow value` argument without taking
+ownership. See [Values and mutation](Values-and-References.md#reading-without-copying) and
 [unique resource structures](Structures.md#unique-resource-structures).
 
 Methods are functions declared inside a structure or class. An instance method
@@ -151,7 +153,9 @@ future descendants; visibility precedes `static`.
 
 ## Function values and lambdas
 
-`func(parameter types) return_type` is a value type. An omitted return type is
+`func(parameter types) return_type` is a value type. Parameter modes are part
+of that type, so `func(Data)`, `func(borrow Data)`, and `func(&Data)` are
+distinct. An omitted return type is
 the canonical spelling of `void`; `func(int) void` is also accepted. Function
 values may be assigned, passed, stored in fields or collections, and called
 with the same argument conversions as a named function.

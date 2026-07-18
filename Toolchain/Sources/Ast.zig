@@ -27,6 +27,12 @@ pub const UnaryOperator = enum {
     borrow,
 };
 
+pub const ParameterMode = enum {
+    value,
+    mutable_reference,
+    borrow,
+};
+
 pub const TypeName = union(enum) {
     void,
     int,
@@ -70,7 +76,7 @@ pub const TypeName = union(enum) {
 
     pub const FunctionType = struct {
         parameters: []const TypeName,
-        parameter_is_mutable_references: []const bool,
+        parameter_modes: []const ParameterMode,
         return_type: ?*TypeName,
     };
 };
@@ -158,6 +164,7 @@ pub const Expression = struct {
         slice_access: SliceAccess,
         try_expression: Try,
         move_expression: Move,
+        borrow_expression: Borrow,
         unary: Unary,
         conversion: Conversion,
         binary: Binary,
@@ -176,6 +183,11 @@ pub const Expression = struct {
     };
 
     pub const Move = struct {
+        operator_position: Source.Position,
+        operand: *Expression,
+    };
+
+    pub const Borrow = struct {
         operator_position: Source.Position,
         operand: *Expression,
     };
@@ -566,7 +578,7 @@ pub const Parameter = struct {
     name: []const u8,
     position: Source.Position,
     type: TypeName,
-    is_mutable_reference: bool = false,
+    mode: ParameterMode = .value,
 };
 
 pub const Function = struct {

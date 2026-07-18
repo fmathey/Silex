@@ -780,7 +780,7 @@ pub const Resolver = struct {
                 for (function.parameters) |parameter| try parameters.append(self.allocator, try self.transformType(parameter, position));
                 break :function_type .{ .function = .{
                     .parameters = try parameters.toOwnedSlice(self.allocator),
-                    .parameter_is_mutable_references = try self.allocator.dupe(bool, function.parameter_is_mutable_references),
+                    .parameter_modes = try self.allocator.dupe(Ast.ParameterMode, function.parameter_modes),
                     .return_type = if (function.return_type) |return_type| try self.transformTypePointer(return_type.*, position) else null,
                 } };
             },
@@ -1328,6 +1328,10 @@ pub const Resolver = struct {
             .move_expression => |move_value| .{ .move_expression = .{
                 .operator_position = move_value.operator_position,
                 .operand = try self.transformExpression(move_value.operand),
+            } },
+            .borrow_expression => |borrow_value| .{ .borrow_expression = .{
+                .operator_position = borrow_value.operator_position,
+                .operand = try self.transformExpression(borrow_value.operand),
             } },
             .unary => |unary| .{ .unary = .{
                 .operator = unary.operator,

@@ -1,5 +1,9 @@
 use Resources
 
+struct Data {
+    let value:int
+}
+
 func lexical_scopes() {
     print("lexical")
     let outer = Resources.Resource.open(10)
@@ -66,6 +70,44 @@ func forward(resource:Resources.Resource) Resources.Resource {
     return move resource
 }
 
+func inspect(borrow resource:Resources.Resource) int {
+    return resource.value()
+}
+
+func inspect_forwarded(borrow resource:Resources.Resource) int {
+    return inspect(borrow resource)
+}
+
+func inspect_pair(borrow left:Resources.Resource, borrow right:Resources.Resource) int {
+    return left.value() + right.value()
+}
+
+func read_int(borrow value:int) int {
+    return value + 0
+}
+
+func generic_read<T>(borrow value:T) int {
+    return 1
+}
+
+func borrows() {
+    print("borrows")
+    let fixed = Resources.Resource.open(90)
+    var mutable = Resources.Resource.open(91)
+    print(inspect(borrow fixed))
+    print(inspect_forwarded(borrow mutable))
+    print(inspect_pair(borrow fixed, borrow fixed))
+    print(inspect(borrow Resources.Resource.open(92)))
+    let data = Data(value:2)
+    assert(read_int(borrow data.value) == 2, "read borrow accepts a field")
+    var values:int[] = [3]
+    assert(read_int(borrow values[0]) == 3, "read borrow accepts an indexed element")
+    assert(generic_read<int>(borrow values[0]) == 1, "generic read borrow keeps its mode")
+    assert(generic_read<Resources.Resource>(borrow fixed) == 1, "generic read borrow accepts an owner")
+    consume(move mutable)
+    print(fixed.value())
+}
+
 func transfers() {
     print("transfers")
     let first = Resources.Resource.open(80)
@@ -110,6 +152,7 @@ func main() {
 
     reverse_order()
     transfers()
+    borrows()
     match Resources.incomplete_initialization(60, false) {
         success => { print("unexpected") }
         failure(error) => { print(error) }
