@@ -2,7 +2,7 @@
 Modules and visibility
 ==================
 
-import NK.Window as Window
+use NK.Window as Window
 use Window.Session
 pub use Window.Event as WindowEvent
 
@@ -21,8 +21,8 @@ pub func create() Window.Session {
 ---
 
 (source_file
-  (import_declaration
-    module: (module_path
+  (use_declaration
+    declaration: (qualified_name
       (identifier)
       (identifier))
     alias: (identifier))

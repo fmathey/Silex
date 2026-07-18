@@ -10,10 +10,6 @@
         "members": [
           {
             "type": "SYMBOL",
-            "name": "import_declaration"
-          },
-          {
-            "type": "SYMBOL",
             "name": "use_declaration"
           },
           {
@@ -46,61 +42,6 @@
           }
         ]
       }
-    },
-    "import_declaration": {
-      "type": "SEQ",
-      "members": [
-        {
-          "type": "STRING",
-          "value": "import"
-        },
-        {
-          "type": "FIELD",
-          "name": "module",
-          "content": {
-            "type": "SYMBOL",
-            "name": "module_path"
-          }
-        },
-        {
-          "type": "CHOICE",
-          "members": [
-            {
-              "type": "SEQ",
-              "members": [
-                {
-                  "type": "STRING",
-                  "value": "as"
-                },
-                {
-                  "type": "FIELD",
-                  "name": "alias",
-                  "content": {
-                    "type": "SYMBOL",
-                    "name": "identifier"
-                  }
-                }
-              ]
-            },
-            {
-              "type": "BLANK"
-            }
-          ]
-        },
-        {
-          "type": "CHOICE",
-          "members": [
-            {
-              "type": "STRING",
-              "value": ";"
-            },
-            {
-              "type": "SYMBOL",
-              "name": "_automatic_semicolon"
-            }
-          ]
-        }
-      ]
     },
     "use_declaration": {
       "type": "SEQ",
@@ -669,31 +610,6 @@
         {
           "type": "SYMBOL",
           "name": "integer_literal"
-        }
-      ]
-    },
-    "module_path": {
-      "type": "SEQ",
-      "members": [
-        {
-          "type": "SYMBOL",
-          "name": "identifier"
-        },
-        {
-          "type": "REPEAT",
-          "content": {
-            "type": "SEQ",
-            "members": [
-              {
-                "type": "STRING",
-                "value": "."
-              },
-              {
-                "type": "SYMBOL",
-                "name": "identifier"
-              }
-            ]
-          }
         }
       ]
     },

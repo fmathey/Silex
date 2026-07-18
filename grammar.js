@@ -25,7 +25,6 @@ module.exports = grammar({
     source_file: ($) =>
       repeat(
         choice(
-          $.import_declaration,
           $.use_declaration,
           $.enum_definition,
           $.protocol_definition,
@@ -35,14 +34,6 @@ module.exports = grammar({
           $.native_function_declaration,
           $.public_declaration,
         ),
-      ),
-
-    import_declaration: ($) =>
-      seq(
-        "import",
-        field("module", $.module_path),
-        optional(seq("as", field("alias", $.identifier))),
-        choice(";", $._automatic_semicolon),
       ),
 
     use_declaration: ($) =>
@@ -133,9 +124,6 @@ module.exports = grammar({
       ),
 
     signed_integer_literal: ($) => seq(optional("-"), $.integer_literal),
-
-    module_path: ($) =>
-      seq($.identifier, repeat(seq(".", $.identifier))),
 
     qualified_name: ($) =>
       seq($.identifier, repeat1(seq(".", $.identifier))),

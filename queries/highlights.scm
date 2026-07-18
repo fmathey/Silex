@@ -1,5 +1,4 @@
 (identifier) @variable
-(module_path) @namespace
 (qualified_name) @type
 (void_type) @type.builtin
 (builtin_type) @type.builtin
@@ -128,7 +127,6 @@
 ] @punctuation.bracket
 
 [
-  "import"
   "use"
   "pub"
   "sub"

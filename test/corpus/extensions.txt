@@ -2,13 +2,13 @@
 Type extensions
 ===============
 
-extend Random.Generator : Drawable, Named {
+extend STD.Randomizer : Drawable, Named {
     pub func get_uint() uint {
         return self.get_int() as uint
     }
 
-    static func seeded() Generator {
-        return Random.create(42)
+    static func seeded() Randomizer {
+        return STD.Randomizer.create(42)
     }
 }
 
@@ -53,7 +53,9 @@ extend Random.Generator : Drawable, Named {
             (expression
               (invocation_expression
                 (member_expression
-                  (identifier)
+                  (member_expression
+                    (identifier)
+                    (identifier))
                   (identifier))
                 (expression
                   (integer_literal))))))))))
