@@ -3,7 +3,7 @@
 ## Operators
 
 The current precedence order, from highest to lowest, is explicit conversion
-(`as type`), prefix `try`, `move`, `@`, `&`, `!`, and `-`, `*`, `/`, and `%`,
+(`as type`), prefix `try`, `move`, `@`, `!`, and `-`, `*`, `/`, and `%`,
 `+` and `-`, `<<` and `>>`, `&`, `^`, ordering comparisons, equality, `&&`,
 then `||`. Binary operators associate to the left. `&&` and `||`
 short-circuit.

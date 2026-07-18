@@ -49,8 +49,9 @@ but is not canonical. Function types may be nested in collection and structure
 types. A lambda supplies a function value; named overloaded declarations do not
 implicitly convert to one.
 
-`func(&int)` has a mutable-reference parameter. Its calls use `&place`, exactly
-like calls to a named function whose parameter is written `value:&int`.
+`func(&int)` has a mutable-reference parameter. Its calls use an ordinary
+argument such as `callback(place)`; the function type selects mutable-reference
+binding exactly like a named function whose parameter is written `value:&int`.
 
 ## Protocol types
 

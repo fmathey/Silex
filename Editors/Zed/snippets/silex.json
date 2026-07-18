@@ -194,13 +194,6 @@
     ],
     "description": "Declare a temporary read-only reference parameter"
   },
-  "Read reference argument": {
-    "prefix": "readref",
-    "body": [
-      "@${1:value}"
-    ],
-    "description": "Pass a value through a temporary read-only reference"
-  },
   "Transform Result error": {
     "prefix": "maperror",
     "body": [

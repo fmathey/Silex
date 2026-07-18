@@ -5,7 +5,7 @@ func clear(value:&int?) {
 func main() {
     var value:int? = 1
     if value != null {
-        clear(&value)
+        clear(value)
         print(value + 1)
     }
 }

@@ -3,6 +3,5 @@ func replace(value:&int) {
 }
 
 func main() {
-    var count = 1
-    replace(count)
+    replace(1)
 }

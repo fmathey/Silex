@@ -286,11 +286,12 @@ close(move second)
 `move` accepts the complete name of any recursively noncopyable local or
 parameter. It rejects ordinary copyable values, `self`, static storage, fields,
 indexed elements, partial values, and captured outer bindings. A noncopyable
-value cannot be passed with `&`, captured by a lambda, converted to a dynamic
-protocol value, or compared for equality.
+A parameter of a noncopyable type cannot use `&T`; the value also cannot be
+captured by a lambda, converted to a dynamic protocol value, or compared for
+equality.
 Named owner arguments and returns must spell `move` at the transfer site. A
-`resource:@Resource` parameter may inspect the same owner through a matching
-`@resource` argument without transferring or copying it; the
+`resource:@Resource` parameter may inspect the same owner through an ordinary
+`resource` argument without transferring or copying it; the
 owner remains available after the call.
 
 After `move file`, that binding is consumed: it cannot be read, mutated, moved

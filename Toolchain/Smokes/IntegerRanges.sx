@@ -37,7 +37,7 @@ func main() {
     print(empty_count)
 
     var trace = 0
-    for i in range(bound(&trace, 1, 1), bound(&trace, 2, 4)) {
+    for i in range(bound(trace, 1, 1), bound(trace, 2, 4)) {
         print(i)
     }
     print(trace)

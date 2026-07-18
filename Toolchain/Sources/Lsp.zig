@@ -3828,19 +3828,17 @@ test "self completion in an extension excludes private and sub class members" {
 test "signature help lists overloaded functions once each" {
     const source =
         \\func measure() int { return 1 }
-        \\func measure(value:int) int { return value }
         \\func measure(value:@int) int { return value }
         \\func measure(value:float) float { return value }
-        \\func main() { print(measure(@1)) }
+        \\func main() { print(measure(1)) }
     ;
-    const signatures = try signatureHelpItems(std.testing.allocator, source, .{ .line = 4, .character = 30 });
+    const signatures = try signatureHelpItems(std.testing.allocator, source, .{ .line = 3, .character = 29 });
     defer std.testing.allocator.free(signatures);
     defer for (signatures) |signature| std.testing.allocator.free(signature.label);
-    try std.testing.expectEqual(@as(usize, 4), signatures.len);
+    try std.testing.expectEqual(@as(usize, 3), signatures.len);
     try std.testing.expectEqualStrings("measure()", signatures[0].label);
-    try std.testing.expectEqualStrings("measure(int)", signatures[1].label);
-    try std.testing.expectEqualStrings("measure(@int)", signatures[2].label);
-    try std.testing.expectEqualStrings("measure(float)", signatures[3].label);
+    try std.testing.expectEqualStrings("measure(@int)", signatures[1].label);
+    try std.testing.expectEqualStrings("measure(float)", signatures[2].label);
 }
 
 test "signature help recognizes explicit generic arguments" {

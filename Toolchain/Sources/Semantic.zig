@@ -1190,12 +1190,8 @@ pub const Analyzer = struct {
                     try parameter_stored_values.append(self.allocator, stored);
                 }
                 for (constructors.items) |existing| {
-                    if (sameSignature(
-                        existing.parameter_types,
-                        existing.parameter_modes,
-                        parameter_types.items,
-                        parameter_modes.items,
-                    )) return self.fail(ast_constructor.position, "constructor 'init' with this signature is already declared in this class");
+                    if (sameCallableShape(existing.parameter_types, parameter_types.items))
+                        return self.fail(ast_constructor.position, "constructor 'init' with this callable shape is already declared in this class");
                 }
                 try constructors.append(self.allocator, .{
                     .parameter_types = try parameter_types.toOwnedSlice(self.allocator),
@@ -1221,12 +1217,9 @@ pub const Analyzer = struct {
                 }
                 for (methods.items) |existing| {
                     if (existing.is_static == ast_method.is_static and
-                        std.mem.eql(u8, existing.source_name, ast_method.name) and sameSignature(
-                        existing.parameter_types,
-                        existing.parameter_modes,
-                        parameter_types.items,
-                        parameter_modes.items,
-                    )) duplicate: {
+                        std.mem.eql(u8, existing.source_name, ast_method.name) and
+                        sameCallableShape(existing.parameter_types, parameter_types.items))
+                    duplicate: {
                         const existing_extension = existing.extension_visible_files;
                         const current_extension = ast_method.extension_visible_files;
                         if (existing_extension != null and current_extension != null and
@@ -1238,9 +1231,9 @@ pub const Analyzer = struct {
                                 .{ ast_method.name, ast_method.extension_module_name.?, existing.extension_module_name.?, ast_structure.name },
                             )
                         else if (existing_extension != null or current_extension != null)
-                            try std.fmt.allocPrint(self.allocator, "extension method '{s}' conflicts with an existing method signature on type '{s}'", .{ ast_method.name, ast_structure.name })
+                            try std.fmt.allocPrint(self.allocator, "extension method '{s}' conflicts with an existing callable shape on type '{s}'", .{ ast_method.name, ast_structure.name })
                         else
-                            try std.fmt.allocPrint(self.allocator, "method '{s}' with this signature is already declared in {s} '{s}'", .{ ast_method.name, if (ast_structure.is_class) "class" else "struct", ast_structure.name });
+                            try std.fmt.allocPrint(self.allocator, "method '{s}' with this callable shape is already declared in {s} '{s}'", .{ ast_method.name, if (ast_structure.is_class) "class" else "struct", ast_structure.name });
                         return self.fail(ast_method.name_position, message);
                     }
                 }
@@ -1322,13 +1315,10 @@ pub const Analyzer = struct {
                     try parameter_modes.append(self.allocator, parameter.mode);
                 }
                 for (requirements.items) |existing| {
-                    if (std.mem.eql(u8, existing.source_name, requirement.name) and sameSignature(
-                        existing.parameter_types,
-                        existing.parameter_modes,
-                        parameter_types.items,
-                        parameter_modes.items,
-                    )) {
-                        const message = try std.fmt.allocPrint(self.allocator, "protocol method '{s}' with this signature is already declared", .{requirement.name});
+                    if (std.mem.eql(u8, existing.source_name, requirement.name) and
+                        sameCallableShape(existing.parameter_types, parameter_types.items))
+                    {
+                        const message = try std.fmt.allocPrint(self.allocator, "protocol method '{s}' with this callable shape is already declared", .{requirement.name});
                         return self.fail(requirement.name_position, message);
                     }
                 }
@@ -1601,13 +1591,10 @@ pub const Analyzer = struct {
                 try parameter_stored_values.append(self.allocator, parameterStored(ast_function.statements, parameter.name));
             }
             for (self.functions.items) |existing| {
-                if (std.mem.eql(u8, existing.source_name, ast_function.name) and sameSignature(
-                    existing.parameter_types,
-                    existing.parameter_modes,
-                    parameter_types.items,
-                    parameter_modes.items,
-                )) {
-                    const message = try std.fmt.allocPrint(self.allocator, "function '{s}' with this signature is already declared", .{ast_function.name});
+                if (std.mem.eql(u8, existing.source_name, ast_function.name) and
+                    sameCallableShape(existing.parameter_types, parameter_types.items))
+                {
+                    const message = try std.fmt.allocPrint(self.allocator, "function '{s}' with this callable shape is already declared", .{ast_function.name});
                     return self.fail(ast_function.name_position, message);
                 }
             }
@@ -3191,10 +3178,10 @@ pub const Analyzer = struct {
         scope: *const Scope,
     ) AnalyzeError!*Expression {
         if (ast.value == .unary and ast.value.unary.operator == .borrow) {
-            return self.fail(ast.value.unary.operator_position, "'&' is only valid for an argument of a parameter declared with '&'");
+            return self.fail(ast.value.unary.operator_position, "'&' is only valid in parameter declarations; calls use plain arguments");
         }
         if (ast.value == .borrow_expression) {
-            return self.fail(ast.value.borrow_expression.operator_position, "'@' is only valid for an argument of a parameter declared as '@T'");
+            return self.fail(ast.value.borrow_expression.operator_position, "'@' is only valid for read bindings; calls use plain arguments");
         }
         return switch (ast.value) {
             .integer => |lexeme| self.integerExpression(ast.position, lexeme),
@@ -5042,30 +5029,25 @@ pub const Analyzer = struct {
         defer restoreOwnerStates(owner_states);
         var scores: std.ArrayList(u8) = .empty;
         for (arguments, parameter_types, parameter_modes) |argument, parameter_type, parameter_mode| {
-            const argument_mode: Ast.ParameterMode = if (argument.value == .borrow_expression)
-                .borrow
-            else if (argument.value == .unary and argument.value.unary.operator == .borrow)
-                .mutable_reference
-            else
-                .value;
-            if (argument_mode != parameter_mode) return null;
+            if (argument.value == .borrow_expression) {
+                return self.fail(argument.position, "reference arguments are selected by the parameter signature; pass the value without '@'");
+            }
+            if (argument.value == .unary and argument.value.unary.operator == .borrow) {
+                return self.fail(argument.position, "reference arguments are selected by the parameter signature; pass the place without '&'");
+            }
             const argument_value = if (argument.value == .null)
                 try self.newExpression(.{ .type = .null, .position = argument.position, .value = .null })
-            else if (argument_mode == .mutable_reference and argument.value.unary.operand.value == .identifier and
-                findSymbol(scope, argument.value.unary.operand.value.identifier) != null and
-                findSymbol(scope, argument.value.unary.operand.value.identifier).?.unwrap_optional)
+            else if (parameter_mode == .mutable_reference and argument.value == .identifier and
+                findSymbol(scope, argument.value.identifier) != null and
+                findSymbol(scope, argument.value.identifier).?.unwrap_optional)
                 try self.newExpression(.{
-                    .type = findSymbol(scope, argument.value.unary.operand.value.identifier).?.original_type.?,
+                    .type = findSymbol(scope, argument.value.identifier).?.original_type.?,
                     .position = argument.position,
                     .value = .{ .variable = .{
-                        .generated_name = findSymbol(scope, argument.value.unary.operand.value.identifier).?.generated_name,
-                        .capture_box = &findSymbol(scope, argument.value.unary.operand.value.identifier).?.state.capture_box,
+                        .generated_name = findSymbol(scope, argument.value.identifier).?.generated_name,
+                        .capture_box = &findSymbol(scope, argument.value.identifier).?.state.capture_box,
                     } },
                 })
-            else if (argument_mode == .mutable_reference)
-                try self.expression(argument.value.unary.operand, scope)
-            else if (argument_mode == .borrow)
-                try self.expression(argument.value.borrow_expression.operand, scope)
             else
                 try self.expressionForExpected(argument, scope, null);
             const score = self.implicitConversionScore(argument_value.type, parameter_type, argument_value.position.file) orelse literalOverloadScore(argument_value, parameter_type) orelse return null;
@@ -5781,12 +5763,12 @@ pub const Analyzer = struct {
             return self.fail(position, message);
         }
         if (type_value == .protocol and mode == .borrow) {
-            return self.fail(position, "a dynamic protocol value cannot be passed with '@'");
+            return self.fail(position, "a dynamic protocol value cannot use parameter mode '@'");
         }
         if (try self.isNonCopyableType(type_value) and mode == .mutable_reference) {
             const message = try std.fmt.allocPrint(
                 self.allocator,
-                "noncopyable value '{s}' cannot be passed with '&'; use '@' for read-only access",
+                "noncopyable value '{s}' cannot use parameter mode '&'; use '@' for read-only access",
                 .{typeName(type_value)},
             );
             return self.fail(position, message);
@@ -6228,7 +6210,7 @@ pub const Analyzer = struct {
         scope: *const Scope,
     ) AnalyzeError!*Expression {
         if (unary.operator == .borrow) {
-            return self.fail(unary.operator_position, "'&' is only valid for an argument of a parameter declared with '&'");
+            return self.fail(unary.operator_position, "'&' is only valid in parameter declarations; calls use plain arguments");
         }
         const operand = try self.expression(unary.operand, scope);
         const result_type: Type = switch (unary.operator) {
@@ -6388,6 +6370,12 @@ pub const Analyzer = struct {
         expected_type: Type,
         mode: Ast.ParameterMode,
     ) AnalyzeError!*Expression {
+        if (argument.value == .borrow_expression) {
+            return self.fail(argument.position, "reference arguments are selected by the parameter signature; pass the value without '@'");
+        }
+        if (argument.value == .unary and argument.value.unary.operator == .borrow) {
+            return self.fail(argument.position, "reference arguments are selected by the parameter signature; pass the place without '&'");
+        }
         return switch (mode) {
             .value => self.expressionForExpected(argument, scope, expected_type),
             .mutable_reference => self.mutableReferenceArgument(argument, scope, expected_type),
@@ -6401,10 +6389,10 @@ pub const Analyzer = struct {
         scope: *const Scope,
         expected_type: Type,
     ) AnalyzeError!*Expression {
-        if (argument.value != .borrow_expression) {
-            return self.fail(argument.position, "a parameter declared as '@T' requires an argument written as '@value'");
-        }
-        return self.readBorrowValue(argument.value.borrow_expression, scope, expected_type);
+        return self.readBorrowValue(.{
+            .operator_position = argument.position,
+            .operand = @constCast(argument),
+        }, scope, expected_type);
     }
 
     fn readBorrowValue(
@@ -6453,64 +6441,60 @@ pub const Analyzer = struct {
         scope: *const Scope,
         expected_type: Type,
     ) AnalyzeError!*Expression {
-        if (argument.value != .unary or argument.value.unary.operator != .borrow) {
-            return self.fail(argument.position, "a parameter declared with '&' requires an argument written as '&place'");
-        }
-        const unary = argument.value.unary;
-        const root = assignmentRoot(unary.operand) orelse {
-            return self.fail(unary.operator_position, "'&' requires a variable, field, or collection element");
+        const root = assignmentRoot(argument) orelse {
+            return self.fail(argument.position, "a mutable reference parameter requires a variable, field, or collection element");
         };
         var root_state: ?*BindingState = null;
         switch (root) {
             .static => {},
             .self => {
-                if (self.current_method_index == null and !self.current_constructor and !self.current_drop) return self.fail(unary.operator_position, "'self' is only available inside a method, constructor, or drop block");
+                if (self.current_method_index == null and !self.current_constructor and !self.current_drop) return self.fail(argument.position, "'self' is only available inside a method, constructor, or drop block");
                 root_state = &self.current_self_state;
                 self.current_method_direct_mutation = true;
             },
             .variable => |name| {
                 const symbol = findSymbol(scope, name) orelse {
                     const message = try std.fmt.allocPrint(self.allocator, "unknown variable '{s}'", .{name});
-                    return self.fail(unary.operator_position, message);
+                    return self.fail(argument.position, message);
                 };
                 if (symbol.mutability != .mutable) {
                     const message = if (symbol.control_binding)
                         try std.fmt.allocPrint(self.allocator, "cannot mutate immutable control binding '{s}'; use 'var' in the header", .{name})
                     else
-                        try std.fmt.allocPrint(self.allocator, "cannot pass immutable variable '{s}' with '&'", .{name});
-                    return self.fail(unary.operator_position, message);
+                        try std.fmt.allocPrint(self.allocator, "cannot pass immutable variable '{s}' to a mutable reference parameter", .{name});
+                    return self.fail(argument.position, message);
                 }
                 root_state = symbol.state;
             },
         }
         if (root_state) |state| {
             if (state.immutable_borrows != 0) {
-                return self.fail(unary.operator_position, "cannot pass a value with '&' while it is read-borrowed");
+                return self.fail(argument.position, "cannot pass a value to a mutable reference parameter while it is read-borrowed");
             }
         }
-        const operand = if (unary.operand.value == .identifier and findSymbol(scope, unary.operand.value.identifier) != null and
-            findSymbol(scope, unary.operand.value.identifier).?.unwrap_optional)
+        const operand = if (argument.value == .identifier and findSymbol(scope, argument.value.identifier) != null and
+            findSymbol(scope, argument.value.identifier).?.unwrap_optional)
         narrowed_operand: {
-            const symbol = findSymbol(scope, unary.operand.value.identifier).?;
-            try self.recordSymbolCapture(symbol, unary.operand.position);
+            const symbol = findSymbol(scope, argument.value.identifier).?;
+            try self.recordSymbolCapture(symbol, argument.position);
             symbol.state.narrowed_valid = false;
             break :narrowed_operand try self.newExpression(.{
                 .type = symbol.original_type.?,
-                .position = unary.operand.position,
+                .position = argument.position,
                 .value = .{ .variable = .{ .generated_name = symbol.generated_name, .capture_box = &symbol.state.capture_box } },
             });
-        } else try self.expression(unary.operand, scope);
-        if (operand.value == .enum_raw_value) return self.fail(unary.operator_position, "enum property 'raw_value' cannot be passed with '&'");
+        } else try self.expression(argument, scope);
+        if (operand.value == .enum_raw_value) return self.fail(argument.position, "enum property 'raw_value' cannot be passed to a mutable reference parameter");
         if (self.immutableFieldInPlace(operand)) |field_candidate| {
-            const message = try std.fmt.allocPrint(self.allocator, "cannot pass let field '{s}' with '&'", .{field_candidate.symbol.source_name});
-            return self.fail(unary.operator_position, message);
+            const message = try std.fmt.allocPrint(self.allocator, "cannot pass let field '{s}' to a mutable reference parameter", .{field_candidate.symbol.source_name});
+            return self.fail(argument.position, message);
         }
         if (!typeEqual(operand.type, expected_type)) return operand;
         const borrow = Borrow{ .root = root_state, .mutable = true, .transient = true };
         if (root_state) |state| state.transient_mutable_borrows += 1;
         return self.newExpression(.{
             .type = operand.type,
-            .position = unary.operator_position,
+            .position = argument.position,
             .borrow = borrow,
             .owns_borrow = true,
             .value = .{ .unary = .{ .operator = .borrow, .operand = operand } },
@@ -7406,6 +7390,14 @@ fn sameSignature(
     return true;
 }
 
+fn sameCallableShape(left_types: []const Type, right_types: []const Type) bool {
+    if (left_types.len != right_types.len) return false;
+    for (left_types, right_types) |left_type, right_type| {
+        if (!typeEqual(left_type, right_type)) return false;
+    }
+    return true;
+}
+
 fn containsPosition(positions: []const Source.Position, candidate: Source.Position) bool {
     for (positions) |position| {
         if (position.file == candidate.file and position.line == candidate.line and position.column == candidate.column) return true;
@@ -7945,8 +7937,8 @@ test "reject invalid raw enum values and property mutation" {
     try expectResolvedSemanticError(
         \\enum Direction:int { north = 1 }
         \\func replace(value:&int) { value = 2 }
-        \\func main() { var direction = Direction.north(); replace(&direction.raw_value) }
-    , "enum property 'raw_value' cannot be passed with '&'");
+        \\func main() { var direction = Direction.north(); replace(direction.raw_value) }
+    , "enum property 'raw_value' cannot be passed to a mutable reference parameter");
 }
 
 test "field mutability controls direct and nested mutation" {
@@ -8163,7 +8155,7 @@ test "extensions use only public members and do not participate in inheritance" 
         \\struct Value { func read() int { return 1 } }
         \\extend Value { pub func read() int { return 2 } }
         \\func main() {}
-    , "extension method 'read' conflicts with an existing method signature on type 'Value'");
+    , "extension method 'read' conflicts with an existing callable shape on type 'Value'");
 }
 
 test "extension conformances support dynamic values and multiple protocols" {
@@ -8512,24 +8504,24 @@ test "noncopyable values compose through fields enums optionals collections clas
         \\func inspect(value:@Resource) {}
         \\func main() {
         \\    let holder = Holder(resource:Resource.open(1))
-        \\    inspect(@holder.resource)
+        \\    inspect(holder.resource)
         \\    var optional:Resource? = Resource.open(3)
-        \\    if value = @optional { inspect(@value) }
+        \\    if value = @optional { inspect(value) }
         \\    if var value = move optional { consume(move value) }
         \\    var slot = Slot.full(Holder(resource:Resource.open(4)))
-        \\    match @slot { full(value) => { inspect(@value.resource) }; empty => {} }
+        \\    match @slot { full(value) => { inspect(value.resource) }; empty => {} }
         \\    match move slot { full(var value) => { consume_holder(move value) }; empty => {} }
         \\    var values:Resource[] = []
         \\    values.append(Resource.open(5))
         \\    let resource = Resource.open(6)
         \\    values.append(move resource)
-        \\    for value in values { inspect(@value) }
-        \\    for var value in values { inspect(@value) }
+        \\    for value in values { inspect(value) }
+        \\    for var value in values { inspect(value) }
         \\    consume(values.take_first())
         \\    consume(values.replace(0, Resource.open(7)))
         \\    consume(values.take_last())
         \\    var owner = Owner(resource:Resource.open(8))
-        \\    inspect(@owner.resource)
+        \\    inspect(owner.resource)
         \\}
     );
     try expectSemanticSuccess(
@@ -8540,7 +8532,7 @@ test "noncopyable values compose through fields enums optionals collections clas
         \\    drop {}
         \\}
         \\func inspect(value:@Resource) int { return value.value() }
-        \\func main() { let resource = Resource(handle:1); print(inspect(@resource)) }
+        \\func main() { let resource = Resource(handle:1); print(inspect(resource)) }
     );
     try expectResolvedSemanticError(
         declaration ++ "func main() { let first = Resource.open(1); let second = first }",
@@ -8556,7 +8548,7 @@ test "noncopyable values compose through fields enums optionals collections clas
     );
     try expectResolvedSemanticError(
         declaration ++ "func mutate(resource:&Resource) {} func main() {}",
-        "noncopyable value 'Resource' cannot be passed with '&'; use '@' for read-only access",
+        "noncopyable value 'Resource' cannot use parameter mode '&'; use '@' for read-only access",
     );
     try expectResolvedSemanticError(
         declaration ++ "func main() { let resource = Resource.open(1); let callback = func() { print(resource.handle) } }",
@@ -9447,7 +9439,7 @@ test "reject storing a capturing lambda in a longer-lived collection" {
     );
 }
 
-test "read references preserve owners and support overloads" {
+test "read references preserve owners and accept ordinary arguments" {
     const Parser = @import("Parser.zig").Parser;
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -9458,26 +9450,50 @@ test "read references preserve owners and support overloads" {
         \\    func get_handle() int { return self.handle }
         \\    drop {}
         \\}
-        \\func inspect(value:int) int { return value }
         \\func inspect(value:@int) int { return value + 1 }
         \\func describe(resource:@Resource) int { return resource.get_handle() }
-        \\func forward(resource:@Resource) int { return describe(@resource) }
+        \\func forward(resource:@Resource) int { return describe(resource) }
         \\func pair(left:@Resource, right:@Resource) int { return left.get_handle() + right.get_handle() }
         \\func main() {
         \\    var resource = Resource(handle:4)
         \\    let copied = inspect(4)
-        \\    let borrowed = inspect(@copied)
-        \\    let described = describe(@resource)
-        \\    let forwarded = forward(@resource)
-        \\    let paired = pair(@resource, @resource)
-        \\    let temporary = describe(@Resource(handle:5))
+        \\    let borrowed = inspect(copied)
+        \\    let described = describe(resource)
+        \\    let forwarded = forward(resource)
+        \\    let paired = pair(resource, resource)
+        \\    let temporary = describe(Resource(handle:5))
         \\    let moved = move resource
         \\}
     );
     var analyzer = Analyzer.init(allocator);
     const program = try analyzer.analyze(try resolveSingleTestProgram(allocator, try parser.parse()));
-    try std.testing.expectEqual(Ast.ParameterMode.borrow, program.functions[2].parameters[0].mode);
-    try std.testing.expect(program.functions[5].statements[2].variable_declaration.initializer.value == .call);
+    try std.testing.expectEqual(Ast.ParameterMode.borrow, program.functions[0].parameters[0].mode);
+    try std.testing.expect(program.functions[4].statements[2].variable_declaration.initializer.value == .call);
+
+    try expectResolvedSemanticError(
+        "func inspect(value:int) {} func inspect(value:@int) {} func main() {}",
+        "function 'inspect' with this callable shape is already declared",
+    );
+    try expectResolvedSemanticError(
+        "class Box { init(value:int) {} init(value:@int) {} } func main() {}",
+        "constructor 'init' with this callable shape is already declared in this class",
+    );
+    try expectResolvedSemanticError(
+        "struct Box { func inspect(value:int) {} func inspect(value:@int) {} } func main() {}",
+        "method 'inspect' with this callable shape is already declared in struct 'Box'",
+    );
+    try expectResolvedSemanticError(
+        "protocol Reader { func inspect(value:int); func inspect(value:@int) } func main() {}",
+        "protocol method 'inspect' with this callable shape is already declared",
+    );
+    try expectResolvedSemanticError(
+        "func inspect(value:@int) {} func main() { inspect(@1) }",
+        "reference arguments are selected by the parameter signature; pass the value without '@'",
+    );
+    try expectResolvedSemanticError(
+        "func increment(value:&int) {} func main() { var value = 1; increment(&value) }",
+        "reference arguments are selected by the parameter signature; pass the place without '&'",
+    );
 }
 
 test "read references reject mutation conflicts and escape" {
@@ -9514,15 +9530,15 @@ test "read references reject mutation conflicts and escape" {
         "a read-reference parameter cannot be consumed with 'move'",
     );
     try expectResolvedSemanticError(
-        resource ++ "func conflict(first:@Resource, second:Resource) {} func main() { let value = Resource(handle:1); conflict(@value, move value) }",
+        resource ++ "func conflict(first:@Resource, second:Resource) {} func main() { let value = Resource(handle:1); conflict(value, move value) }",
         "cannot move borrowed noncopyable value 'value'",
     );
     try expectResolvedSemanticError(
-        "func conflict(first:@int, second:&int) {} func main() { var value = 1; conflict(@value, &value) }",
-        "cannot pass a value with '&' while it is read-borrowed",
+        "func conflict(first:@int, second:&int) {} func main() { var value = 1; conflict(value, value) }",
+        "cannot pass a value to a mutable reference parameter while it is read-borrowed",
     );
     try expectResolvedSemanticError(
-        "func conflict(first:&int, second:@int) {} func main() { var value = 1; conflict(&value, @value) }",
+        "func conflict(first:&int, second:@int) {} func main() { var value = 1; conflict(value, value) }",
         "cannot read-borrow a value while it is mutably borrowed",
     );
     try expectResolvedSemanticError(
@@ -9531,7 +9547,7 @@ test "read references reject mutation conflicts and escape" {
     );
     try expectResolvedSemanticError(
         "protocol Shared { func read() } func inspect(value:@Shared) {} func main() {}",
-        "a dynamic protocol value cannot be passed with '@'",
+        "a dynamic protocol value cannot use parameter mode '@'",
     );
 }
 
@@ -9565,7 +9581,7 @@ test "protocol requirements preserve read reference modes" {
         \\struct Counter : Reader {
         \\    func read(value:@int) int { return value + 1 }
         \\}
-        \\func main() { let counter = Counter(); let result = counter.read(@1) }
+        \\func main() { let counter = Counter(); let result = counter.read(1) }
     );
     var analyzer = Analyzer.init(allocator);
     const program = try analyzer.analyze(try resolveSingleTestProgram(allocator, try parser.parse()));

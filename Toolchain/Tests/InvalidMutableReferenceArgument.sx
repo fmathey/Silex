@@ -4,5 +4,5 @@ func replace(value:&int) {
 
 func main() {
     let count = 1
-    replace(&count)
+    replace(count)
 }

@@ -15,7 +15,7 @@ func main() {
 
 func use_mutable(callback:func(&int)) {
     var value = 0
-    callback(&value)
+    callback(value)
 }
 
 ---
@@ -111,6 +111,4 @@ func use_mutable(callback:func(&int)) {
           (invocation_expression
             target: (identifier)
             (expression
-              (mutable_reference_expression
-                operand: (expression
-                  (identifier))))))))))
+              (identifier))))))))

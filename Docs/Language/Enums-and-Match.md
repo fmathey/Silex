@@ -99,9 +99,9 @@ let text:str = DirectionName.south().raw_value
 ```
 
 `raw_value` is intrinsic to a raw enum rather than a declared field. It cannot
-be assigned or passed with `&`. An enum without a raw type has no such
-property. There is no implicit or explicit conversion between the enum and its
-raw type, and a raw value cannot construct an enum in this version.
+be assigned or passed to an `&T` parameter. An enum without a raw type has no
+such property. There is no implicit or explicit conversion between the enum and
+its raw type, and a raw value cannot construct an enum in this version.
 
 Raw values and associated values are deliberately separate forms. A raw enum
 variant cannot carry `(Type)`, while an associated-value enum cannot write
@@ -188,7 +188,7 @@ match move state {
 }
 
 match @state {
-    loaded(document) => { inspect(@document) }
+    loaded(document) => { inspect(document) }
     failed(error) => { print(error.message()) }
 }
 ```

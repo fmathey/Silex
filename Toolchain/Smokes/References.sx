@@ -18,7 +18,7 @@ struct Rover {
 func main() {
     var count = 1
     print(count)
-    increment(&count)
+    increment(count)
     print(count)
     count = 4
     print(count)
@@ -26,17 +26,17 @@ func main() {
     var values:int[] = [10, 20]
     var left = 0
     var right = 1
-    increment(&values[left])
-    increment(&values[right])
+    increment(values[left])
+    increment(values[right])
     print(values[0])
     print(values[1])
 
     right = left
-    increment_both(&values[left], &values[right])
+    increment_both(values[left], values[right])
     print(values[0])
 
     var rover = Rover(energy:10)
-    increment(&rover.energy)
+    increment(rover.energy)
     print(rover.energy)
 
     var original:int[] = [10]

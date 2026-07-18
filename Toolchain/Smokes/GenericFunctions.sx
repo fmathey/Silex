@@ -69,7 +69,7 @@ func main() {
     print(factorial<int>(5))
     print(local_copy<str>("local"))
     var changed = 10
-    replace<int>(&changed, 11)
+    replace<int>(changed, 11)
     print(changed)
     print(concrete_or_generic(4))
     print(concrete_or_generic<str>("generic"))

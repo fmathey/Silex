@@ -65,6 +65,7 @@ A collection of noncopyable elements owns them and is itself noncopyable.
 `append`, `prepend`, `insert`, and the replacement value of `replace` require
 `move` for a named element and accept a temporary directly. `take`,
 `take_first`, `take_last`, and `replace` transfer the removed element. An
-indexed read that would copy is rejected; use `@values[index]`, a read
-loop, or `for var`. A read loop binds each noncopyable element by temporary
-read-only alias, while `for let` remains a copying form and is rejected.
+indexed read that would copy is rejected; pass `values[index]` to an `@T`
+parameter, use a read loop, or use `for var`. A read loop binds each
+noncopyable element by temporary read-only alias, while `for let` remains a
+copying form and is rejected.

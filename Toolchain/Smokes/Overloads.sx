@@ -9,7 +9,7 @@ struct Meter {
         return self.value * scale
     }
 
-    func reset(value:&int) {
+    func clear(value:&int) {
         value = 0
     }
 
@@ -40,7 +40,7 @@ func countdown(value:int) int {
 func main() {
     var value:int = 4
     var meter = Meter(value:3)
-    meter.reset(&value)
+    meter.clear(value)
     print(measure())
     print(measure(8))
     print(measure(2.5))

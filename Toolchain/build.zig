@@ -137,21 +137,21 @@ pub fn build(b: *std.Build) void {
     invalid_mutable_reference_argument_command.addArgs(&.{ "compile", "Tests/InvalidMutableReferenceArgument.sx" });
     invalid_mutable_reference_argument_command.expectExitCode(1);
     invalid_mutable_reference_argument_command.expectStdErrEqual(
-        "Tests/InvalidMutableReferenceArgument.sx:7:13: error: cannot pass immutable variable 'count' with '&'\n",
+        "Tests/InvalidMutableReferenceArgument.sx:7:13: error: cannot pass immutable variable 'count' to a mutable reference parameter\n",
     );
 
     const missing_mutable_reference_argument_command = b.addRunArtifact(executable);
     missing_mutable_reference_argument_command.addArgs(&.{ "compile", "Tests/MissingMutableReferenceArgument.sx" });
     missing_mutable_reference_argument_command.expectExitCode(1);
     missing_mutable_reference_argument_command.expectStdErrEqual(
-        "Tests/MissingMutableReferenceArgument.sx:7:5: error: no compatible signature for function 'replace'; visible signatures: replace(&int)\n",
+        "Tests/MissingMutableReferenceArgument.sx:6:13: error: a mutable reference parameter requires a variable, field, or collection element\n",
     );
 
     const invalid_local_reference_command = b.addRunArtifact(executable);
     invalid_local_reference_command.addArgs(&.{ "compile", "Tests/InvalidLocalReference.sx" });
     invalid_local_reference_command.expectExitCode(1);
     invalid_local_reference_command.expectStdErrEqual(
-        "Tests/InvalidLocalReference.sx:3:21: error: '&' is only valid for an argument of a parameter declared with '&'\n",
+        "Tests/InvalidLocalReference.sx:3:21: error: '&' is only valid in parameter declarations; calls use plain arguments\n",
     );
 
     const invalid_native_function_command = b.addRunArtifact(executable);
@@ -583,14 +583,14 @@ pub fn build(b: *std.Build) void {
     duplicate_overload_alias_command.addArgs(&.{ "compile", "Tests/DuplicateOverloadAlias.sx" });
     duplicate_overload_alias_command.expectExitCode(1);
     duplicate_overload_alias_command.expectStdErrEqual(
-        "Tests/DuplicateOverloadAlias.sx:5:6: error: function 'measure' with this signature is already declared\n",
+        "Tests/DuplicateOverloadAlias.sx:5:6: error: function 'measure' with this callable shape is already declared\n",
     );
 
     const duplicate_overload_return_command = b.addRunArtifact(executable);
     duplicate_overload_return_command.addArgs(&.{ "compile", "Tests/DuplicateOverloadReturn.sx" });
     duplicate_overload_return_command.expectExitCode(1);
     duplicate_overload_return_command.expectStdErrEqual(
-        "Tests/DuplicateOverloadReturn.sx:5:6: error: function 'measure' with this signature is already declared\n",
+        "Tests/DuplicateOverloadReturn.sx:5:6: error: function 'measure' with this callable shape is already declared\n",
     );
 
     const ambiguous_overload_command = b.addRunArtifact(executable);
@@ -1371,7 +1371,7 @@ pub fn build(b: *std.Build) void {
         "silex: native compilation failed for target 'x86_64-linux-musl'; target support, SDKs, or native sources may be unavailable or incomplete\n",
     );
     backend_discovered_target_failure_command.expectStdErrMatch(b.fmt(
-        "silex: backend details: .silex{c}build{c}v43{c}x86_64-linux-musl{c}",
+        "silex: backend details: .silex{c}build{c}v44{c}x86_64-linux-musl{c}",
         .{
             std.fs.path.sep,
             std.fs.path.sep,
@@ -1987,7 +1987,7 @@ pub fn build(b: *std.Build) void {
     const functions_command = b.addRunArtifact(executable);
     functions_command.step.dependOn(&inheritance_command.step);
     functions_command.addArgs(&.{ "run", "Smokes/Functions.sx" });
-    functions_command.expectStdOutEqual(hostText(b, "8\n2\n85\n6\n84\n82\n1\n3\n77\n0\n1\n"));
+    functions_command.expectStdOutEqual(hostText(b, "8\n2\n10\n85\n6\n84\n82\n1\n3\n77\n0\n1\n"));
 
     const references_command = b.addRunArtifact(executable);
     references_command.step.dependOn(&functions_command.step);

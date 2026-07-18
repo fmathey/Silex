@@ -16,8 +16,12 @@ func make_incrementer() func(int) int {
 
 func mutate(callback:func(&int)) {
     var value = 1
-    callback(&value)
+    callback(value)
     print(value)
+}
+
+func observe(callback:func(@int)) {
+    callback(10)
 }
 
 struct Counter {
@@ -51,6 +55,10 @@ func main() {
 
     mutate(func(value:&int) {
         value += 1
+    })
+
+    observe(func(value:@int) {
+        print(value)
     })
 
     var health:int = 100

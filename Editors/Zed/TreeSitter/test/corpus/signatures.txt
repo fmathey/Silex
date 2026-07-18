@@ -48,13 +48,13 @@ native func native_next() int
       (builtin_type))))
 
 ==================
-Read reference signature and argument
+Read reference signature and ordinary argument
 ==================
 
 func inspect(value:@Data) {}
 func apply(callback:func(@Data) int) {}
 func main() {
-    inspect(@data)
+    inspect(data)
 }
 
 ---
@@ -92,6 +92,4 @@ func main() {
           (invocation_expression
             target: (identifier)
             (expression
-              (read_reference_expression
-                operand: (expression
-                  (identifier))))))))))
+              (identifier))))))))

@@ -140,8 +140,9 @@ non-void function must return a compatible value on every path. A void function
 may use `return` without a value. A unique-resource parameter owns its value;
 a named owner argument or return uses `move`, while a freshly produced
 temporary transfers implicitly. A `name:@T` parameter instead observes the
-caller's value through the matching `@value` argument without taking
-ownership. See [Values and mutation](Values-and-References.md#read-references) and
+caller's ordinary argument without taking ownership; the signature alone
+selects read-reference binding. See
+[Values and mutation](Values-and-References.md#read-references) and
 [unique resource structures](Structures.md#unique-resource-structures).
 
 Methods are functions declared inside a structure or class. An instance method

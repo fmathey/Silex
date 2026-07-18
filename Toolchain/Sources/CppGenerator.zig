@@ -3666,7 +3666,7 @@ test "generate read reference parameters as const references" {
     var parser = Parser.init(allocator,
         \\struct Resource { let handle:int; drop {} }
         \\func inspect(resource:@Resource) int { return resource.handle }
-        \\func main() { let resource = Resource(handle:1); print(inspect(@resource)) }
+        \\func main() { let resource = Resource(handle:1); print(inspect(resource)) }
     );
     var analyzer = Semantic.Analyzer.init(allocator);
     const cpp = try generate(allocator, try analyzer.analyze(try resolveSingleTestProgram(allocator, try parser.parse())));

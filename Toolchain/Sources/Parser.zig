@@ -3298,19 +3298,18 @@ test "parse protocol conformances on a type extension" {
     try std.testing.expectEqualStrings("expected protocol name after ':'", missing.diagnostic.?.message);
 }
 
-test "parse read reference parameters and arguments" {
+test "parse read reference parameters with ordinary arguments" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     var parser = Parser.init(arena.allocator(),
         \\struct Data { let value:int }
         \\func inspect(value:@Data) int { return value.value }
-        \\func main() { let data = Data(value:1); inspect(@data) }
+        \\func main() { let data = Data(value:1); inspect(data) }
     );
     const program = try parser.parse();
     try std.testing.expectEqual(Ast.ParameterMode.borrow, program.functions[0].parameters[0].mode);
     const call = program.functions[1].statements[1].expression_statement.value.call;
-    try std.testing.expect(call.arguments[0].value == .borrow_expression);
-    try std.testing.expect(call.arguments[0].value.borrow_expression.operand.value == .identifier);
+    try std.testing.expect(call.arguments[0].value == .identifier);
 
     var released_identifier = Parser.init(arena.allocator(), "func borrow(value:int) int { return value } func main() {}");
     _ = try released_identifier.parse();

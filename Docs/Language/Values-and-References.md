@@ -69,8 +69,8 @@ print(source[0]) // 10
 ## Read references
 
 Use `name:@T` when a function only needs to inspect a value without copying or
-consuming it. The call uses `@value`, making the temporary read-only reference
-visible at both ends:
+consuming it. The signature selects the temporary read-only reference; the
+call remains an ordinary call:
 
 ```sx
 func describe(file:@File) str {
@@ -78,43 +78,42 @@ func describe(file:@File) str {
 }
 
 let file = File.open("notes.txt")
-print(describe(@file))
+print(describe(file))
 print(file.get_path())
 ```
 
-`@T` is a parameter mode rather than a general storable type. `@value` accepts
-a readable `let` or `var`, field, indexed element, or temporary. The alias ends
-when the synchronous call returns, and a temporary lives through that call.
+`@T` is a parameter mode rather than a general storable type. Its ordinary
+argument may be a readable `let` or `var`, field, indexed element, literal, or
+temporary. The alias ends when the synchronous call returns, and a temporary
+lives through that call.
 Several read references to one root may be arguments of the same call.
 
 A read-reference parameter is read-only. It may inspect fields, index
 collections, call non-mutating methods, and forward the alias to another `@T`
-parameter.
-It cannot be assigned, passed with `&`, used as a mutating receiver, consumed
-with `move`, returned, stored beyond the call, or captured by a lambda. While a
-read reference is active, the same root cannot be mutated, moved, or passed
-with `&`.
+parameter. It cannot be assigned to an `&T` parameter, used as a mutating
+receiver, consumed with `move`, returned, stored beyond the call, or captured
+by a lambda. While a read reference is active, the same root cannot be mutated,
+moved, or passed to an `&T` parameter.
 
 `@` works with copyable and noncopyable value types, including unique
 resources. It is invalid for a class, whose ordinary value already carries a
 shared identity, and for a dynamic protocol value that may hide such an
 identity. Native functions do not declare `@T` parameters.
 
-The marker participates in overload resolution and function types. These are
-three distinct signatures:
+The mode remains part of function types, but it is not an overload selector at
+the call site. Declarations with the same name and parameter types cannot differ
+only by `T`, `@T`, or `&T`, because all three would be called identically:
 
 ```sx
-func inspect(value:Data) {}
-func inspect(value:@Data) {}
-func inspect(value:&Data) {}
-
 var callback:func(@Data) = func(value:@Data) {}
+var mutator:func(&Data) = func(value:&Data) {}
 ```
 
 ## Mutating an argument
 
 Use `name:&T` when a function deliberately changes a place owned by its
-caller. The call writes `&place`; inside the function, `name` is used directly.
+caller. The signature selects mutable-reference binding; the call passes the
+place normally, and inside the function `name` is used directly.
 
 ```sx
 func increment(value:&int) {
@@ -122,12 +121,12 @@ func increment(value:&int) {
 }
 
 var count = 1
-increment(&count)
+increment(count)
 print(count) // 2
 ```
 
-`&` accepts a mutable variable, `var` field, or indexed element that is not
-reached through a `let` field:
+An `&T` parameter accepts a mutable variable, `var` field, or indexed element
+that is not reached through a `let` field:
 
 ```sx
 struct Rover {
@@ -136,15 +135,15 @@ struct Rover {
 
 var rover = Rover(energy:10)
 var values:int[] = [1]
-increment(&rover.energy)
-increment(&values[0])
+increment(rover.energy)
+increment(values[0])
 ```
 
 A `let` binding or field, including any nested field or element reached through
-it, cannot be passed with `&`.
-Several `&` arguments may name the same place at runtime. They are temporary
-aliases for the duration of that call, and writes follow the function body's
-normal execution order. An `&` argument cannot overlap an `@` argument of
+it, cannot be passed to an `&T` parameter. Several arguments bound to `&T`
+parameters may name the same place at runtime. They are temporary aliases for
+the duration of that call, and writes follow the function body's
+normal execution order. An `&T` parameter cannot overlap an `@T` parameter on
 the same root in that call.
 
 `@T` and `&T` exist only in a function or method parameter or function type.
@@ -159,6 +158,6 @@ A class reference already has shared identity and cannot be declared as an
 caller's optional place so the function can replace that place; it does not add
 a second reference layer around the class instance. See [Classes](Classes.md).
 
-The lexical borrows held by a lambda are distinct from the explicit `&`
-argument marker: they are detected automatically, may last for several calls
+The lexical borrows held by a lambda are distinct from an `&T` parameter
+binding: they are detected automatically, may last for several calls
 inside their valid scope, and can never escape that scope.

@@ -215,7 +215,7 @@ func main() {
         callback()
         assert(found == first, "conditional extraction preserves identity")
     }
-    clear_player(&optional)
+    clear_player(optional)
     assert(optional == null && first.health == 65, "optional places can be replaced")
 
     verify_capture_binding()

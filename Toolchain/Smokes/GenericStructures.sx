@@ -70,6 +70,6 @@ func main() {
         value += 1
     })
     var changed = 8
-    mutator.value(&changed)
+    mutator.value(changed)
     print(changed)
 }

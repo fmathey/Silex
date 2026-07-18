@@ -925,7 +925,7 @@ func increment(value:&int) {
 
 func main() {
     var values = [1]
-    increment(&values[0])
+    increment(values[0])
 }
 
 ---
@@ -960,12 +960,10 @@ func main() {
           (invocation_expression
             (identifier)
             (expression
-              (mutable_reference_expression
+              (index_expression
+                (identifier)
                 (expression
-                  (index_expression
-                    (identifier)
-                    (expression
-                      (integer_literal))))))))))))
+                  (integer_literal))))))))))
 
 ============================
 Optional values and safe access

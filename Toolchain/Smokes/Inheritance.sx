@@ -82,7 +82,7 @@ class EntityHolder {
 
 class ConstructorBase {
     sub init(marker:&int) {
-        self.probe(&marker)
+        self.probe(marker)
     }
 
     pub func probe(marker:&int) {
@@ -91,7 +91,7 @@ class ConstructorBase {
 }
 
 class ConstructorChild : ConstructorBase {
-    pub init(marker:&int) : super(&marker) {
+    pub init(marker:&int) : super(marker) {
         assert(marker == 1, "base construction does not dispatch into the child")
     }
 
@@ -159,7 +159,7 @@ class OrderedBase {
 }
 
 class OrderedChild : OrderedBase {
-    pub init(order:&int) : super(&order) {
+    pub init(order:&int) : super(order) {
         assert(order == 1, "base constructor runs first")
         order = 2
     }
@@ -228,13 +228,13 @@ func main() {
     assert(forward.ready(), "the generator orders a base declared after its child")
 
     var order = 0
-    var ordered = OrderedChild(&order)
+    var ordered = OrderedChild(order)
     assert(order == 2, "child body runs after the base")
 
     var constructor_marker = 0
-    var constructor_child = ConstructorChild(&constructor_marker)
+    var constructor_child = ConstructorChild(constructor_marker)
     assert(constructor_marker == 1, "base constructor selected its own implementation")
-    constructor_child.probe(&constructor_marker)
+    constructor_child.probe(constructor_marker)
     assert(constructor_marker == 2, "dispatch starts after complete construction")
 
     var ticking = TickChild()
