@@ -117,6 +117,7 @@ pub const Specializer = struct {
 
         return .{
             .enums = try self.enums.toOwnedSlice(self.allocator),
+            .protocols = self.program.protocols,
             .structures = try self.structures.toOwnedSlice(self.allocator),
             .functions = try self.functions.toOwnedSlice(self.allocator),
         };
@@ -354,6 +355,7 @@ pub const Specializer = struct {
             );
             return self.fail(position, message);
         }
+        try self.validateTypeArgumentConstraints(template.type_parameters, arguments, position);
         const name = try self.genericTypeName(template_name, arguments);
         for (self.structure_specializations.items) |specialization| {
             if (std.mem.eql(u8, specialization.name, name)) return specialization.name;
@@ -408,6 +410,7 @@ pub const Specializer = struct {
             );
             return self.fail(position, message);
         }
+        try self.validateTypeArgumentConstraints(template.type_parameters, arguments, position);
         for (arguments, 0..) |argument, index| {
             if (argument != .void) continue;
             if (!std.mem.eql(u8, template_name, "Result")) {
@@ -864,6 +867,7 @@ pub const Specializer = struct {
         name: []const u8,
         position: Source.Position,
     ) SpecializeError!void {
+        try self.validateTypeArgumentConstraints(template.type_parameters, arguments, position);
         for (self.function_specializations.items) |specialization| {
             if (!positionsEqual(specialization.template_position, template.name_position)) continue;
             if (std.mem.eql(u8, specialization.name, name)) return;
@@ -893,6 +897,74 @@ pub const Specializer = struct {
         concrete.type_parameters = &.{};
         try self.functions.append(self.allocator, concrete);
         self.function_specializations.items[specialization_index].state = .done;
+    }
+
+    fn validateTypeArgumentConstraints(
+        self: *Specializer,
+        parameters: []const Ast.TypeParameter,
+        arguments: []const Ast.TypeName,
+        position: Source.Position,
+    ) SpecializeError!void {
+        for (parameters, arguments) |parameter, argument| {
+            const constraint = parameter.constraint orelse continue;
+            if (self.typeConformsTo(argument, constraint.name)) continue;
+            var argument_name: std.ArrayList(u8) = .empty;
+            try appendTypeName(self.allocator, &argument_name, argument);
+            const message = try std.fmt.allocPrint(
+                self.allocator,
+                "type argument '{s}' does not conform to protocol '{s}' required by '{s}'",
+                .{ try argument_name.toOwnedSlice(self.allocator), constraint.name, parameter.name },
+            );
+            return self.fail(position, message);
+        }
+    }
+
+    fn typeConformsTo(self: *const Specializer, value: Ast.TypeName, protocol_name: []const u8) bool {
+        const structure_name = switch (value) {
+            .structure => |name| name,
+            else => return false,
+        };
+        return self.structureConformsTo(structure_name, protocol_name, 0);
+    }
+
+    fn structureConformsTo(
+        self: *const Specializer,
+        structure_name: []const u8,
+        protocol_name: []const u8,
+        depth: usize,
+    ) bool {
+        if (depth > self.program.structures.len + self.structures.items.len) return false;
+        const structure = self.findAvailableStructure(structure_name) orelse return false;
+        for (structure.conformances) |conformance| {
+            if (std.mem.eql(u8, conformance.name, protocol_name)) return true;
+        }
+        if (structure.base) |base| {
+            // Before module resolution, the parser temporarily stores a
+            // first protocol in the base slot because ':' is intentionally
+            // ambiguous between a class parent and a protocol.
+            if (self.findProtocol(base.name) != null) {
+                return std.mem.eql(u8, base.name, protocol_name);
+            }
+            return self.structureConformsTo(base.name, protocol_name, depth + 1);
+        }
+        return false;
+    }
+
+    fn findAvailableStructure(self: *const Specializer, name: []const u8) ?*const Ast.Structure {
+        for (self.structures.items) |*structure| {
+            if (std.mem.eql(u8, structure.name, name)) return structure;
+        }
+        for (self.program.structures) |*structure| {
+            if (std.mem.eql(u8, structure.name, name)) return structure;
+        }
+        return null;
+    }
+
+    fn findProtocol(self: *const Specializer, name: []const u8) ?*const Ast.Protocol {
+        for (self.program.protocols) |*protocol| {
+            if (std.mem.eql(u8, protocol.name, name)) return protocol;
+        }
+        return null;
     }
 
     fn hasVisibleGenericFunction(
@@ -1048,4 +1120,71 @@ fn appendTypeName(
             try output.append(allocator, '?');
         },
     }
+}
+
+test "specialize protocol constrained generic functions" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var parser = Parser.init(allocator,
+        \\protocol Named { func name() str }
+        \\struct User : Named { func name() str { return "Ada" } }
+        \\func label<T : Named>(value:T) str { return value.name() }
+        \\func main() { print(label<User>(User())) }
+    );
+    var specializer = Specializer.init(allocator, try parser.parse());
+    const program = try specializer.specialize();
+    var found = false;
+    for (program.functions) |function| {
+        if (std.mem.startsWith(u8, function.name, "label<")) found = true;
+    }
+    try std.testing.expect(found);
+}
+
+test "reject a type argument without declared protocol conformance" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var parser = Parser.init(allocator,
+        \\protocol Named { func name() str }
+        \\struct User { func name() str { return "Ada" } }
+        \\func label<T : Named>(value:T) str { return value.name() }
+        \\func main() { print(label<User>(User())) }
+    );
+    var specializer = Specializer.init(allocator, try parser.parse());
+    try std.testing.expectError(error.InvalidSource, specializer.specialize());
+    try std.testing.expectEqualStrings(
+        "type argument 'User' does not conform to protocol 'Named' required by 'T'",
+        specializer.diagnostic.?.message,
+    );
+}
+
+test "accept inherited protocol conformance for a type argument" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var parser = Parser.init(allocator,
+        \\protocol Named { func name() str }
+        \\class Entity : Named { pub func name() str { return "entity" } }
+        \\class Player : Entity {}
+        \\func label<T : Named>(value:T) str { return value.name() }
+        \\func main() { var player = Player(); print(label<Player>(player)) }
+    );
+    var specializer = Specializer.init(allocator, try parser.parse());
+    _ = try specializer.specialize();
+}
+
+test "specialize a constrained generic enum" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var parser = Parser.init(allocator,
+        \\protocol Named { func name() str }
+        \\struct User : Named { func name() str { return "Ada" } }
+        \\enum Event<T : Named> { value(T) }
+        \\func main() { let event = Event<User>.value(User()) }
+    );
+    var specializer = Specializer.init(allocator, try parser.parse());
+    const program = try specializer.specialize();
+    try std.testing.expectEqual(@as(usize, 1), program.enums.len);
 }

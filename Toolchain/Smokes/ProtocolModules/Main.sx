@@ -1,0 +1,19 @@
+import ProtocolChecks.Core as Core
+
+use Core.Named
+use Core.RemoteUser
+use Core.name_of
+
+class LocalUser : Named {
+    pub func name() str {
+        return "local"
+    }
+}
+
+func main() {
+    let remote = RemoteUser(value:"remote")
+    print(name_of<RemoteUser>(remote))
+
+    var local = LocalUser()
+    print(name_of<LocalUser>(local))
+}

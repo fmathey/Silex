@@ -556,10 +556,25 @@ const StructureSymbol = struct {
     generated_name: []const u8,
     is_class: bool,
     base_index: ?usize,
+    protocol_indexes: []const usize,
     fields: []StructureFieldSymbol,
     static_fields: []StructureFieldSymbol,
     constructors: []ConstructorSymbol,
     methods: []MethodSymbol,
+    position: Source.Position,
+};
+
+const ProtocolSymbol = struct {
+    source_name: []const u8,
+    requirements: []const ProtocolRequirement,
+    position: Source.Position,
+};
+
+const ProtocolRequirement = struct {
+    source_name: []const u8,
+    return_type: Type,
+    parameter_types: []const Type,
+    parameter_is_mutable_references: []const bool,
     position: Source.Position,
 };
 
@@ -661,6 +676,7 @@ pub const Analyzer = struct {
     next_symbol_id: usize = 0,
     functions: std.ArrayList(FunctionSymbol) = .empty,
     enums: std.ArrayList(EnumSymbol) = .empty,
+    protocols: std.ArrayList(ProtocolSymbol) = .empty,
     structures: std.ArrayList(StructureSymbol) = .empty,
     current_return_type: Type = .void,
     current_structure_index: ?usize = null,
@@ -682,6 +698,8 @@ pub const Analyzer = struct {
 
     pub fn analyze(self: *Analyzer, program: Ast.Program) !Program {
         try self.collectEnumNames(program.enums);
+        try self.collectStructureNames(program.structures);
+        try self.collectProtocols(program.protocols);
         try self.collectStructures(program.structures);
         try self.collectEnumVariants(program.enums);
         try self.collectFunctions(program.functions);
@@ -869,38 +887,40 @@ pub const Analyzer = struct {
 
     fn collectStructures(self: *Analyzer, ast_structures: []const Ast.Structure) AnalyzeError!void {
         for (ast_structures, 0..) |ast_structure, structure_index| {
-            if (self.findStructure(ast_structure.name) != null or self.findEnum(ast_structure.name) != null) {
-                const message = try std.fmt.allocPrint(self.allocator, "type '{s}' is already declared", .{ast_structure.name});
-                return self.fail(ast_structure.name_position, message);
+            var protocol_indexes: std.ArrayList(usize) = .empty;
+            if (ast_structure.base) |base| {
+                if (self.findProtocolIndex(base.name)) |protocol_index| {
+                    try protocol_indexes.append(self.allocator, protocol_index);
+                } else {
+                    if (!ast_structure.is_class) return self.fail(base.position, "only a class can declare a base class");
+                    const base_index = self.findStructureIndex(base.name) orelse {
+                        const message = try std.fmt.allocPrint(self.allocator, "unknown base class or protocol '{s}'", .{base.name});
+                        return self.fail(base.position, message);
+                    };
+                    if (!self.structures.items[base_index].is_class) {
+                        const message = try std.fmt.allocPrint(self.allocator, "base type '{s}' is not a class", .{base.name});
+                        return self.fail(base.position, message);
+                    }
+                    self.structures.items[structure_index].base_index = base_index;
+                }
             }
-            try self.structures.append(self.allocator, .{
-                .source_name = ast_structure.name,
-                .generated_name = if (ast_structure.is_class)
-                    try std.fmt.allocPrint(self.allocator, "SilexClass{d}", .{structure_index})
-                else
-                    try std.fmt.allocPrint(self.allocator, "SilexStruct{d}", .{structure_index}),
-                .is_class = ast_structure.is_class,
-                .base_index = null,
-                .fields = &.{},
-                .static_fields = &.{},
-                .constructors = &.{},
-                .methods = &.{},
-                .position = ast_structure.name_position,
-            });
-        }
-
-        for (ast_structures, 0..) |ast_structure, structure_index| {
-            const base = ast_structure.base orelse continue;
-            if (!ast_structure.is_class) return self.fail(base.position, "only a class can declare a base class");
-            const base_index = self.findStructureIndex(base.name) orelse {
-                const message = try std.fmt.allocPrint(self.allocator, "unknown base class '{s}'", .{base.name});
-                return self.fail(base.position, message);
-            };
-            if (!self.structures.items[base_index].is_class) {
-                const message = try std.fmt.allocPrint(self.allocator, "base type '{s}' is not a class", .{base.name});
-                return self.fail(base.position, message);
+            for (ast_structure.conformances) |conformance| {
+                const protocol_index = self.findProtocolIndex(conformance.name) orelse {
+                    const message = if (self.findStructure(conformance.name) != null)
+                        try std.fmt.allocPrint(self.allocator, "type '{s}' is not a protocol", .{conformance.name})
+                    else
+                        try std.fmt.allocPrint(self.allocator, "unknown protocol '{s}'", .{conformance.name});
+                    return self.fail(conformance.position, message);
+                };
+                for (protocol_indexes.items) |existing| {
+                    if (existing == protocol_index) {
+                        const message = try std.fmt.allocPrint(self.allocator, "protocol '{s}' is already declared in the conformance list", .{conformance.name});
+                        return self.fail(conformance.position, message);
+                    }
+                }
+                try protocol_indexes.append(self.allocator, protocol_index);
             }
-            self.structures.items[structure_index].base_index = base_index;
+            self.structures.items[structure_index].protocol_indexes = try protocol_indexes.toOwnedSlice(self.allocator);
         }
         try self.validateInheritanceCycles();
 
@@ -1045,6 +1065,120 @@ pub const Analyzer = struct {
             self.structures.items[structure_index].methods = try methods.toOwnedSlice(self.allocator);
         }
         try self.validateInheritedMembers();
+        try self.validateProtocolConformances();
+    }
+
+    fn collectStructureNames(self: *Analyzer, ast_structures: []const Ast.Structure) AnalyzeError!void {
+        for (ast_structures, 0..) |ast_structure, structure_index| {
+            if (self.findStructure(ast_structure.name) != null or self.findEnum(ast_structure.name) != null) {
+                const message = try std.fmt.allocPrint(self.allocator, "type '{s}' is already declared", .{ast_structure.name});
+                return self.fail(ast_structure.name_position, message);
+            }
+            try self.structures.append(self.allocator, .{
+                .source_name = ast_structure.name,
+                .generated_name = if (ast_structure.is_class)
+                    try std.fmt.allocPrint(self.allocator, "SilexClass{d}", .{structure_index})
+                else
+                    try std.fmt.allocPrint(self.allocator, "SilexStruct{d}", .{structure_index}),
+                .is_class = ast_structure.is_class,
+                .base_index = null,
+                .protocol_indexes = &.{},
+                .fields = &.{},
+                .static_fields = &.{},
+                .constructors = &.{},
+                .methods = &.{},
+                .position = ast_structure.name_position,
+            });
+        }
+    }
+
+    fn collectProtocols(self: *Analyzer, ast_protocols: []const Ast.Protocol) AnalyzeError!void {
+        for (ast_protocols) |ast_protocol| {
+            if (self.findProtocol(ast_protocol.name) != null or self.findStructure(ast_protocol.name) != null or self.findEnum(ast_protocol.name) != null) {
+                const message = try std.fmt.allocPrint(self.allocator, "protocol '{s}' is already declared", .{ast_protocol.name});
+                return self.fail(ast_protocol.name_position, message);
+            }
+            try self.protocols.append(self.allocator, .{
+                .source_name = ast_protocol.name,
+                .requirements = &.{},
+                .position = ast_protocol.name_position,
+            });
+        }
+        for (ast_protocols, 0..) |ast_protocol, protocol_index| {
+            var requirements: std.ArrayList(ProtocolRequirement) = .empty;
+            for (ast_protocol.requirements) |requirement| {
+                var parameter_types: std.ArrayList(Type) = .empty;
+                var parameter_references: std.ArrayList(bool) = .empty;
+                for (requirement.parameters) |parameter| {
+                    const parameter_type = try typeFromAnnotation(self, parameter.type, parameter.position);
+                    try self.rejectClassMutableReference(parameter_type, parameter.is_mutable_reference, parameter.position);
+                    try parameter_types.append(self.allocator, parameter_type);
+                    try parameter_references.append(self.allocator, parameter.is_mutable_reference);
+                }
+                for (requirements.items) |existing| {
+                    if (std.mem.eql(u8, existing.source_name, requirement.name) and sameSignature(
+                        existing.parameter_types,
+                        existing.parameter_is_mutable_references,
+                        parameter_types.items,
+                        parameter_references.items,
+                    )) {
+                        const message = try std.fmt.allocPrint(self.allocator, "protocol method '{s}' with this signature is already declared", .{requirement.name});
+                        return self.fail(requirement.name_position, message);
+                    }
+                }
+                const return_type = try typeFromReturn(self, requirement.return_type, requirement.position);
+                if (return_type == .reference) return self.fail(requirement.position, "a protocol method cannot return a reference");
+                try requirements.append(self.allocator, .{
+                    .source_name = requirement.name,
+                    .return_type = return_type,
+                    .parameter_types = try parameter_types.toOwnedSlice(self.allocator),
+                    .parameter_is_mutable_references = try parameter_references.toOwnedSlice(self.allocator),
+                    .position = requirement.name_position,
+                });
+            }
+            self.protocols.items[protocol_index].requirements = try requirements.toOwnedSlice(self.allocator);
+        }
+    }
+
+    fn validateProtocolConformances(self: *Analyzer) AnalyzeError!void {
+        for (self.structures.items, 0..) |structure, structure_index| {
+            for (structure.protocol_indexes) |protocol_index| {
+                const protocol = self.protocols.items[protocol_index];
+                for (protocol.requirements) |requirement| {
+                    if (self.structureHasProtocolRequirement(structure_index, requirement)) continue;
+                    const message = try std.fmt.allocPrint(
+                        self.allocator,
+                        "type '{s}' does not satisfy method '{s}' required by protocol '{s}'",
+                        .{ structure.source_name, requirement.source_name, protocol.source_name },
+                    );
+                    return self.fail(structure.position, message);
+                }
+            }
+        }
+    }
+
+    fn structureHasProtocolRequirement(
+        self: *const Analyzer,
+        start_index: usize,
+        requirement: ProtocolRequirement,
+    ) bool {
+        var structure_index: ?usize = start_index;
+        while (structure_index) |index| {
+            const structure = self.structures.items[index];
+            for (structure.methods) |method_symbol| {
+                if (method_symbol.is_static or method_symbol.visibility != .public_access) continue;
+                if (!std.mem.eql(u8, method_symbol.source_name, requirement.source_name)) continue;
+                if (!sameSignature(
+                    method_symbol.parameter_types,
+                    method_symbol.parameter_is_mutable_references,
+                    requirement.parameter_types,
+                    requirement.parameter_is_mutable_references,
+                )) continue;
+                if (typeEqual(method_symbol.return_type, requirement.return_type)) return true;
+            }
+            structure_index = structure.base_index;
+        }
+        return false;
     }
 
     fn validateInheritanceCycles(self: *Analyzer) AnalyzeError!void {
@@ -4198,6 +4332,20 @@ pub const Analyzer = struct {
         return null;
     }
 
+    fn findProtocol(self: *const Analyzer, name: []const u8) ?*const ProtocolSymbol {
+        for (self.protocols.items) |*protocol| {
+            if (std.mem.eql(u8, protocol.source_name, name)) return protocol;
+        }
+        return null;
+    }
+
+    fn findProtocolIndex(self: *const Analyzer, name: []const u8) ?usize {
+        for (self.protocols.items, 0..) |protocol, index| {
+            if (std.mem.eql(u8, protocol.source_name, name)) return index;
+        }
+        return null;
+    }
+
     fn findEnum(self: *const Analyzer, name: []const u8) ?*const EnumSymbol {
         for (self.enums.items) |*enum_symbol| {
             if (std.mem.eql(u8, enum_symbol.source_name, name)) return enum_symbol;
@@ -6701,6 +6849,36 @@ fn resolveSingleTestProgram(allocator: Allocator, program: Ast.Program) !Ast.Pro
     };
     var resolver = Modules.Resolver.init(allocator, project, &.{.{ .module_index = 0, .program = program }});
     return resolver.resolve();
+}
+
+test "validate protocol conformances and inherited public requirements" {
+    try expectSemanticSuccess(
+        \\protocol Describable { func describe() str }
+        \\protocol Drawable { func draw() }
+        \\struct User : Describable { func describe() str { return "user" } }
+        \\class Entity { pub func describe() str { return "entity" } }
+        \\class Player : Entity, Describable, Drawable { pub func draw() {} }
+        \\class Child : Player {}
+        \\func main() {}
+    );
+}
+
+test "reject missing private static and incompatible protocol requirements" {
+    try expectResolvedSemanticError(
+        \\protocol Drawable { func draw() }
+        \\class Player : Drawable { func draw() {} }
+        \\func main() {}
+    , "type 'Player' does not satisfy method 'draw' required by protocol 'Drawable'");
+    try expectResolvedSemanticError(
+        \\protocol Drawable { func draw() }
+        \\struct Icon : Drawable { static func draw() {} }
+        \\func main() {}
+    , "type 'Icon' does not satisfy method 'draw' required by protocol 'Drawable'");
+    try expectResolvedSemanticError(
+        \\protocol Describable { func describe() str }
+        \\struct User : Describable { func describe() int { return 1 } }
+        \\func main() {}
+    , "type 'User' does not satisfy method 'describe' required by protocol 'Describable'");
 }
 
 test "native ABI rejects optional returns" {

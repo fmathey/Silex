@@ -28,6 +28,7 @@ module.exports = grammar({
           $.import_declaration,
           $.use_declaration,
           $.enum_definition,
+          $.protocol_definition,
           $.structure_definition,
           $.function_definition,
           $.native_function_declaration,
@@ -62,7 +63,25 @@ module.exports = grammar({
       ),
 
     public_declaration: ($) =>
-      seq(field("visibility", "pub"), choice($.enum_definition, $.structure_definition, $.function_definition)),
+      seq(field("visibility", "pub"), choice($.enum_definition, $.protocol_definition, $.structure_definition, $.function_definition)),
+
+    protocol_definition: ($) =>
+      seq(
+        "protocol",
+        field("name", $.identifier),
+        "{",
+        repeat($.protocol_method_requirement),
+        "}",
+      ),
+
+    protocol_method_requirement: ($) =>
+      seq(
+        "func",
+        field("name", $.identifier),
+        $.parameter_list,
+        optional(field("return_type", choice($.void_type, $.type))),
+        choice(";", $._automatic_semicolon),
+      ),
 
     enum_definition: ($) =>
       seq(
@@ -103,7 +122,15 @@ module.exports = grammar({
         choice("struct", "class"),
         field("name", $.identifier),
         optional(field("type_parameters", $.type_parameter_list)),
-        optional(seq(":", field("base", $.named_type))),
+        optional(
+          seq(
+            ":",
+            field(
+              "supertypes",
+              seq($.named_type, repeat(seq(",", $.named_type))),
+            ),
+          ),
+        ),
         "{",
         repeat(
           choice(
@@ -191,7 +218,11 @@ module.exports = grammar({
         repeat(seq(",", $.type_parameter)),
         ">",
       ),
-    type_parameter: ($) => field("name", $.identifier),
+    type_parameter: ($) =>
+      seq(
+        field("name", $.identifier),
+        optional(seq(":", field("constraint", $.named_type))),
+      ),
     type_argument_list: ($) =>
       seq(
         "<",

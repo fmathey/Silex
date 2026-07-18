@@ -1,0 +1,15 @@
+pub protocol Named {
+    func name() str
+}
+
+pub struct RemoteUser : Named {
+    let value:str
+
+    func name() str {
+        return self.value
+    }
+}
+
+pub func name_of<T : Named>(value:T) str {
+    return value.name()
+}

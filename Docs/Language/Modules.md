@@ -1,7 +1,7 @@
 # Modules
 
 A module is a logical node in a hierarchy. Files assigned to the same module
-share their enums, structures, classes, and functions, and directories below it
+share their enums, protocols, structures, classes, and functions, and directories below it
 provide its submodules. A file does not contain a `module` declaration.
 
 When compiling an entry file without a manifest, a directory defines a local
@@ -86,8 +86,8 @@ The source type is resolved in the file declaring the alias and is not
 reinterpreted in the consumer. Type aliases cannot currently declare their own
 type parameters.
 
-Declarations are private by default. `pub` exposes an enum, structure, class,
-or function, while `pub use` re-exports an existing declaration or type alias
+Declarations are private by default. `pub` exposes an enum, protocol, structure,
+class, or function, while `pub use` re-exports an existing declaration or type alias
 under the current module name. Every variant of a public enum follows the
 visibility of its enum. Modules cannot currently be re-exported with `pub use`.
 

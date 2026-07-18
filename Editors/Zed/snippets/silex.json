@@ -60,6 +60,16 @@
     ],
     "description": "Declare a closed enum"
   },
+  "Protocol": {
+    "prefix": "protocol",
+    "body": [
+      "protocol ${1:Name} {",
+      "    func ${2:requirement}(${3})${4}",
+      "    $0",
+      "}"
+    ],
+    "description": "Declare a nominal method contract"
+  },
   "Generic enum": {
     "prefix": "enumgeneric",
     "body": [

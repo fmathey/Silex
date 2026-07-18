@@ -87,12 +87,13 @@ var score = Box<int>(value:10)
 score.replace(20)
 ```
 
-Silex checks every concrete specialization with its ordinary type rules. A
-method operation involving `T` is therefore valid only for arguments that
-support that operation; generic declarations do not use constraints, traits,
-specializations, or compile-time values. Generic classes and methods with their
-own type parameters are not currently part of the language. Free generic
-functions are described in [Functions](Functions.md).
+Silex checks every concrete specialization with its ordinary type rules. One
+protocol can constrain a type parameter, for example
+`struct Box<T : Serializable>`. Only explicitly conforming arguments can create
+that specialization. Unconstrained parameters retain their existing behavior.
+Generic classes and methods with their own type parameters are not currently
+part of the language. Free generic functions are described in
+[Functions](Functions.md), and constraints in [Protocols](Protocols.md).
 
 A `var` field can be changed only through a mutable receiver. A structure
 binding declared with `var` therefore permits writes to its `var` fields, while
@@ -188,9 +189,10 @@ name. Static methods cannot be selected through a value, extracted as function
 values, reached with `?.`, or called after `..`. Conversely, an instance method
 cannot be selected through a type.
 
-Custom structure constructors, inheritance, extensions, and partial
-declarations are not part of the current prototype. Shared-identity types are
-declared with `class`; see [Classes](Classes.md). Static and instance methods
+Custom structure constructors, structure inheritance, extensions, and partial
+declarations are not part of the current prototype. A structure may list only
+protocol conformances after `:`. Shared-identity types are declared with
+`class`; see [Classes](Classes.md). Static and instance methods
 can each be overloaded by parameter count, type, or `&` passing; see
 [Functions](Functions.md).
 

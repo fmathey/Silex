@@ -12,6 +12,12 @@
 (enum_definition
   name: (identifier) @type.definition)
 
+(protocol_definition
+  name: (identifier) @type.definition)
+
+(protocol_method_requirement
+  name: (identifier) @function.method.definition)
+
 (raw_enum_type) @type.builtin
 
 (enum_variant
@@ -140,6 +146,7 @@
   "return"
   "try"
   "struct"
+  "protocol"
   "enum"
   "match"
   "class"

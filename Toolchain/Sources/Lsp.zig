@@ -61,6 +61,13 @@ const DeclaredTypeAlias = struct {
     collection: ?CollectionKind = null,
 };
 
+const DeclaredTypeConstraint = struct {
+    name: []const u8,
+    target_name: []const u8,
+    start: usize,
+    end: usize,
+};
+
 const DeclaredEnum = struct {
     name: []const u8,
     has_raw_value: bool,
@@ -102,6 +109,8 @@ const SemanticInfo = struct {
     variables: std.ArrayList(DeclaredVariable) = .empty,
     structures: std.ArrayList(StructureRange) = .empty,
     aliases: std.ArrayList(DeclaredTypeAlias) = .empty,
+    constraints: std.ArrayList(DeclaredTypeConstraint) = .empty,
+    protocols: std.ArrayList([]const u8) = .empty,
     enums: std.ArrayList(DeclaredEnum) = .empty,
     enum_variants: std.ArrayList(DeclaredEnumVariant) = .empty,
 
@@ -110,6 +119,8 @@ const SemanticInfo = struct {
         self.variables.deinit(allocator);
         self.structures.deinit(allocator);
         self.aliases.deinit(allocator);
+        self.constraints.deinit(allocator);
+        self.protocols.deinit(allocator);
         self.enums.deinit(allocator);
         self.enum_variants.deinit(allocator);
     }
@@ -508,6 +519,10 @@ fn appendSignatureHelp(
         for (function.type_parameters, 0..) |parameter, index| {
             if (index != 0) try label.appendSlice(allocator, ", ");
             try label.appendSlice(allocator, parameter.name);
+            if (parameter.constraint) |constraint| {
+                try label.appendSlice(allocator, " : ");
+                try label.appendSlice(allocator, constraint.name);
+            }
         }
         try label.append(allocator, '>');
     }
@@ -828,6 +843,17 @@ fn moduleExportCompletionItems(
                 enumeration.name,
                 13,
                 "Silex public enum",
+            );
+        }
+        for (program.protocols) |protocol| {
+            if (!protocol.is_public or !std.mem.startsWith(u8, protocol.name, context.prefix)) continue;
+            try appendModuleExportCompletion(
+                allocator,
+                &items,
+                context.qualifier,
+                protocol.name,
+                8,
+                "Silex public protocol",
             );
         }
         for (program.uses) |use_value| {
@@ -1187,6 +1213,7 @@ fn collectSemanticInfo(
     try collectImportedStructures(allocator, io, source, project_root, tokens, info);
     try collectLocalTypeAliases(allocator, tokens, info);
     try collectLocalEnums(allocator, tokens, info);
+    try collectLocalProtocolsAndConstraints(allocator, source, tokens, info);
     var index: usize = 0;
     while (index < tokens.len) : (index += 1) {
         if ((tokens[index].tag == .keyword_struct or tokens[index].tag == .keyword_class) and
@@ -1202,7 +1229,11 @@ fn collectSemanticInfo(
             if (tokens[body_index].tag == .colon) {
                 body_index += 1;
                 while (body_index < tokens.len and tokens[body_index].tag != .left_brace) : (body_index += 1) {
-                    if (tokens[body_index].tag == .identifier) base_name = tokens[body_index].lexeme;
+                    if (base_name == null and tokens[body_index].tag == .identifier and
+                        !protocolNameExists(info.*, tokens[body_index].lexeme))
+                    {
+                        base_name = tokens[body_index].lexeme;
+                    }
                 }
             }
             if (body_index >= tokens.len or tokens[body_index].tag != .left_brace) continue;
@@ -1349,6 +1380,90 @@ fn collectSemanticInfo(
             try collectParameters(allocator, source, tokens, index, &info.variables);
         }
     }
+}
+
+fn collectLocalProtocolsAndConstraints(
+    allocator: Allocator,
+    source: []const u8,
+    tokens: []const LexerModule.Token,
+    info: *SemanticInfo,
+) !void {
+    var index: usize = 0;
+    while (index + 2 < tokens.len) : (index += 1) {
+        if (tokens[index].tag == .keyword_protocol and tokens[index + 1].tag == .identifier and
+            tokens[index + 2].tag == .left_brace)
+        {
+            const protocol_name = tokens[index + 1].lexeme;
+            try info.protocols.append(allocator, protocol_name);
+            var depth: usize = 1;
+            var member_index = index + 3;
+            while (member_index + 1 < tokens.len and depth != 0) : (member_index += 1) {
+                switch (tokens[member_index].tag) {
+                    .left_brace => depth += 1,
+                    .right_brace => depth -= 1,
+                    else => {},
+                }
+                if (depth == 1 and tokens[member_index].tag == .keyword_func and
+                    tokens[member_index + 1].tag == .identifier)
+                {
+                    try info.members.append(allocator, .{
+                        .structure = protocol_name,
+                        .name = tokens[member_index + 1].lexeme,
+                        .type_name = null,
+                        .kind = 2,
+                        .detail = "Silex protocol requirement",
+                    });
+                }
+            }
+        }
+
+        const declaration = tokens[index].tag == .keyword_func or tokens[index].tag == .keyword_struct or
+            tokens[index].tag == .keyword_enum;
+        if (!declaration or tokens[index + 1].tag != .identifier or tokens[index + 2].tag != .less) continue;
+        const end = genericArgumentsEnd(tokens, index + 2) orelse continue;
+        var body_index = end;
+        while (body_index < tokens.len and tokens[body_index].tag != .left_brace and tokens[body_index].tag != .end) : (body_index += 1) {}
+        if (body_index >= tokens.len or tokens[body_index].tag != .left_brace) continue;
+        var body_depth: usize = 1;
+        var body_end = body_index + 1;
+        while (body_end < tokens.len and body_depth != 0) : (body_end += 1) {
+            switch (tokens[body_end].tag) {
+                .left_brace => body_depth += 1,
+                .right_brace => body_depth -= 1,
+                else => {},
+            }
+        }
+        if (body_depth != 0 or body_end == 0) continue;
+        const range_start = tokenOffset(source, tokens[index]);
+        const closing = tokens[body_end - 1];
+        const range_end = tokenOffset(source, closing) + closing.lexeme.len;
+        var parameter_index = index + 3;
+        while (parameter_index + 2 < end) : (parameter_index += 1) {
+            if (tokens[parameter_index].tag != .identifier or tokens[parameter_index + 1].tag != .colon or
+                tokens[parameter_index + 2].tag != .identifier) continue;
+            var target_name = tokens[parameter_index + 2].lexeme;
+            var target_index = parameter_index + 3;
+            while (target_index + 1 < end and tokens[target_index].tag == .dot and
+                tokens[target_index + 1].tag == .identifier)
+            {
+                target_name = tokens[target_index + 1].lexeme;
+                target_index += 2;
+            }
+            try info.constraints.append(allocator, .{
+                .name = tokens[parameter_index].lexeme,
+                .target_name = target_name,
+                .start = range_start,
+                .end = range_end,
+            });
+        }
+    }
+}
+
+fn protocolNameExists(info: SemanticInfo, name: []const u8) bool {
+    for (info.protocols.items) |protocol_name| {
+        if (std.mem.eql(u8, protocol_name, name)) return true;
+    }
+    return false;
 }
 
 fn collectLocalEnums(
@@ -1804,6 +1919,19 @@ fn collectPublicStructureMembers(
     program: Ast.Program,
     info: *SemanticInfo,
 ) !void {
+    for (program.protocols) |protocol| {
+        if (!protocol.is_public) continue;
+        try info.protocols.append(allocator, protocol.name);
+        for (protocol.requirements) |requirement| {
+            try info.members.append(allocator, .{
+                .structure = protocol.name,
+                .name = requirement.name,
+                .type_name = null,
+                .kind = 2,
+                .detail = "Silex module protocol requirement",
+            });
+        }
+    }
     for (program.enums) |enumeration| {
         if (!enumeration.is_public) continue;
         try info.enums.append(allocator, .{
@@ -2196,12 +2324,27 @@ fn receiverType(info: SemanticInfo, receiver: []const u8, cursor_offset: usize) 
         if (variable.offset <= cursor_offset and variable.offset >= result_offset and
             std.mem.eql(u8, variable.name, receiver))
         {
-            const resolved = resolveNamedType(info, variable.type_name, variable.collection);
+            const constrained_name = constrainedTypeAt(info, variable.type_name, cursor_offset) orelse variable.type_name;
+            const resolved = resolveNamedType(info, constrained_name, variable.collection);
             result = if (resolved.collection) |collection| switch (collection) {
                 .list => .list,
                 .fixed_array => .fixed_array,
             } else receiverTypeForNamed(info, resolved.name);
             result_offset = variable.offset;
+        }
+    }
+    return result;
+}
+
+fn constrainedTypeAt(info: SemanticInfo, name: []const u8, cursor_offset: usize) ?[]const u8 {
+    var result: ?[]const u8 = null;
+    var result_start: usize = 0;
+    for (info.constraints.items) |constraint| {
+        if (constraint.start <= cursor_offset and cursor_offset <= constraint.end and
+            constraint.start >= result_start and std.mem.eql(u8, constraint.name, name))
+        {
+            result = constraint.target_name;
+            result_start = constraint.start;
         }
     }
     return result;
@@ -2375,6 +2518,7 @@ const language_completions = [_]CompletionItem{
     .{ .label = "func", .kind = 14, .detail = "Silex keyword" },
     .{ .label = "struct", .kind = 14, .detail = "Silex keyword" },
     .{ .label = "class", .kind = 14, .detail = "Silex keyword" },
+    .{ .label = "protocol", .kind = 14, .detail = "Silex keyword" },
     .{ .label = "enum", .kind = 14, .detail = "Silex keyword" },
     .{ .label = "init", .kind = 14, .detail = "Silex keyword" },
     .{ .label = "drop", .kind = 14, .detail = "Silex keyword" },
@@ -2426,6 +2570,7 @@ test "completion items include language terms and document identifiers" {
     defer std.testing.allocator.free(items);
     try std.testing.expect(containsCompletion(items, "func"));
     try std.testing.expect(containsCompletion(items, "class"));
+    try std.testing.expect(containsCompletion(items, "protocol"));
     try std.testing.expect(containsCompletion(items, "enum"));
     try std.testing.expect(containsCompletion(items, "init"));
     try std.testing.expect(containsCompletion(items, "drop"));
@@ -2437,6 +2582,23 @@ test "completion items include language terms and document identifiers" {
     try std.testing.expect(containsCompletion(items, "match"));
     try std.testing.expect(containsCompletion(items, "try"));
     try std.testing.expect(containsCompletion(items, "total"));
+}
+
+test "constrained generic completion exposes protocol requirements" {
+    const source =
+        \\protocol Drawable { func draw() }
+        \\func render<T : Drawable>(value:T) {
+        \\    value.
+        \\}
+    ;
+    const items = try completionItems(
+        std.testing.allocator,
+        std.testing.io,
+        source,
+        .{ .line = 2, .character = 10 },
+    );
+    defer std.testing.allocator.free(items);
+    try std.testing.expect(containsCompletion(items, "draw"));
 }
 
 test "import completion recognizes only the module path context" {

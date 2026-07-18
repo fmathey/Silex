@@ -1,0 +1,13 @@
+{
+  "target": "ProtocolChecks.App",
+  "modules": [
+    {
+      "name": "ProtocolChecks.Core",
+      "sources": ["Core.sx"]
+    },
+    {
+      "name": "ProtocolChecks.App",
+      "sources": ["Main.sx"]
+    }
+  ]
+}

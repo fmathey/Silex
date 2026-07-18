@@ -1,0 +1,54 @@
+protocol Describable {
+    func describe() str
+}
+
+protocol Drawable {
+    func draw()
+}
+
+struct User : Describable {
+    let name:str
+
+    func describe() str {
+        return self.name
+    }
+}
+
+struct Description<T : Describable> {
+    let value:T
+
+    func text() str {
+        return self.value.describe()
+    }
+}
+
+class Entity {
+    pub func describe() str {
+        return "player"
+    }
+}
+
+class Player : Entity, Describable, Drawable {
+    pub func draw() {
+        print("draw")
+    }
+}
+
+func description<T : Describable>(value:T) str {
+    return value.describe()
+}
+
+func render<T : Drawable>(value:T) {
+    value.draw()
+}
+
+func main() {
+    let user = User(name:"Ada")
+    print(description<User>(user))
+    let wrapped = Description<User>(value:user)
+    print(wrapped.text())
+
+    var player = Player()
+    print(description<Player>(player))
+    render<Player>(player)
+}

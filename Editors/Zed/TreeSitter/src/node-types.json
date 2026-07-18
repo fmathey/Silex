@@ -2184,6 +2184,72 @@
     }
   },
   {
+    "type": "protocol_definition",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "protocol_method_requirement",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "protocol_method_requirement",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "return_type": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "type",
+            "named": true
+          },
+          {
+            "type": "void_type",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "parameter_list",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "public_declaration",
     "named": true,
     "fields": {
@@ -2208,6 +2274,10 @@
         },
         {
           "type": "function_definition",
+          "named": true
+        },
+        {
+          "type": "protocol_definition",
           "named": true
         },
         {
@@ -2467,6 +2537,10 @@
           "named": true
         },
         {
+          "type": "protocol_definition",
+          "named": true
+        },
+        {
           "type": "public_declaration",
           "named": true
         },
@@ -2567,16 +2641,6 @@
     "type": "structure_definition",
     "named": true,
     "fields": {
-      "base": {
-        "multiple": false,
-        "required": false,
-        "types": [
-          {
-            "type": "named_type",
-            "named": true
-          }
-        ]
-      },
       "name": {
         "multiple": false,
         "required": true,
@@ -2604,6 +2668,20 @@
           {
             "type": "static",
             "named": false
+          }
+        ]
+      },
+      "supertypes": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": ",",
+            "named": false
+          },
+          {
+            "type": "named_type",
+            "named": true
           }
         ]
       },
@@ -2846,6 +2924,16 @@
     "type": "type_parameter",
     "named": true,
     "fields": {
+      "constraint": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "named_type",
+            "named": true
+          }
+        ]
+      },
       "name": {
         "multiple": false,
         "required": true,
@@ -3418,6 +3506,10 @@
   },
   {
     "type": "override",
+    "named": false
+  },
+  {
+    "type": "protocol",
     "named": false
   },
   {

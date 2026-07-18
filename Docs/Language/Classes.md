@@ -164,7 +164,7 @@ client code never clears the singleton explicitly. General initializer,
 mutability, generic-specialization, and lifetime rules are specified under
 [Static fields](Structures.md#static-fields).
 
-## Single inheritance
+## Single inheritance and protocols
 
 A class may name one immediate base class after `:`. The base is part of the
 same shared-identity instance; it is not a copied or separately allocated
@@ -196,7 +196,20 @@ player.move(2)
 ```
 
 Inheritance is transitive but always single. The base must be a visible class;
-structures, multiple bases and inheritance cycles are rejected.
+structures, multiple bases and inheritance cycles are rejected. Additional
+names after the base are protocol conformances, and a protocol may be the first
+name when the class has no base:
+
+```sx
+class Player : Entity, Describable, Drawable {
+}
+
+class Icon : Drawable {
+}
+```
+
+See [Protocols](Protocols.md) for the nominal conformance and method-signature
+rules.
 
 The `: super(...)` suffix selects a `sub` or `pub` constructor of the immediate
 base with positional overload rules. A private base constructor is not

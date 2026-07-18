@@ -10,7 +10,7 @@ pub const File = struct {
     program: Ast.Program,
 };
 
-const Kind = enum { structure, function, type_alias };
+const Kind = enum { structure, protocol, function, type_alias };
 const VisitState = enum { fresh, visiting, done };
 
 const Declaration = struct {
@@ -88,6 +88,7 @@ pub const Resolver = struct {
         try self.validatePublicModuleCollisions();
 
         var enums: std.ArrayList(Ast.Enum) = .empty;
+        var protocols: std.ArrayList(Ast.Protocol) = .empty;
         var structures: std.ArrayList(Ast.Structure) = .empty;
         var functions: std.ArrayList(Ast.Function) = .empty;
         for (order) |module_index| {
@@ -95,6 +96,9 @@ pub const Resolver = struct {
                 if (file.module_index != module_index) continue;
                 for (file.program.enums) |enum_value| {
                     try enums.append(self.allocator, try self.transformEnum(enum_value));
+                }
+                for (file.program.protocols) |protocol| {
+                    try protocols.append(self.allocator, try self.transformProtocol(protocol));
                 }
                 for (file.program.structures) |structure| {
                     try structures.append(self.allocator, try self.transformStructure(structure));
@@ -106,6 +110,7 @@ pub const Resolver = struct {
         }
         return .{
             .enums = try enums.toOwnedSlice(self.allocator),
+            .protocols = try protocols.toOwnedSlice(self.allocator),
             .structures = try structures.toOwnedSlice(self.allocator),
             .functions = try functions.toOwnedSlice(self.allocator),
         };
@@ -116,6 +121,9 @@ pub const Resolver = struct {
             const module_name = self.project.modules[file.module_index].name;
             for (file.program.enums) |enum_value| {
                 try self.addDeclaration(file.module_index, module_name, enum_value.name, .structure, enum_value.is_public, enum_value.name_position);
+            }
+            for (file.program.protocols) |protocol| {
+                try self.addDeclaration(file.module_index, module_name, protocol.name, .protocol, protocol.is_public, protocol.name_position);
             }
             for (file.program.structures) |structure| {
                 try self.addDeclaration(file.module_index, module_name, structure.name, .structure, structure.is_public, structure.name_position);
@@ -171,7 +179,7 @@ pub const Resolver = struct {
         is_public: bool,
         position: Source.Position,
     ) !void {
-        if ((kind == .structure or kind == .type_alias) and std.mem.eql(u8, source_name, "Result")) {
+        if ((kind == .structure or kind == .protocol or kind == .type_alias) and std.mem.eql(u8, source_name, "Result")) {
             return self.fail(position, "name 'Result' is reserved");
         }
         if (kind == .function and std.mem.eql(u8, source_name, "map_error")) {
@@ -542,12 +550,26 @@ pub const Resolver = struct {
         }
         var result = structure;
         result.name = declaration.canonical_name;
+        result.type_parameters = try self.transformTypeParameters(structure.type_parameters);
+        var conformances: std.ArrayList(Ast.ProtocolReference) = .empty;
         if (structure.base) |base| {
-            result.base = .{
-                .name = (try self.resolveName(structure.position.file, base.name, .structure, base.position)).canonical_name,
-                .position = base.position,
-            };
+            const kind = try self.visibleDeclarationKind(structure.position.file, base.name);
+            if (kind == .protocol) {
+                const protocol = try self.resolveName(structure.position.file, base.name, .protocol, base.position);
+                result.base = null;
+                try conformances.append(self.allocator, .{ .name = protocol.canonical_name, .position = base.position });
+            } else {
+                result.base = .{
+                    .name = (try self.resolveName(structure.position.file, base.name, .structure, base.position)).canonical_name,
+                    .position = base.position,
+                };
+            }
         }
+        for (structure.conformances) |conformance| {
+            const protocol = try self.resolveName(structure.position.file, conformance.name, .protocol, conformance.position);
+            try conformances.append(self.allocator, .{ .name = protocol.canonical_name, .position = conformance.position });
+        }
+        result.conformances = try conformances.toOwnedSlice(self.allocator);
         result.fields = try fields.toOwnedSlice(self.allocator);
         result.constructors = try constructors.toOwnedSlice(self.allocator);
         if (structure.drop) |drop| {
@@ -559,6 +581,18 @@ pub const Resolver = struct {
             };
         }
         result.methods = try methods.toOwnedSlice(self.allocator);
+        return result;
+    }
+
+    fn transformProtocol(self: *Resolver, protocol: Ast.Protocol) !Ast.Protocol {
+        const declaration = self.findDirectByPosition(protocol.name_position, .protocol).?;
+        var requirements: std.ArrayList(Ast.Function) = .empty;
+        for (protocol.requirements) |requirement| {
+            try requirements.append(self.allocator, try self.transformFunctionBody(requirement, requirement.name));
+        }
+        var result = protocol;
+        result.name = declaration.canonical_name;
+        result.requirements = try requirements.toOwnedSlice(self.allocator);
         return result;
     }
 
@@ -582,6 +616,7 @@ pub const Resolver = struct {
         }
         var result = enum_value;
         result.name = declaration.canonical_name;
+        result.type_parameters = try self.transformTypeParameters(enum_value.type_parameters);
         result.variants = try variants.toOwnedSlice(self.allocator);
         return result;
     }
@@ -591,7 +626,22 @@ pub const Resolver = struct {
         self.current_type_parameters = function.type_parameters;
         defer self.current_type_parameters = previous_type_parameters;
         const declaration = self.findDirectByPosition(function.name_position, .function).?;
-        return self.transformFunctionBody(function, declaration.canonical_name);
+        var result = try self.transformFunctionBody(function, declaration.canonical_name);
+        result.type_parameters = try self.transformTypeParameters(function.type_parameters);
+        return result;
+    }
+
+    fn transformTypeParameters(self: *Resolver, parameters: []const Ast.TypeParameter) ![]const Ast.TypeParameter {
+        var result: std.ArrayList(Ast.TypeParameter) = .empty;
+        for (parameters) |parameter| {
+            var copy = parameter;
+            if (parameter.constraint) |constraint| {
+                const protocol = try self.resolveName(parameter.position.file, constraint.name, .protocol, constraint.position);
+                copy.constraint = .{ .name = protocol.canonical_name, .position = constraint.position };
+            }
+            try result.append(self.allocator, copy);
+        }
+        return result.toOwnedSlice(self.allocator);
     }
 
     fn transformFunctionBody(self: *Resolver, function: Ast.Function, name: []const u8) !Ast.Function {
@@ -1438,7 +1488,22 @@ pub const Resolver = struct {
         for (file.uses.items) |binding| {
             if (std.mem.eql(u8, binding.local_name, name) and binding.declaration.kind == kind) return binding.declaration;
         }
-        const label = if (kind == .structure) "type" else "function";
+        if (kind == .protocol) {
+            if (self.findDirect(file.module_index, name, null) != null) {
+                return self.fail(position, try std.fmt.allocPrint(self.allocator, "declaration '{s}' is not a protocol", .{name}));
+            }
+            for (file.uses.items) |binding| {
+                if (std.mem.eql(u8, binding.local_name, name)) {
+                    return self.fail(position, try std.fmt.allocPrint(self.allocator, "declaration '{s}' is not a protocol", .{name}));
+                }
+            }
+        }
+        const label = switch (kind) {
+            .structure => "type",
+            .protocol => "protocol",
+            .function => "function",
+            .type_alias => "type alias",
+        };
         const message = try std.fmt.allocPrint(self.allocator, "unknown {s} '{s}'", .{ label, name });
         return self.fail(position, message);
     }

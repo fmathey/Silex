@@ -435,8 +435,17 @@ pub const Program = struct {
     imports: []const Import = &.{},
     uses: []const Use = &.{},
     enums: []const Enum = &.{},
+    protocols: []const Protocol = &.{},
     structures: []const Structure,
     functions: []const Function,
+};
+
+pub const Protocol = struct {
+    is_public: bool = false,
+    position: Source.Position,
+    name: []const u8,
+    name_position: Source.Position,
+    requirements: []const Function,
 };
 
 pub const Enum = struct {
@@ -487,6 +496,7 @@ pub const Structure = struct {
     name_position: Source.Position,
     type_parameters: []const TypeParameter = &.{},
     base: ?BaseClass = null,
+    conformances: []const ProtocolReference = &.{},
     fields: []const StructureField,
     constructors: []const Constructor = &.{},
     drop: ?Drop = null,
@@ -494,6 +504,12 @@ pub const Structure = struct {
 };
 
 pub const TypeParameter = struct {
+    name: []const u8,
+    position: Source.Position,
+    constraint: ?ProtocolReference = null,
+};
+
+pub const ProtocolReference = struct {
     name: []const u8,
     position: Source.Position,
 };

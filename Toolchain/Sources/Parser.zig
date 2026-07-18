@@ -29,6 +29,7 @@ pub const Parser = struct {
         var imports: std.ArrayList(Ast.Import) = .empty;
         var uses: std.ArrayList(Ast.Use) = .empty;
         var enums: std.ArrayList(Ast.Enum) = .empty;
+        var protocols: std.ArrayList(Ast.Protocol) = .empty;
         var structures: std.ArrayList(Ast.Structure) = .empty;
         var functions: std.ArrayList(Ast.Function) = .empty;
         while (self.current.tag != .end) {
@@ -42,15 +43,19 @@ pub const Parser = struct {
                     try uses.append(self.allocator, try self.parseUse(true));
                 } else if (self.current.tag == .keyword_enum) {
                     try enums.append(self.allocator, try self.parseEnum(true));
+                } else if (self.current.tag == .keyword_protocol) {
+                    try protocols.append(self.allocator, try self.parseProtocol(true));
                 } else if (self.current.tag == .keyword_struct or self.current.tag == .keyword_class) {
                     try structures.append(self.allocator, try self.parseStructure(true));
                 } else if (self.current.tag == .keyword_func) {
                     try functions.append(self.allocator, try self.parseFunction(true));
                 } else if (self.current.tag == .identifier and std.mem.eql(u8, self.current.lexeme, "native")) {
                     return self.fail("native functions cannot be public");
-                } else return self.fail("expected 'enum', 'struct', 'class', 'func', or 'use' after 'pub'");
+                } else return self.fail("expected 'enum', 'protocol', 'struct', 'class', 'func', or 'use' after 'pub'");
             } else if (self.current.tag == .keyword_enum) {
                 try enums.append(self.allocator, try self.parseEnum(false));
+            } else if (self.current.tag == .keyword_protocol) {
+                try protocols.append(self.allocator, try self.parseProtocol(false));
             } else if (self.current.tag == .keyword_struct or self.current.tag == .keyword_class) {
                 try structures.append(self.allocator, try self.parseStructure(false));
             } else if (self.current.tag == .keyword_func) {
@@ -60,15 +65,64 @@ pub const Parser = struct {
             } else if (self.current.tag == .keyword_elif) {
                 return self.fail("'elif' must directly continue an if chain");
             } else {
-                return self.fail("expected import, use, enum, struct, class, func, or native func declaration");
+                return self.fail("expected import, use, enum, protocol, struct, class, func, or native func declaration");
             }
         }
         return .{
             .imports = try imports.toOwnedSlice(self.allocator),
             .uses = try uses.toOwnedSlice(self.allocator),
             .enums = try enums.toOwnedSlice(self.allocator),
+            .protocols = try protocols.toOwnedSlice(self.allocator),
             .structures = try structures.toOwnedSlice(self.allocator),
             .functions = try functions.toOwnedSlice(self.allocator),
+        };
+    }
+
+    fn parseProtocol(self: *Parser, is_public: bool) ParseError!Ast.Protocol {
+        const position = self.current.position;
+        try self.expect(.keyword_protocol, "expected 'protocol'");
+        if (self.current.tag != .identifier) return self.fail("expected protocol name");
+        const name = self.current.lexeme;
+        const name_position = self.current.position;
+        if (std.mem.eql(u8, name, "Result")) return self.fail("type name 'Result' is reserved");
+        try self.advance();
+        if (self.current.tag == .less) return self.fail("generic protocols are not supported");
+        if (self.current.tag == .colon) return self.fail("protocol inheritance is not supported");
+        try self.expect(.left_brace, "expected '{' after protocol name");
+        var requirements: std.ArrayList(Ast.Function) = .empty;
+        while (self.current.tag != .right_brace and self.current.tag != .end) {
+            if (self.current.tag != .keyword_func) {
+                return self.fail("a protocol can declare only method requirements");
+            }
+            const method_position = self.current.position;
+            try self.advance();
+            if (self.current.tag != .identifier) return self.fail("expected protocol method name");
+            const method_name = self.current.lexeme;
+            const method_name_position = self.current.position;
+            try self.advance();
+            if (self.current.tag == .less) return self.fail("generic protocol methods are not supported");
+            const parameters = try self.parseParameters();
+            const return_type: Ast.ReturnType = if (self.current.tag == .semicolon or
+                self.current.tag == .right_brace or
+                self.current.position.line > self.previous.position.line) .void else try self.parseReturnType();
+            try self.expectStatementTerminator();
+            try requirements.append(self.allocator, .{
+                .member_visibility = .public_access,
+                .position = method_position,
+                .name = method_name,
+                .name_position = method_name_position,
+                .return_type = return_type,
+                .parameters = parameters,
+                .statements = &.{},
+            });
+        }
+        try self.expect(.right_brace, "expected '}' after protocol requirements");
+        return .{
+            .is_public = is_public,
+            .position = position,
+            .name = name,
+            .name_position = name_position,
+            .requirements = try requirements.toOwnedSlice(self.allocator),
         };
     }
 
@@ -207,16 +261,21 @@ pub const Parser = struct {
             break :parameters try self.parseTypeParameters("structure");
         } else &.{};
         var base: ?Ast.BaseClass = null;
+        var conformances: std.ArrayList(Ast.ProtocolReference) = .empty;
         if (self.current.tag == .colon) {
-            if (!is_class) return self.fail("only a class can declare a base class");
             try self.advance();
-            const base_position = self.current.position;
-            base = .{
-                .name = try self.parseQualifiedName("expected base class name after ':'"),
-                .position = base_position,
-            };
-            if (self.current.tag == .comma or self.current.tag == .colon) {
-                return self.fail("a class can declare only one base class");
+            var first = true;
+            while (true) {
+                const relation_position = self.current.position;
+                const relation_name = try self.parseQualifiedName("expected base class or protocol name after ':'");
+                if (is_class and first) {
+                    base = .{ .name = relation_name, .position = relation_position };
+                } else {
+                    try conformances.append(self.allocator, .{ .name = relation_name, .position = relation_position });
+                }
+                first = false;
+                if (self.current.tag != .comma) break;
+                try self.advance();
             }
         }
         try self.expect(.left_brace, "expected '{'");
@@ -339,6 +398,7 @@ pub const Parser = struct {
             .name_position = name_position,
             .type_parameters = type_parameters,
             .base = base,
+            .conformances = try conformances.toOwnedSlice(self.allocator),
             .fields = try fields.toOwnedSlice(self.allocator),
             .constructors = try constructors.toOwnedSlice(self.allocator),
             .drop = drop,
@@ -1570,6 +1630,14 @@ pub const Parser = struct {
                 .position = self.current.position,
             });
             try self.advance();
+            if (self.current.tag == .colon) {
+                try self.advance();
+                const constraint_position = self.current.position;
+                parameters.items[parameters.items.len - 1].constraint = .{
+                    .name = try self.parseQualifiedName("expected protocol name after ':'"),
+                    .position = constraint_position,
+                };
+            }
             if (self.current.tag != .comma) break;
             try self.advance();
             if (self.current.tag == .greater or self.current.tag == .shift_right) {
@@ -2256,12 +2324,53 @@ test "parse class base and constructor super call" {
     try std.testing.expectEqual(@as(usize, 1), program.structures[1].constructors[0].super_arguments.?.len);
 }
 
-test "reject a second base class" {
+test "parse class base and protocol conformance list" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     var parser = Parser.init(arena.allocator(), "class Player : Entity, Actor {} func main() {}");
-    try std.testing.expectError(error.InvalidSource, parser.parse());
-    try std.testing.expectEqualStrings("a class can declare only one base class", parser.diagnostic.?.message);
+    const program = try parser.parse();
+    try std.testing.expectEqualStrings("Entity", program.structures[0].base.?.name);
+    try std.testing.expectEqual(@as(usize, 1), program.structures[0].conformances.len);
+    try std.testing.expectEqualStrings("Actor", program.structures[0].conformances[0].name);
+}
+
+test "parse protocols structure conformances and generic constraints" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var parser = Parser.init(arena.allocator(),
+        \\pub protocol Describable {
+        \\    func describe() str
+        \\    func write(value:&str)
+        \\}
+        \\struct User : Describable {}
+        \\func label<T : Describable>(value:T) str { return value.describe() }
+        \\func main() {}
+    );
+    const program = try parser.parse();
+    try std.testing.expectEqual(@as(usize, 1), program.protocols.len);
+    try std.testing.expect(program.protocols[0].is_public);
+    try std.testing.expectEqual(@as(usize, 2), program.protocols[0].requirements.len);
+    try std.testing.expectEqualStrings("describe", program.protocols[0].requirements[0].name);
+    try std.testing.expectEqual(Ast.ReturnType.str, program.protocols[0].requirements[0].return_type);
+    try std.testing.expect(program.protocols[0].requirements[1].parameters[0].is_mutable_reference);
+    try std.testing.expectEqualStrings("Describable", program.structures[0].conformances[0].name);
+    try std.testing.expectEqualStrings("Describable", program.functions[0].type_parameters[0].constraint.?.name);
+}
+
+test "reject unsupported protocol declaration forms" {
+    const cases = [_]struct { source: []const u8, message: []const u8 }{
+        .{ .source = "protocol Value<T> {} func main() {}", .message = "generic protocols are not supported" },
+        .{ .source = "protocol Child : Parent {} func main() {}", .message = "protocol inheritance is not supported" },
+        .{ .source = "protocol Value { let count:int } func main() {}", .message = "a protocol can declare only method requirements" },
+        .{ .source = "protocol Value { func read<T>() T } func main() {}", .message = "generic protocol methods are not supported" },
+    };
+    for (cases) |case| {
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        var parser = Parser.init(arena.allocator(), case.source);
+        try std.testing.expectError(error.InvalidSource, parser.parse());
+        try std.testing.expectEqualStrings(case.message, parser.diagnostic.?.message);
+    }
 }
 
 test "reject constructors on structs" {

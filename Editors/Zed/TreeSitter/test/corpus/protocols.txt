@@ -1,0 +1,58 @@
+============================================
+Protocols, conformances, and generic bounds
+============================================
+
+protocol Describable {
+    func describe() str
+}
+
+class Player : Entity, Describable {}
+struct User : Describable {}
+
+func label<T : Describable>(value:T) str {
+    return value.describe()
+}
+
+---
+
+(source_file
+  (protocol_definition
+    (identifier)
+    (protocol_method_requirement
+      (identifier)
+      (parameter_list)
+      (type
+        (builtin_type))))
+  (structure_definition
+    (identifier)
+    (named_type
+      (type_identifier))
+    (named_type
+      (type_identifier)))
+  (structure_definition
+    (identifier)
+    (named_type
+      (type_identifier)))
+  (function_definition
+    (identifier)
+    (type_parameter_list
+      (type_parameter
+        (identifier)
+        (named_type
+          (type_identifier))))
+    (parameter_list
+      (parameter
+        (identifier)
+        (type
+          (named_type
+            (type_identifier)))))
+    (type
+      (builtin_type))
+    (block
+      (statement
+        (return_statement
+          (expression
+            (invocation_expression
+              (member_expression
+                (identifier)
+                (identifier)))))))))

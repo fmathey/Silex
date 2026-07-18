@@ -67,8 +67,11 @@ intrinsic `Result<void,E>` exception is described in
 ordinary enum rules, so copying, `let`, and match binding independence depend
 on its concrete associated types.
 
-Raw `int` and `str` enums cannot be generic. Generic enums have no constraints,
-default arguments, or independently generic variants.
+Raw `int` and `str` enums cannot be generic. A generic enum type parameter may
+carry one protocol constraint under the ordinary rules described in
+[Protocols](Protocols.md). Generic enums have no default arguments or
+independently generic variants, and enums themselves cannot yet declare a
+protocol conformance because enum methods are not part of the language.
 
 ## Raw enum values
 

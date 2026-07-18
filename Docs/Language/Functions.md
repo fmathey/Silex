@@ -57,7 +57,10 @@ valid when it calls the same specialization; recursively producing ever-new
 type arguments is rejected. Public generic functions retain the ordinary
 module, `use`, alias, and re-export rules.
 
-No constraint syntax or type-argument inference is currently provided.
+One protocol can constrain each parameter with `T : Protocol`. The constraint
+permits the protocol's required methods in the generic body and rejects a
+concrete argument that did not declare conformance. See
+[Protocols](Protocols.md). Type-argument inference is not currently provided.
 `main`, `native func`, methods with their own type parameters, and classes
 remain non-generic.
 

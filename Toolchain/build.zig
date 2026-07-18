@@ -1284,7 +1284,7 @@ pub fn build(b: *std.Build) void {
         "silex: native compilation failed for target 'x86_64-linux-musl'; target support, SDKs, or native sources may be unavailable or incomplete\n",
     );
     backend_discovered_target_failure_command.expectStdErrMatch(b.fmt(
-        "silex: backend details: .silex{c}build{c}v33{c}x86_64-linux-musl{c}",
+        "silex: backend details: .silex{c}build{c}v34{c}x86_64-linux-musl{c}",
         .{
             std.fs.path.sep,
             std.fs.path.sep,
@@ -1997,8 +1997,18 @@ pub fn build(b: *std.Build) void {
     generic_functions_command.addArgs(&.{ "run", "Smokes/GenericFunctions.sx" });
     generic_functions_command.expectStdOutEqual(hostText(b, "42\n7\nAda\nGrace\n9\nSilex\n3\n3\n4\n120\nlocal\n11\n5\ngeneric\n"));
 
+    const protocols_command = b.addRunArtifact(executable);
+    protocols_command.step.dependOn(&generic_functions_command.step);
+    protocols_command.addArgs(&.{ "run", "Smokes/Protocols.sx" });
+    protocols_command.expectStdOutEqual(hostText(b, "Ada\nAda\nplayer\ndraw\n"));
+
+    const protocol_modules_command = b.addRunArtifact(executable);
+    protocol_modules_command.step.dependOn(&protocols_command.step);
+    protocol_modules_command.addArgs(&.{ "run", "Smokes/ProtocolModules/silex.json" });
+    protocol_modules_command.expectStdOutEqual(hostText(b, "remote\nlocal\n"));
+
     const type_aliases_command = b.addRunArtifact(executable);
-    type_aliases_command.step.dependOn(&generic_functions_command.step);
+    type_aliases_command.step.dependOn(&protocol_modules_command.step);
     type_aliases_command.addArgs(&.{ "run", "Smokes/TypeAliases.sx" });
     type_aliases_command.expectStdOutEqual(hostText(b, "6\n3\nAda\ntrue\n24\n"));
 
