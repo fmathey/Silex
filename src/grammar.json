@@ -1516,12 +1516,25 @@
           "type": "CHOICE",
           "members": [
             {
-              "type": "FIELD",
-              "name": "mutable_reference",
-              "content": {
-                "type": "STRING",
-                "value": "&"
-              }
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "FIELD",
+                  "name": "read_borrow",
+                  "content": {
+                    "type": "STRING",
+                    "value": "borrow"
+                  }
+                },
+                {
+                  "type": "FIELD",
+                  "name": "mutable_reference",
+                  "content": {
+                    "type": "STRING",
+                    "value": "&"
+                  }
+                }
+              ]
             },
             {
               "type": "BLANK"
@@ -1805,6 +1818,22 @@
     "parameter": {
       "type": "SEQ",
       "members": [
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "read_borrow",
+              "content": {
+                "type": "STRING",
+                "value": "borrow"
+              }
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
         {
           "type": "FIELD",
           "name": "name",
@@ -2740,6 +2769,10 @@
         {
           "type": "SYMBOL",
           "name": "move_expression"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "read_borrow_expression"
         },
         {
           "type": "SYMBOL",
@@ -4960,6 +4993,27 @@
           {
             "type": "STRING",
             "value": "move"
+          },
+          {
+            "type": "FIELD",
+            "name": "operand",
+            "content": {
+              "type": "SYMBOL",
+              "name": "expression"
+            }
+          }
+        ]
+      }
+    },
+    "read_borrow_expression": {
+      "type": "PREC",
+      "value": 10,
+      "content": {
+        "type": "SEQ",
+        "members": [
+          {
+            "type": "STRING",
+            "value": "borrow"
           },
           {
             "type": "FIELD",

@@ -1156,6 +1156,10 @@
           "named": true
         },
         {
+          "type": "read_borrow_expression",
+          "named": true
+        },
+        {
           "type": "safe_member_expression",
           "named": true
         },
@@ -1455,6 +1459,16 @@
         "types": [
           {
             "type": "&",
+            "named": false
+          }
+        ]
+      },
+      "read_borrow": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "borrow",
             "named": false
           }
         ]
@@ -2150,6 +2164,16 @@
           }
         ]
       },
+      "read_borrow": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "borrow",
+            "named": false
+          }
+        ]
+      },
       "type": {
         "multiple": false,
         "required": true,
@@ -2341,6 +2365,22 @@
     "type": "raw_enum_type",
     "named": true,
     "fields": {}
+  },
+  {
+    "type": "read_borrow_expression",
+    "named": true,
+    "fields": {
+      "operand": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "expression",
+            "named": true
+          }
+        ]
+      }
+    }
   },
   {
     "type": "return_statement",
@@ -3424,6 +3464,10 @@
   },
   {
     "type": "bool",
+    "named": false
+  },
+  {
+    "type": "borrow",
     "named": false
   },
   {

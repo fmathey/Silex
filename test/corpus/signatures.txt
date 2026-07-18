@@ -46,3 +46,52 @@ native func native_next() int
     (parameter_list)
     return_type: (type
       (builtin_type))))
+
+==================
+Read borrow signature and argument
+==================
+
+func inspect(borrow value:Data) {}
+func apply(callback:func(borrow Data) int) {}
+func main() {
+    inspect(borrow data)
+}
+
+---
+
+(source_file
+  (function_definition
+    name: (identifier)
+    (parameter_list
+      (parameter
+        name: (identifier)
+        type: (type
+          (named_type
+            (type_identifier)))))
+    body: (block))
+  (function_definition
+    name: (identifier)
+    (parameter_list
+      (parameter
+        name: (identifier)
+        type: (type
+          (function_type
+            (function_type_parameter
+              type: (type
+                (named_type
+                  (type_identifier))))
+            (type
+              (builtin_type))))))
+    body: (block))
+  (function_definition
+    name: (identifier)
+    (parameter_list)
+    body: (block
+      (statement
+        (expression_statement
+          (invocation_expression
+            target: (identifier)
+            (expression
+              (read_borrow_expression
+                operand: (expression
+                  (identifier))))))))))
