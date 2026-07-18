@@ -394,6 +394,20 @@ pub fn build(b: *std.Build) void {
         "Tests/ExtensionConflict/Second.sx:5:14: error: extension method 'read' from module 'ExtensionConflict.Second' conflicts with module 'ExtensionConflict.First' on type 'ExtensionConflict.Core.Value'\n",
     );
 
+    const extension_conformance_visibility_command = b.addRunArtifact(executable);
+    extension_conformance_visibility_command.addArgs(&.{ "compile", "Tests/ExtensionConformanceVisibility/silex.json" });
+    extension_conformance_visibility_command.expectExitCode(1);
+    extension_conformance_visibility_command.expectStdErrEqual(
+        "Tests/ExtensionConformanceVisibility/Main.sx:6:34: error: expected 'ExtensionConformanceVisibility.Core.Drawable', found 'ExtensionConformanceVisibility.Types.Sprite'\n",
+    );
+
+    const extension_conformance_conflict_command = b.addRunArtifact(executable);
+    extension_conformance_conflict_command.addArgs(&.{ "compile", "Tests/ExtensionConformanceConflict/silex.json" });
+    extension_conformance_conflict_command.expectExitCode(1);
+    extension_conformance_conflict_command.expectStdErrEqual(
+        "Tests/ExtensionConformanceConflict/Second.sx:4:23: error: extension conformance of type 'ExtensionConformanceConflict.Types.Sprite' to protocol 'ExtensionConformanceConflict.Core.Drawable' from module 'ExtensionConformanceConflict.Second' conflicts with module 'ExtensionConformanceConflict.First'\n",
+    );
+
     const invalid_private_super_constructor_command = b.addRunArtifact(executable);
     invalid_private_super_constructor_command.addArgs(&.{ "compile", "Tests/InvalidPrivateSuperConstructor.sx" });
     invalid_private_super_constructor_command.expectExitCode(1);
@@ -1298,7 +1312,7 @@ pub fn build(b: *std.Build) void {
         "silex: native compilation failed for target 'x86_64-linux-musl'; target support, SDKs, or native sources may be unavailable or incomplete\n",
     );
     backend_discovered_target_failure_command.expectStdErrMatch(b.fmt(
-        "silex: backend details: .silex{c}build{c}v36{c}x86_64-linux-musl{c}",
+        "silex: backend details: .silex{c}build{c}v37{c}x86_64-linux-musl{c}",
         .{
             std.fs.path.sep,
             std.fs.path.sep,
@@ -1686,6 +1700,8 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&invalid_inheritance_cycle_command.step);
     test_step.dependOn(&extension_visibility_command.step);
     test_step.dependOn(&extension_conflict_command.step);
+    test_step.dependOn(&extension_conformance_visibility_command.step);
+    test_step.dependOn(&extension_conformance_conflict_command.step);
     test_step.dependOn(&invalid_private_super_constructor_command.step);
     test_step.dependOn(&invalid_class_collection_covariance_command.step);
     test_step.dependOn(&invalid_private_class_field_command.step);
@@ -2033,8 +2049,13 @@ pub fn build(b: *std.Build) void {
     extension_modules_command.addArgs(&.{ "run", "Smokes/ExtensionModules/silex.json" });
     extension_modules_command.expectStdOutEqual("");
 
+    const extension_conformance_modules_command = b.addRunArtifact(executable);
+    extension_conformance_modules_command.step.dependOn(&extension_modules_command.step);
+    extension_conformance_modules_command.addArgs(&.{ "run", "Smokes/ExtensionConformanceModules/silex.json" });
+    extension_conformance_modules_command.expectStdOutEqual("");
+
     const type_aliases_command = b.addRunArtifact(executable);
-    type_aliases_command.step.dependOn(&extension_modules_command.step);
+    type_aliases_command.step.dependOn(&extension_conformance_modules_command.step);
     type_aliases_command.addArgs(&.{ "run", "Smokes/TypeAliases.sx" });
     type_aliases_command.expectStdOutEqual(hostText(b, "6\n3\nAda\ntrue\n24\n"));
 

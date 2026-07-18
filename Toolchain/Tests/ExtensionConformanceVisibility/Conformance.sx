@@ -1,0 +1,7 @@
+import ExtensionConformanceVisibility.Core as Core
+import ExtensionConformanceVisibility.Types as Types
+
+extend Types.Sprite : Core.Drawable {
+    pub func draw() {
+    }
+}

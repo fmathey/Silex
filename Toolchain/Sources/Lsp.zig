@@ -1404,14 +1404,19 @@ fn collectLocalExtensions(
         if (token.tag != .keyword_extend or index + 2 >= tokens.len) continue;
         var target_index = index + 1;
         var target_name: ?[]const u8 = null;
-        while (target_index < tokens.len and tokens[target_index].tag != .left_brace) : (target_index += 1) {
+        while (target_index < tokens.len and tokens[target_index].tag != .colon and
+            tokens[target_index].tag != .left_brace) : (target_index += 1)
+        {
             if (tokens[target_index].tag == .identifier) target_name = tokens[target_index].lexeme;
         }
-        if (target_name == null or target_index >= tokens.len) continue;
+        if (target_name == null) continue;
+        var body_index = target_index;
+        while (body_index < tokens.len and tokens[body_index].tag != .left_brace) : (body_index += 1) {}
+        if (body_index >= tokens.len) continue;
 
         var depth: usize = 0;
         var range_end = source.len;
-        var member_index = target_index;
+        var member_index = body_index;
         while (member_index < tokens.len) : (member_index += 1) {
             switch (tokens[member_index].tag) {
                 .left_brace => depth += 1,
@@ -3486,11 +3491,12 @@ test "self completion resolves fields and methods of the enclosing structure" {
 
 test "self completion resolves the target of a local extension" {
     const source =
+        \\protocol Named { func get_name() str }
         \\struct Animal {
         \\    var name:str
         \\    func show() {}
         \\}
-        \\extend Animal {
+        \\extend Animal : Named {
         \\    func get_name() str {
         \\        return self.
         \\    }
@@ -3498,7 +3504,7 @@ test "self completion resolves the target of a local extension" {
         \\}
         \\func main() {}
     ;
-    const items = try completionItems(std.testing.allocator, std.testing.io, source, .{ .line = 6, .character = 20 });
+    const items = try completionItems(std.testing.allocator, std.testing.io, source, .{ .line = 7, .character = 20 });
     defer std.testing.allocator.free(items);
     try std.testing.expect(containsCompletion(items, "name"));
     try std.testing.expect(containsCompletion(items, "show"));

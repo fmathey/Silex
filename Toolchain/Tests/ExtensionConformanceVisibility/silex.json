@@ -1,0 +1,10 @@
+{
+  "target": "ExtensionConformanceVisibility.App",
+  "modules": [
+    { "name": "ExtensionConformanceVisibility.Core", "sources": ["Core.sx"] },
+    { "name": "ExtensionConformanceVisibility.Types", "sources": ["Types.sx"] },
+    { "name": "ExtensionConformanceVisibility.Conformance", "sources": ["Conformance.sx"] },
+    { "name": "ExtensionConformanceVisibility.Bridge", "sources": ["Bridge.sx"] },
+    { "name": "ExtensionConformanceVisibility.App", "sources": ["Main.sx"] }
+  ]
+}

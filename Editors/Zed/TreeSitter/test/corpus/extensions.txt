@@ -2,7 +2,7 @@
 Type extensions
 ===============
 
-extend Random.Generator {
+extend Random.Generator : Drawable, Named {
     pub func get_uint() uint {
         return self.get_int() as uint
     }
@@ -20,6 +20,10 @@ extend Random.Generator {
       (type_identifier
         (identifier)
         (identifier)))
+    (named_type
+      (type_identifier))
+    (named_type
+      (type_identifier))
     (function_definition
       (identifier)
       (parameter_list)

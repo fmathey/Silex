@@ -1,0 +1,7 @@
+import ExtensionConformanceConflict.Core as Core
+import ExtensionConformanceConflict.Types as Types
+
+extend Types.Sprite : Core.Drawable {
+    pub func draw() {
+    }
+}

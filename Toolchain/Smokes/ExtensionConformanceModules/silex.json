@@ -1,0 +1,21 @@
+{
+  "target": "ExtensionConformanceChecks.App",
+  "modules": [
+    {
+      "name": "ExtensionConformanceChecks.Core",
+      "sources": ["Core.sx"]
+    },
+    {
+      "name": "ExtensionConformanceChecks.Types",
+      "sources": ["Types.sx"]
+    },
+    {
+      "name": "ExtensionConformanceChecks.Conformances",
+      "sources": ["Conformances.sx"]
+    },
+    {
+      "name": "ExtensionConformanceChecks.App",
+      "sources": ["Main.sx"]
+    }
+  ]
+}

@@ -54,6 +54,27 @@ methods are already public; a class implementation therefore writes `pub`.
 An inherited public class method can satisfy a requirement. A child class also
 inherits every valid conformance of its base class.
 
+## Conformance through an extension
+
+`extend Type : Protocol` adds a nominal conformance without changing the
+target's representation. The conformance is available in its declaring module
+and in source files that directly import that module:
+
+```sx
+extend Sprite : Drawable {
+    pub func draw() {
+    }
+}
+```
+
+An extension may list multiple protocols. Its requirement implementations are
+public instance methods and follow the same signature checks as a conformance
+written in the original type. The conformance applies to the exact target only;
+unlike a conformance in a class declaration, it is not inherited by descendant
+classes. One type-protocol pair has only one conformance provider throughout a
+compilation. See [Type extensions](Extensions.md#protocol-conformances) for
+visibility, coherence, and generation rules.
+
 ## Static generic constraints
 
 One protocol may constrain each generic type parameter:

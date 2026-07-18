@@ -1,0 +1,4 @@
+import ExtensionConformanceConflict.Second as Second
+
+pub func second() {
+}

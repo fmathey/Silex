@@ -34,6 +34,40 @@ They do not enter class virtual dispatch and are not inherited. Extending
 `Entity` does not make the method a member of `Player`, and a value declared as
 `Entity` cannot select an extension written for `Player`.
 
+## Protocol conformances
+
+An extension can explicitly add one or more nominal protocol conformances:
+
+```sx
+protocol Drawable {
+    func draw()
+}
+
+struct Sprite {
+}
+
+extend Sprite : Drawable {
+    pub func draw() {
+    }
+}
+```
+
+The target then converts to the dynamic protocol type and satisfies a matching
+generic constraint wherever that extension is active. Requirement methods must
+be public instance methods with the ordinary matching signature. They may
+already belong to the target or be declared as `pub` methods in an extension.
+
+A conformance extension applies only to its exact nominal target. A class
+descendant does not inherit it. The conformance changes no field, layout,
+initializer, base class, or virtual dispatch slot; the compiler generates its
+protocol witness separately.
+
+Only one conformance between a given type and protocol may exist in the whole
+compilation. A duplicate in the type declaration or another extension is an
+error even when the two extension modules are not directly imported together.
+This global coherence keeps dynamic witnesses and generic specializations
+unambiguous.
+
 ## Visibility and imports
 
 Every source file in the declaring module can use its extension methods. A
@@ -49,10 +83,10 @@ func sample(generator:Generator) uint {
 }
 ```
 
-The import activates all public extensions declared by that module; there is
-no separate `use` form for an extension method. Merely compiling a module,
-depending on its package, or importing it transitively does not activate its
-extensions. Each consuming source file names the extension module directly,
+The import activates all public extension methods and conformances declared by
+that module; there is no separate `use` form for either. Merely compiling a
+module, depending on its package, or importing it transitively does not activate
+its extensions. Each consuming source file names the extension module directly,
 following the ordinary file-scoped `import` rules.
 
 An extension has the access rights of an outside caller. Its body can use only
@@ -67,7 +101,7 @@ the diagnostic names both extension modules instead of choosing according to
 source or import order. Different signatures remain ordinary overloads.
 
 Extensions add behavior only. They cannot declare fields, constructors,
-`drop`, `override`, `sub` members, or protocol conformances. They cannot target
-an enum, protocol, scalar, collection, generic type, or one specialization of
-a generic type. Extension methods cannot currently declare their own type
-parameters.
+`drop`, `override`, or `sub` members. Names after `:` must be protocols and can
+never add a base class. Extensions cannot target an enum, protocol, scalar,
+collection, generic type, or one specialization of a generic type. Extension
+methods and conformances cannot currently declare their own type parameters.

@@ -194,6 +194,7 @@ pub const Expression = struct {
         object: *Expression,
         name: []const u8,
         name_position: Source.Position,
+        extension_visibility_file: ?usize = null,
         type_arguments: []const TypeName = &.{},
         arguments: []const *Expression,
         named_fields: ?[]const FieldInitializer = null,
@@ -235,6 +236,7 @@ pub const Expression = struct {
         pub const CascadeMethodCall = struct {
             name: []const u8,
             name_position: Source.Position,
+            extension_visibility_file: ?usize = null,
             arguments: []const *Expression,
         };
 
@@ -445,6 +447,7 @@ pub const Extension = struct {
     position: Source.Position,
     target: []const u8,
     target_position: Source.Position,
+    conformances: []const ProtocolReference = &.{},
     methods: []const Function,
 };
 
@@ -520,6 +523,8 @@ pub const TypeParameter = struct {
 pub const ProtocolReference = struct {
     name: []const u8,
     position: Source.Position,
+    extension_visible_files: ?[]const usize = null,
+    extension_module_name: ?[]const u8 = null,
 };
 
 pub const BaseClass = struct {

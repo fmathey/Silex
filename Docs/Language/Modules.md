@@ -42,9 +42,10 @@ that import loads only its longest prefix that names an existing module. Thus
 The same rule applies through an import alias such as `Standard.Time.Stopwatch`
 after `import STD as Standard`.
 
-A direct `import` also activates the imported module's public type extensions
-in that source file. This activation is not transitive and does not require a
-separate `use`; see [Type extensions](Extensions.md#visibility-and-imports).
+A direct `import` also activates the imported module's public extension methods
+and protocol conformances in that source file. This activation is not
+transitive and does not require a separate `use`; see
+[Type extensions](Extensions.md#visibility-and-imports).
 
 A non-public `use` can name either one declaration or one submodule and
 introduce its name or alias into the current file. It can establish that exact

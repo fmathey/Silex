@@ -1221,6 +1221,16 @@
     "type": "extension_definition",
     "named": true,
     "fields": {
+      "conformance": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "named_type",
+            "named": true
+          }
+        ]
+      },
       "static": {
         "multiple": true,
         "required": false,

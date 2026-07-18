@@ -88,6 +88,13 @@ module.exports = grammar({
       seq(
         "extend",
         field("target", $.named_type),
+        optional(
+          seq(
+            ":",
+            field("conformance", $.named_type),
+            repeat(seq(",", field("conformance", $.named_type))),
+          ),
+        ),
         "{",
         repeat(
           seq(

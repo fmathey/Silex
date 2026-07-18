@@ -122,6 +122,11 @@ pub const Resolver = struct {
                             return self.fail(extension.target_position, "generic structures cannot be extended");
                         }
                         structure.methods = try appendFunctions(self.allocator, structure.methods, transformed.methods);
+                        structure.conformances = try appendProtocolReferences(
+                            self.allocator,
+                            structure.conformances,
+                            transformed.conformances,
+                        );
                         found = true;
                         break;
                     }
@@ -140,6 +145,17 @@ pub const Resolver = struct {
 
     fn transformExtension(self: *Resolver, extension: Ast.Extension, declaring_module_index: usize) !Ast.Extension {
         const declaration = try self.resolveName(extension.position.file, extension.target, .structure, extension.target_position);
+        var conformances: std.ArrayList(Ast.ProtocolReference) = .empty;
+        const conformance_visible_files = try self.extensionVisibleFiles(declaring_module_index, true);
+        for (extension.conformances) |conformance| {
+            const protocol = try self.resolveName(extension.position.file, conformance.name, .protocol, conformance.position);
+            try conformances.append(self.allocator, .{
+                .name = protocol.canonical_name,
+                .position = conformance.position,
+                .extension_visible_files = conformance_visible_files,
+                .extension_module_name = self.project.modules[declaring_module_index].name,
+            });
+        }
         var methods: std.ArrayList(Ast.Function) = .empty;
         for (extension.methods) |method| {
             var transformed = try self.transformFunctionBody(method, method.name);
@@ -149,6 +165,7 @@ pub const Resolver = struct {
         }
         var result = extension;
         result.target = declaration.canonical_name;
+        result.conformances = try conformances.toOwnedSlice(self.allocator);
         result.methods = try methods.toOwnedSlice(self.allocator);
         return result;
     }
@@ -1804,6 +1821,17 @@ fn sourceFileIndex(program: Ast.Program) ?usize {
 
 fn appendFunctions(allocator: Allocator, left: []const Ast.Function, right: []const Ast.Function) ![]const Ast.Function {
     const result = try allocator.alloc(Ast.Function, left.len + right.len);
+    @memcpy(result[0..left.len], left);
+    @memcpy(result[left.len..], right);
+    return result;
+}
+
+fn appendProtocolReferences(
+    allocator: Allocator,
+    left: []const Ast.ProtocolReference,
+    right: []const Ast.ProtocolReference,
+) ![]const Ast.ProtocolReference {
+    const result = try allocator.alloc(Ast.ProtocolReference, left.len + right.len);
     @memcpy(result[0..left.len], left);
     @memcpy(result[left.len..], right);
     return result;

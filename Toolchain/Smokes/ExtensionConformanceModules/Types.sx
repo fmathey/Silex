@@ -1,0 +1,7 @@
+pub class Sprite {
+    pub var value:int
+
+    pub init(value:int) {
+        self.value = value
+    }
+}

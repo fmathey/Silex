@@ -602,12 +602,19 @@ const StructureSymbol = struct {
     generated_name: []const u8,
     is_class: bool,
     base_index: ?usize,
-    protocol_indexes: []const usize,
+    protocol_conformances: []const ProtocolConformanceSymbol,
     fields: []StructureFieldSymbol,
     static_fields: []StructureFieldSymbol,
     constructors: []ConstructorSymbol,
     methods: []MethodSymbol,
     position: Source.Position,
+};
+
+const ProtocolConformanceSymbol = struct {
+    protocol_index: usize,
+    position: Source.Position,
+    extension_visible_files: ?[]const usize,
+    extension_module_name: ?[]const u8,
 };
 
 const ProtocolSymbol = struct {
@@ -965,10 +972,15 @@ pub const Analyzer = struct {
 
     fn collectStructures(self: *Analyzer, ast_structures: []const Ast.Structure) AnalyzeError!void {
         for (ast_structures, 0..) |ast_structure, structure_index| {
-            var protocol_indexes: std.ArrayList(usize) = .empty;
+            var protocol_conformances: std.ArrayList(ProtocolConformanceSymbol) = .empty;
             if (ast_structure.base) |base| {
                 if (self.findProtocolIndex(base.name)) |protocol_index| {
-                    try protocol_indexes.append(self.allocator, protocol_index);
+                    try protocol_conformances.append(self.allocator, .{
+                        .protocol_index = protocol_index,
+                        .position = base.position,
+                        .extension_visible_files = null,
+                        .extension_module_name = null,
+                    });
                 } else {
                     if (!ast_structure.is_class) return self.fail(base.position, "only a class can declare a base class");
                     const base_index = self.findStructureIndex(base.name) orelse {
@@ -990,15 +1002,36 @@ pub const Analyzer = struct {
                         try std.fmt.allocPrint(self.allocator, "unknown protocol '{s}'", .{conformance.name});
                     return self.fail(conformance.position, message);
                 };
-                for (protocol_indexes.items) |existing| {
-                    if (existing == protocol_index) {
-                        const message = try std.fmt.allocPrint(self.allocator, "protocol '{s}' is already declared in the conformance list", .{conformance.name});
-                        return self.fail(conformance.position, message);
-                    }
+                for (protocol_conformances.items) |existing| {
+                    if (existing.protocol_index != protocol_index) continue;
+                    const message = if (conformance.extension_visible_files != null and existing.extension_visible_files != null)
+                        try std.fmt.allocPrint(
+                            self.allocator,
+                            "extension conformance of type '{s}' to protocol '{s}' from module '{s}' conflicts with module '{s}'",
+                            .{ ast_structure.name, conformance.name, conformance.extension_module_name.?, existing.extension_module_name.? },
+                        )
+                    else if (conformance.extension_visible_files != null or existing.extension_visible_files != null)
+                        try std.fmt.allocPrint(
+                            self.allocator,
+                            "extension conformance of type '{s}' to protocol '{s}' from module '{s}' conflicts with the conformance declared by the type",
+                            .{
+                                ast_structure.name,
+                                conformance.name,
+                                if (conformance.extension_module_name) |name| name else existing.extension_module_name.?,
+                            },
+                        )
+                    else
+                        try std.fmt.allocPrint(self.allocator, "protocol '{s}' is already declared in the conformance list", .{conformance.name});
+                    return self.fail(conformance.position, message);
                 }
-                try protocol_indexes.append(self.allocator, protocol_index);
+                try protocol_conformances.append(self.allocator, .{
+                    .protocol_index = protocol_index,
+                    .position = conformance.position,
+                    .extension_visible_files = conformance.extension_visible_files,
+                    .extension_module_name = conformance.extension_module_name,
+                });
             }
-            self.structures.items[structure_index].protocol_indexes = try protocol_indexes.toOwnedSlice(self.allocator);
+            self.structures.items[structure_index].protocol_conformances = try protocol_conformances.toOwnedSlice(self.allocator);
         }
         try self.validateInheritanceCycles();
 
@@ -1175,7 +1208,7 @@ pub const Analyzer = struct {
                     try std.fmt.allocPrint(self.allocator, "SilexStruct{d}", .{structure_index}),
                 .is_class = ast_structure.is_class,
                 .base_index = null,
-                .protocol_indexes = &.{},
+                .protocol_conformances = &.{},
                 .fields = &.{},
                 .static_fields = &.{},
                 .constructors = &.{},
@@ -1237,16 +1270,16 @@ pub const Analyzer = struct {
 
     fn validateProtocolConformances(self: *Analyzer) AnalyzeError!void {
         for (self.structures.items, 0..) |structure, structure_index| {
-            for (structure.protocol_indexes) |protocol_index| {
-                const protocol = self.protocols.items[protocol_index];
+            for (structure.protocol_conformances) |conformance| {
+                const protocol = self.protocols.items[conformance.protocol_index];
                 for (protocol.requirements) |requirement| {
-                    if (self.findProtocolRequirementMethod(structure_index, requirement) != null) continue;
+                    if (self.findProtocolRequirementMethod(structure_index, requirement, conformance) != null) continue;
                     const message = try std.fmt.allocPrint(
                         self.allocator,
                         "type '{s}' does not satisfy method '{s}' required by protocol '{s}'",
                         .{ structure.source_name, requirement.source_name, protocol.source_name },
                     );
-                    return self.fail(structure.position, message);
+                    return self.fail(conformance.position, message);
                 }
             }
         }
@@ -1256,12 +1289,16 @@ pub const Analyzer = struct {
         self: *const Analyzer,
         start_index: usize,
         requirement: ProtocolRequirement,
+        conformance: ProtocolConformanceSymbol,
     ) ?MethodCandidate {
         var structure_index: ?usize = start_index;
         while (structure_index) |index| {
             const structure = self.structures.items[index];
             for (structure.methods, 0..) |method_symbol, method_index| {
-                if (method_symbol.extension_visible_files != null) continue;
+                if (method_symbol.extension_visible_files) |visible_files| {
+                    if (conformance.extension_visible_files == null or index != start_index or
+                        !fileSetContains(visible_files, conformance.position.file)) continue;
+                }
                 if (method_symbol.is_static or method_symbol.visibility != .public_access) continue;
                 if (!std.mem.eql(u8, method_symbol.source_name, requirement.source_name)) continue;
                 if (!sameSignature(
@@ -1281,24 +1318,57 @@ pub const Analyzer = struct {
         return null;
     }
 
-    fn structureConformsToProtocol(self: *const Analyzer, structure_index: usize, protocol_index: usize) bool {
+    fn protocolConformance(
+        self: *const Analyzer,
+        structure_index: usize,
+        protocol_index: usize,
+        source_file: ?usize,
+    ) ?ProtocolConformanceSymbol {
         var cursor: ?usize = structure_index;
         while (cursor) |index| {
-            for (self.structures.items[index].protocol_indexes) |candidate| {
-                if (candidate == protocol_index) return true;
+            for (self.structures.items[index].protocol_conformances) |conformance| {
+                if (conformance.protocol_index != protocol_index) continue;
+                if (conformance.extension_visible_files) |visible_files| {
+                    if (index != structure_index or source_file == null or
+                        !fileSetContains(visible_files, source_file.?)) continue;
+                }
+                return conformance;
             }
             cursor = self.structures.items[index].base_index;
         }
-        return false;
+        return null;
+    }
+
+    fn structureConformsToProtocol(
+        self: *const Analyzer,
+        structure_index: usize,
+        protocol_index: usize,
+        source_file: ?usize,
+    ) bool {
+        return self.protocolConformance(structure_index, protocol_index, source_file) != null;
     }
 
     fn protocolConformances(self: *Analyzer, structure_index: usize) AnalyzeError![]const ProtocolConformance {
         var conformances: std.ArrayList(ProtocolConformance) = .empty;
         for (self.protocols.items, 0..) |protocol, protocol_index| {
-            if (!self.structureConformsToProtocol(structure_index, protocol_index)) continue;
+            const conformance = conformance: {
+                for (self.structures.items[structure_index].protocol_conformances) |value| {
+                    if (value.protocol_index == protocol_index) break :conformance value;
+                }
+                var cursor = self.structures.items[structure_index].base_index;
+                while (cursor) |index| {
+                    for (self.structures.items[index].protocol_conformances) |value| {
+                        if (value.protocol_index == protocol_index and value.extension_visible_files == null) {
+                            break :conformance value;
+                        }
+                    }
+                    cursor = self.structures.items[index].base_index;
+                }
+                continue;
+            };
             var method_names: std.ArrayList([]const u8) = .empty;
             for (protocol.requirements) |requirement| {
-                const candidate = self.findProtocolRequirementMethod(structure_index, requirement) orelse unreachable;
+                const candidate = self.findProtocolRequirementMethod(structure_index, requirement, conformance) orelse unreachable;
                 try method_names.append(self.allocator, candidate.symbol.generated_name);
             }
             try conformances.append(self.allocator, .{
@@ -3507,6 +3577,7 @@ pub const Analyzer = struct {
         const generated_structure_name = object.type.structure.generated_name;
         const structure_index = self.findStructureIndexByGeneratedName(generated_structure_name).?;
         const structure = &self.structures.items[structure_index];
+        const extension_visibility_file = call.extension_visibility_file orelse call.name_position.file;
         var candidates: std.ArrayList(MethodCandidate) = .empty;
         var inaccessible: ?MethodCandidate = null;
         var static_match = false;
@@ -3516,7 +3587,7 @@ pub const Analyzer = struct {
             for (declaring_structure.methods, 0..) |method_symbol, method_index| {
                 if (std.mem.eql(u8, method_symbol.source_name, call.name)) {
                     if (method_symbol.extension_visible_files) |visible_files| {
-                        if (index != structure_index or !fileSetContains(visible_files, call.name_position.file)) continue;
+                        if (index != structure_index or !fileSetContains(visible_files, extension_visibility_file)) continue;
                     }
                     if (method_symbol.is_static) {
                         if (index == structure_index) static_match = true;
@@ -4065,6 +4136,7 @@ pub const Analyzer = struct {
                     .object = cascade.object,
                     .name = cascade_method.name,
                     .name_position = cascade_method.name_position,
+                    .extension_visibility_file = cascade_method.extension_visibility_file,
                     .arguments = cascade_method.arguments,
                 };
                 const resolved = try self.methodCallExpressionWithObject(call, target, scope, receiver, owns_temporary);
@@ -4499,7 +4571,7 @@ pub const Analyzer = struct {
                 try self.expression(argument.value.unary.operand, scope)
             else
                 try self.expressionForExpected(argument, scope, null);
-            const score = self.implicitConversionScore(argument_value.type, parameter_type) orelse literalOverloadScore(argument_value, parameter_type) orelse return null;
+            const score = self.implicitConversionScore(argument_value.type, parameter_type, argument_value.position.file) orelse literalOverloadScore(argument_value, parameter_type) orelse return null;
             try scores.append(self.allocator, score);
         }
         return @as(?[]const u8, try scores.toOwnedSlice(self.allocator));
@@ -5796,7 +5868,7 @@ pub const Analyzer = struct {
         }
         if (target_type == .protocol and expression_value.type == .structure) {
             const structure_index = self.findStructureIndexByGeneratedName(expression_value.type.structure.generated_name).?;
-            if (self.structureConformsToProtocol(structure_index, target_type.protocol.index)) {
+            if (self.structureConformsToProtocol(structure_index, target_type.protocol.index, expression_value.position.file)) {
                 return self.newExpression(.{
                     .type = target_type,
                     .position = expression_value.position,
@@ -5825,7 +5897,11 @@ pub const Analyzer = struct {
                 expression_value.type = target_type;
                 return expression_value;
             }
-            if (expression_value.type == .optional and self.implicitConversionScore(expression_value.type.optional.*, target_type.optional.*) != null) {
+            if (expression_value.type == .optional and self.implicitConversionScore(
+                expression_value.type.optional.*,
+                target_type.optional.*,
+                expression_value.position.file,
+            ) != null) {
                 return self.newExpression(.{
                     .type = target_type,
                     .position = expression_value.position,
@@ -5892,16 +5968,16 @@ pub const Analyzer = struct {
         return null;
     }
 
-    fn implicitConversionScore(self: *const Analyzer, source: Type, target: Type) ?u8 {
+    fn implicitConversionScore(self: *const Analyzer, source: Type, target: Type, source_file: usize) ?u8 {
         if (typeEqual(source, target)) return 0;
         if (target == .protocol and source == .structure) {
             const structure_index = self.findStructureIndexByGeneratedName(source.structure.generated_name) orelse return null;
-            if (self.structureConformsToProtocol(structure_index, target.protocol.index)) return 1;
+            if (self.structureConformsToProtocol(structure_index, target.protocol.index, source_file)) return 1;
         }
         if (target == .optional) {
             if (source == .null) return 3;
-            if (source == .optional) return self.implicitConversionScore(source.optional.*, target.optional.*);
-            const score = self.implicitConversionScore(source, target.optional.*) orelse return null;
+            if (source == .optional) return self.implicitConversionScore(source.optional.*, target.optional.*, source_file);
+            const score = self.implicitConversionScore(source, target.optional.*, source_file) orelse return null;
             return score +| 3;
         }
         if (self.classUpcastDistance(source, target)) |distance| return distance;
@@ -7248,6 +7324,57 @@ test "extensions use only public members and do not participate in inheritance" 
         \\extend Value { pub func read() int { return 2 } }
         \\func main() {}
     , "extension method 'read' conflicts with an existing method signature on type 'Value'");
+}
+
+test "extension conformances support dynamic values and multiple protocols" {
+    try expectSemanticSuccess(
+        \\protocol Drawable { func draw() int }
+        \\protocol Named { func name() str }
+        \\struct Sprite { var value:int }
+        \\struct Existing { func draw() int { return 7 } }
+        \\extend Sprite : Drawable, Named {
+        \\    pub func draw() int { return self.value }
+        \\    pub func name() str { return "sprite" }
+        \\}
+        \\extend Existing : Drawable {}
+        \\func main() {
+        \\    var sprite = Sprite(value:42)
+        \\    var drawable:Drawable = sprite
+        \\    var named:Named = sprite
+        \\    assert(drawable.draw() == 42, "dynamic extension conformance")
+        \\    assert(named.name() == "sprite", "second extension conformance")
+        \\    var existing:Drawable = Existing()
+        \\    assert(existing.draw() == 7, "existing method conformance")
+        \\}
+    );
+}
+
+test "extension conformances require public methods and apply to the exact type" {
+    try expectResolvedSemanticError(
+        \\protocol Drawable { func draw() }
+        \\class Sprite {}
+        \\extend Sprite : Drawable { func draw() {} }
+        \\func main() {}
+    , "type 'Sprite' does not satisfy method 'draw' required by protocol 'Drawable'");
+    try expectResolvedSemanticError(
+        \\protocol Drawable { func draw() }
+        \\struct Sprite {}
+        \\extend Sprite : Drawable {}
+        \\func main() {}
+    , "type 'Sprite' does not satisfy method 'draw' required by protocol 'Drawable'");
+    try expectResolvedSemanticError(
+        \\protocol Drawable { func draw() }
+        \\class Entity {}
+        \\extend Entity : Drawable { pub func draw() {} }
+        \\class Player : Entity {}
+        \\func main() { var drawable:Drawable = Player() }
+    , "expected 'Drawable', found 'Player'");
+    try expectResolvedSemanticError(
+        \\protocol Drawable { func draw() }
+        \\struct Sprite : Drawable { func draw() {} }
+        \\extend Sprite : Drawable {}
+        \\func main() {}
+    , "extension conformance of type 'Sprite' to protocol 'Drawable' from module 'Test' conflicts with the conformance declared by the type");
 }
 
 test "native ABI rejects optional returns" {

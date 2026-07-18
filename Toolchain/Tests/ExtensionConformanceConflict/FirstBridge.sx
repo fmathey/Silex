@@ -1,0 +1,4 @@
+import ExtensionConformanceConflict.First as First
+
+pub func first() {
+}

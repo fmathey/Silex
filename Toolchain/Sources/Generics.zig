@@ -83,6 +83,8 @@ pub const Specializer = struct {
     enum_specializations: std.ArrayList(EnumSpecialization) = .empty,
     structure_specializations: std.ArrayList(StructureSpecialization) = .empty,
     function_specializations: std.ArrayList(FunctionSpecialization) = .empty,
+    active_constraint_protocols: []const []const u8 = &.{},
+    active_extension_visibility_file: ?usize = null,
     diagnostic: ?Source.Diagnostic = null,
 
     pub fn init(allocator: Allocator, program: Ast.Program) Specializer {
@@ -380,6 +382,19 @@ pub const Specializer = struct {
             bindings[index] = .{ .name = parameter.name, .value = argument };
         }
 
+        var constraint_protocols: std.ArrayList([]const u8) = .empty;
+        for (template.type_parameters) |parameter| {
+            if (parameter.constraint) |constraint| try constraint_protocols.append(self.allocator, constraint.name);
+        }
+        const previous_constraints = self.active_constraint_protocols;
+        const previous_visibility_file = self.active_extension_visibility_file;
+        self.active_constraint_protocols = try constraint_protocols.toOwnedSlice(self.allocator);
+        self.active_extension_visibility_file = position.file;
+        defer {
+            self.active_constraint_protocols = previous_constraints;
+            self.active_extension_visibility_file = previous_visibility_file;
+        }
+
         var concrete = try self.rewriteStructure(template.*, bindings);
         concrete.name = name;
         concrete.type_parameters = &.{};
@@ -603,6 +618,10 @@ pub const Specializer = struct {
                 .object = try self.rewriteExpression(call.object, bindings),
                 .name = call.name,
                 .name_position = call.name_position,
+                .extension_visibility_file = if (self.activeConstraintRequires(call.name))
+                    self.active_extension_visibility_file
+                else
+                    call.extension_visibility_file,
                 .type_arguments = try self.rewriteTypes(call.type_arguments, bindings, call.name_position),
                 .arguments = try self.rewriteExpressions(call.arguments, bindings),
                 .named_fields = if (call.named_fields) |fields| try self.rewriteFieldInitializers(fields, bindings) else null,
@@ -634,6 +653,10 @@ pub const Specializer = struct {
                     .method_call => |call| .{ .method_call = .{
                         .name = call.name,
                         .name_position = call.name_position,
+                        .extension_visibility_file = if (self.activeConstraintRequires(call.name))
+                            self.active_extension_visibility_file
+                        else
+                            call.extension_visibility_file,
                         .arguments = try self.rewriteExpressions(call.arguments, bindings),
                     } },
                     .field_assignment => |assignment| .{ .field_assignment = .{
@@ -892,6 +915,19 @@ pub const Specializer = struct {
             bindings[index] = .{ .name = parameter.name, .value = argument };
         }
 
+        var constraint_protocols: std.ArrayList([]const u8) = .empty;
+        for (template.type_parameters) |parameter| {
+            if (parameter.constraint) |constraint| try constraint_protocols.append(self.allocator, constraint.name);
+        }
+        const previous_constraints = self.active_constraint_protocols;
+        const previous_visibility_file = self.active_extension_visibility_file;
+        self.active_constraint_protocols = try constraint_protocols.toOwnedSlice(self.allocator);
+        self.active_extension_visibility_file = position.file;
+        defer {
+            self.active_constraint_protocols = previous_constraints;
+            self.active_extension_visibility_file = previous_visibility_file;
+        }
+
         var concrete = try self.rewriteFunction(template, bindings);
         concrete.name = name;
         concrete.type_parameters = &.{};
@@ -907,7 +943,7 @@ pub const Specializer = struct {
     ) SpecializeError!void {
         for (parameters, arguments) |parameter, argument| {
             const constraint = parameter.constraint orelse continue;
-            if (self.typeConformsTo(argument, constraint.name)) continue;
+            if (self.typeConformsTo(argument, constraint.name, position.file)) continue;
             var argument_name: std.ArrayList(u8) = .empty;
             try appendTypeName(self.allocator, &argument_name, argument);
             const message = try std.fmt.allocPrint(
@@ -919,24 +955,34 @@ pub const Specializer = struct {
         }
     }
 
-    fn typeConformsTo(self: *const Specializer, value: Ast.TypeName, protocol_name: []const u8) bool {
+    fn typeConformsTo(
+        self: *const Specializer,
+        value: Ast.TypeName,
+        protocol_name: []const u8,
+        source_file: usize,
+    ) bool {
         const structure_name = switch (value) {
             .structure => |name| name,
             else => return false,
         };
-        return self.structureConformsTo(structure_name, protocol_name, 0);
+        return self.structureConformsTo(structure_name, protocol_name, source_file, 0);
     }
 
     fn structureConformsTo(
         self: *const Specializer,
         structure_name: []const u8,
         protocol_name: []const u8,
+        source_file: usize,
         depth: usize,
     ) bool {
         if (depth > self.program.structures.len + self.structures.items.len) return false;
         const structure = self.findAvailableStructure(structure_name) orelse return false;
         for (structure.conformances) |conformance| {
-            if (std.mem.eql(u8, conformance.name, protocol_name)) return true;
+            if (!std.mem.eql(u8, conformance.name, protocol_name)) continue;
+            if (conformance.extension_visible_files) |visible_files| {
+                if (depth != 0 or !fileSetContains(visible_files, source_file)) continue;
+            }
+            return true;
         }
         if (structure.base) |base| {
             // Before module resolution, the parser temporarily stores a
@@ -945,7 +991,7 @@ pub const Specializer = struct {
             if (self.findProtocol(base.name) != null) {
                 return std.mem.eql(u8, base.name, protocol_name);
             }
-            return self.structureConformsTo(base.name, protocol_name, depth + 1);
+            return self.structureConformsTo(base.name, protocol_name, source_file, depth + 1);
         }
         return false;
     }
@@ -993,6 +1039,16 @@ pub const Specializer = struct {
         return false;
     }
 
+    fn activeConstraintRequires(self: *const Specializer, method_name: []const u8) bool {
+        for (self.active_constraint_protocols) |protocol_name| {
+            const protocol = self.findProtocol(protocol_name) orelse continue;
+            for (protocol.requirements) |requirement| {
+                if (std.mem.eql(u8, requirement.name, method_name)) return true;
+            }
+        }
+        return false;
+    }
+
     fn genericTypeName(
         self: *Specializer,
         template_name: []const u8,
@@ -1020,6 +1076,11 @@ fn functionIsVisible(function: Ast.Function, visible_declarations: ?[]const Sour
     for (positions) |position| {
         if (positionsEqual(position, function.name_position)) return true;
     }
+    return false;
+}
+
+fn fileSetContains(files: []const usize, target: usize) bool {
+    for (files) |file| if (file == target) return true;
     return false;
 }
 

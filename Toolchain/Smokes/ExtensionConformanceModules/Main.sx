@@ -1,0 +1,29 @@
+import ExtensionConformanceChecks.Core as Core
+import ExtensionConformanceChecks.Types as Types
+import ExtensionConformanceChecks.Conformances as Conformances
+
+struct Badge {
+    var value:int
+}
+
+extend Badge : Core.Drawable {
+    pub func draw() int {
+        return self.value
+    }
+}
+
+func main() {
+    var sprite = Types.Sprite(42)
+    var drawable:Core.Drawable = sprite
+    var named:Core.Named = sprite
+    assert(drawable.draw() == 42, "imported class dynamic conformance")
+    assert(named.name() == "sprite", "multiple extension conformances")
+    assert(Core.render<Types.Sprite>(sprite) == 42, "imported generic conformance")
+    var renderer = Core.Renderer<Types.Sprite>(value:sprite)
+    assert(renderer.render() == 42, "imported generic structure conformance")
+
+    var badge = Badge(value:7)
+    var badge_drawable:Core.Drawable = badge
+    assert(badge_drawable.draw() == 7, "local struct dynamic conformance")
+    assert(Core.render<Badge>(badge) == 7, "local generic conformance")
+}

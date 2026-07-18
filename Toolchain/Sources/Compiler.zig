@@ -16,7 +16,7 @@ const SourceGraph = @import("SourceGraph.zig");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
-pub const cache_format = "v36";
+pub const cache_format = "v37";
 pub const cache_entry_limit = 8;
 
 const NativeConfiguration = enum {

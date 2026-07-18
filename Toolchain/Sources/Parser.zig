@@ -88,6 +88,20 @@ pub const Parser = struct {
         const target_position = self.current.position;
         const target = try self.parseQualifiedName("expected struct or class name after 'extend'");
         if (self.current.tag == .less) return self.fail("generic extensions are not supported");
+        var conformances: std.ArrayList(Ast.ProtocolReference) = .empty;
+        if (self.current.tag == .colon) {
+            try self.advance();
+            while (true) {
+                const conformance_position = self.current.position;
+                const conformance = try self.parseQualifiedName("expected protocol name after ':'");
+                try conformances.append(self.allocator, .{
+                    .name = conformance,
+                    .position = conformance_position,
+                });
+                if (self.current.tag != .comma) break;
+                try self.advance();
+            }
+        }
         try self.expect(.left_brace, "expected '{' after extended type");
         var methods: std.ArrayList(Ast.Function) = .empty;
         while (self.current.tag != .right_brace and self.current.tag != .end) {
@@ -116,6 +130,7 @@ pub const Parser = struct {
             .position = position,
             .target = target,
             .target_position = target_position,
+            .conformances = try conformances.toOwnedSlice(self.allocator),
             .methods = try methods.toOwnedSlice(self.allocator),
         };
     }
@@ -3189,4 +3204,24 @@ test "parse type extensions and reject stateful members" {
     var generic = Parser.init(arena.allocator(), "extend Generator<int> { func next() {} } func main() {}");
     try std.testing.expectError(error.InvalidSource, generic.parse());
     try std.testing.expectEqualStrings("generic extensions are not supported", generic.diagnostic.?.message);
+}
+
+test "parse protocol conformances on a type extension" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var parser = Parser.init(arena.allocator(),
+        \\extend Sprite : Drawable, UI.Renderable {
+        \\    pub func draw() {}
+        \\}
+        \\func main() {}
+    );
+    const program = try parser.parse();
+    try std.testing.expectEqual(@as(usize, 1), program.extensions.len);
+    try std.testing.expectEqual(@as(usize, 2), program.extensions[0].conformances.len);
+    try std.testing.expectEqualStrings("Drawable", program.extensions[0].conformances[0].name);
+    try std.testing.expectEqualStrings("UI.Renderable", program.extensions[0].conformances[1].name);
+
+    var missing = Parser.init(arena.allocator(), "extend Sprite : { } func main() {}");
+    try std.testing.expectError(error.InvalidSource, missing.parse());
+    try std.testing.expectEqualStrings("expected protocol name after ':'", missing.diagnostic.?.message);
 }
