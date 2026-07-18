@@ -13,6 +13,11 @@ func label<T : Describable>(value:T) str {
     return value.describe()
 }
 
+func dynamic_label(value:Describable) str {
+    var erased:Describable = value
+    return erased.describe()
+}
+
 ---
 
 (source_file
@@ -49,6 +54,33 @@ func label<T : Describable>(value:T) str {
     (type
       (builtin_type))
     (block
+      (statement
+        (return_statement
+          (expression
+            (invocation_expression
+              (member_expression
+                (identifier)
+                (identifier))))))))
+  (function_definition
+    (identifier)
+    (parameter_list
+      (parameter
+        (identifier)
+        (type
+          (named_type
+            (type_identifier)))))
+    (type
+      (builtin_type))
+    (block
+      (statement
+        (variable_declaration
+          (identifier)
+          (type_annotation
+            (type
+              (named_type
+                (type_identifier))))
+          (expression
+            (identifier))))
       (statement
         (return_statement
           (expression
