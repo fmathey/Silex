@@ -15,6 +15,9 @@
 (protocol_definition
   name: (identifier) @type.definition)
 
+(extension_definition
+  target: (named_type) @type)
+
 (protocol_method_requirement
   name: (identifier) @function.method.definition)
 
@@ -143,6 +146,7 @@
   "try"
   "struct"
   "protocol"
+  "extend"
   "enum"
   "match"
   "class"

@@ -29,6 +29,7 @@ module.exports = grammar({
           $.use_declaration,
           $.enum_definition,
           $.protocol_definition,
+          $.extension_definition,
           $.structure_definition,
           $.function_definition,
           $.native_function_declaration,
@@ -81,6 +82,21 @@ module.exports = grammar({
         $.parameter_list,
         optional(field("return_type", choice($.void_type, $.type))),
         choice(";", $._automatic_semicolon),
+      ),
+
+    extension_definition: ($) =>
+      seq(
+        "extend",
+        field("target", $.named_type),
+        "{",
+        repeat(
+          seq(
+            optional(field("visibility", "pub")),
+            optional(field("static", "static")),
+            $.function_definition,
+          ),
+        ),
+        "}",
       ),
 
     enum_definition: ($) =>

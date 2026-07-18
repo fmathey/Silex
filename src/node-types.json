@@ -1218,6 +1218,52 @@
     }
   },
   {
+    "type": "extension_definition",
+    "named": true,
+    "fields": {
+      "static": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "static",
+            "named": false
+          }
+        ]
+      },
+      "target": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "named_type",
+            "named": true
+          }
+        ]
+      },
+      "visibility": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "pub",
+            "named": false
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "function_definition",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "field_initializer",
     "named": true,
     "fields": {
@@ -2525,6 +2571,10 @@
           "named": true
         },
         {
+          "type": "extension_definition",
+          "named": true
+        },
+        {
           "type": "function_definition",
           "named": true
         },
@@ -3427,6 +3477,10 @@
   {
     "type": "escape_sequence",
     "named": true
+  },
+  {
+    "type": "extend",
+    "named": false
   },
   {
     "type": "false",

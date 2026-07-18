@@ -1,0 +1,55 @@
+===============
+Type extensions
+===============
+
+extend Random.Generator {
+    pub func get_uint() uint {
+        return self.get_int() as uint
+    }
+
+    static func seeded() Generator {
+        return Random.create(42)
+    }
+}
+
+---
+
+(source_file
+  (extension_definition
+    (named_type
+      (type_identifier
+        (identifier)
+        (identifier)))
+    (function_definition
+      (identifier)
+      (parameter_list)
+      (type
+        (builtin_type))
+      (block
+        (statement
+          (return_statement
+            (expression
+              (conversion_expression
+                (expression
+                  (invocation_expression
+                    (member_expression
+                      (self_expression)
+                      (identifier))))
+                (type
+                  (builtin_type))))))))
+    (function_definition
+      (identifier)
+      (parameter_list)
+      (type
+        (named_type
+          (type_identifier)))
+      (block
+        (statement
+          (return_statement
+            (expression
+              (invocation_expression
+                (member_expression
+                  (identifier)
+                  (identifier))
+                (expression
+                  (integer_literal))))))))))
