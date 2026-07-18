@@ -24,6 +24,22 @@ values[1] = 25
 let previous:int = values.replace(1, 40)
 ```
 
+A local collection declared with `let` has immutable storage even when its
+element type is not independent:
+
+```sx
+let players:Player[] = [Player(), Player()]
+for player in players {
+    player.draw()
+}
+```
+
+The binding cannot be reassigned, resized, reordered, or used to replace an
+element. A class instance reached through an element keeps its shared identity
+and is not frozen. This rule applies to local fixed arrays and dynamic lists;
+`let` fields and static storage keep their recursively independent-value
+requirement.
+
 Both collection kinds can also copy a contiguous slice into a dynamic list:
 
 ```sx

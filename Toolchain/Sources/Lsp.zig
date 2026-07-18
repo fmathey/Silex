@@ -1391,7 +1391,46 @@ fn collectSemanticInfo(
         if (tokens[index].tag == .keyword_func) {
             try collectParameters(allocator, source, tokens, index, &info.variables);
         }
+
+        if (tokens[index].tag == .keyword_for) {
+            try collectIterationBinding(allocator, source, tokens, index, &info.variables);
+        }
     }
+}
+
+fn collectIterationBinding(
+    allocator: Allocator,
+    source: []const u8,
+    tokens: []const LexerModule.Token,
+    for_index: usize,
+    variables: *std.ArrayList(DeclaredVariable),
+) !void {
+    var binding_index = for_index + 1;
+    if (binding_index < tokens.len and tokens[binding_index].tag == .left_parenthesis) binding_index += 1;
+    if (binding_index < tokens.len and
+        (tokens[binding_index].tag == .keyword_let or tokens[binding_index].tag == .keyword_var))
+    {
+        binding_index += 1;
+    }
+    if (binding_index + 2 >= tokens.len or tokens[binding_index].tag != .identifier or
+        tokens[binding_index + 1].tag != .keyword_in or tokens[binding_index + 2].tag != .identifier)
+    {
+        return;
+    }
+
+    const source_name = tokens[binding_index + 2].lexeme;
+    var source_variable: ?DeclaredVariable = null;
+    for (variables.items) |variable| {
+        if (variable.collection != null and std.mem.eql(u8, variable.name, source_name)) {
+            source_variable = variable;
+        }
+    }
+    const collection = source_variable orelse return;
+    try variables.append(allocator, .{
+        .name = tokens[binding_index].lexeme,
+        .type_name = collection.type_name,
+        .offset = tokenOffset(source, tokens[binding_index]),
+    });
 }
 
 fn collectLocalExtensions(
@@ -2742,6 +2781,29 @@ test "protocol value completion exposes only protocol requirements" {
     try std.testing.expect(containsCompletion(items, "draw"));
     try std.testing.expect(!containsCompletion(items, "jump"));
     try std.testing.expect(!containsCompletion(items, "score"));
+}
+
+test "member completion infers neutral iteration elements" {
+    const source =
+        \\protocol Drawable { func draw() }
+        \\class Player : Drawable { pub func draw() {}; pub func jump() {} }
+        \\func main() {
+        \\    let drawables:Drawable[] = [Player()]
+        \\    for drawable in drawables {
+        \\        drawable.
+        \\    }
+        \\}
+    ;
+    const items = try completionItems(
+        std.testing.allocator,
+        std.testing.io,
+        source,
+        .{ .line = 5, .character = 17 },
+    );
+    defer std.testing.allocator.free(items);
+    try std.testing.expectEqual(@as(usize, 1), items.len);
+    try std.testing.expect(containsCompletion(items, "draw"));
+    try std.testing.expect(!containsCompletion(items, "jump"));
 }
 
 test "local extension completion augments an imported STD type" {

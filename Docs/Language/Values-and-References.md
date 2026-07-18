@@ -11,18 +11,20 @@ structure or collection containing it, from surviving the shortest captured
 scope.
 
 This shared captured state also means a function value is not independent and
-cannot be bound with `let`, directly or inside another value. Callback storage
-uses `var`:
+cannot be bound directly with `let`, or inside an ordinary containing value.
+A local `let` collection is the exception: its storage is immutable even when
+its elements are not independent.
 
 ```sx
 var callback = func() {}
-var callbacks:func()[] = [callback]
+let callbacks:func()[] = [callback]
 ```
 
-A structure, array, list, or optional qualifies for `let` only when its
-contained types recursively preserve the independent value behaviour. Class
-references do not qualify, including when reached through one of these
-containers.
+A structure or optional qualifies for `let` only when its contained types
+recursively preserve the independent value behaviour. The same rule applies to
+array and list fields, static storage, and collections nested inside another
+ordinary value. A local array or list binding may instead use `let` to protect
+only its own collection storage. Class references do not otherwise qualify.
 
 ```sx
 var first:int[] = [1]
@@ -42,9 +44,10 @@ A dynamic protocol value follows the contained kind. When it contains a
 structure, assignment copies an independent structure value. When it contains
 a class, assignment copies the reference and preserves the same object
 identity. Because the protocol type can hide a class reference, it is not an
-independent type and must use `var`, including inside a structure or
-collection. Hidden class references remain visible to reference counting and
-cycle tracing. See [Protocols](Protocols.md#dynamic-protocol-values).
+independent type and must use `var` directly or inside an ordinary containing
+value. It may be an element of a local `let` collection under that
+collection-shell rule. Hidden class references remain visible to reference
+counting and cycle tracing. See [Protocols](Protocols.md#dynamic-protocol-values).
 
 An ordinary parameter is a local value. A function may change it without
 changing its caller.

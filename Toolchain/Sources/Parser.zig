@@ -917,9 +917,9 @@ pub const Parser = struct {
         try self.advance();
         const parenthesized = self.current.tag == .left_parenthesis;
         if (parenthesized) try self.advance();
-        var mutability: Ast.Mutability = .immutable;
+        var binding: Ast.IterationBinding = .read;
         if (self.current.tag == .keyword_let or self.current.tag == .keyword_var) {
-            mutability = if (self.current.tag == .keyword_let) .immutable else .mutable;
+            binding = if (self.current.tag == .keyword_let) .immutable else .mutable;
             try self.advance();
         }
         if (self.current.tag != .identifier) return self.fail("expected iteration variable name");
@@ -933,7 +933,7 @@ pub const Parser = struct {
             .position = position,
             .name = name,
             .name_position = name_position,
-            .mutability = mutability,
+            .binding = binding,
             .source = source,
             .body = try self.parseBlock(),
         } };
@@ -1950,14 +1950,14 @@ test "control flow parentheses do not change the compiler AST" {
         statements[4].while_statement.condition.expression.value.identifier,
         statements[5].while_statement.condition.expression.value.identifier,
     );
-    try std.testing.expectEqual(statements[6].for_statement.mutability, statements[7].for_statement.mutability);
+    try std.testing.expectEqual(statements[6].for_statement.binding, statements[7].for_statement.binding);
     try std.testing.expectEqualStrings(statements[6].for_statement.name, statements[7].for_statement.name);
     try std.testing.expectEqualStrings(
         statements[6].for_statement.source.collection.value.identifier,
         statements[7].for_statement.source.collection.value.identifier,
     );
-    try std.testing.expectEqual(statements[8].for_statement.mutability, statements[9].for_statement.mutability);
-    try std.testing.expectEqual(Ast.Mutability.immutable, statements[8].for_statement.mutability);
+    try std.testing.expectEqual(statements[8].for_statement.binding, statements[9].for_statement.binding);
+    try std.testing.expectEqual(Ast.IterationBinding.read, statements[8].for_statement.binding);
     try std.testing.expectEqualStrings(statements[8].for_statement.name, statements[9].for_statement.name);
 }
 
@@ -2092,10 +2092,10 @@ test "parse explicit and implicit for bindings" {
     );
     const program = try parser.parse();
 
-    try std.testing.expectEqual(Ast.Mutability.immutable, program.functions[0].statements[1].for_statement.mutability);
-    try std.testing.expectEqual(Ast.Mutability.mutable, program.functions[0].statements[2].for_statement.mutability);
-    try std.testing.expectEqual(Ast.Mutability.immutable, program.functions[0].statements[3].for_statement.mutability);
-    try std.testing.expectEqual(Ast.Mutability.immutable, program.functions[0].statements[4].for_statement.mutability);
+    try std.testing.expectEqual(Ast.IterationBinding.immutable, program.functions[0].statements[1].for_statement.binding);
+    try std.testing.expectEqual(Ast.IterationBinding.mutable, program.functions[0].statements[2].for_statement.binding);
+    try std.testing.expectEqual(Ast.IterationBinding.read, program.functions[0].statements[3].for_statement.binding);
+    try std.testing.expectEqual(Ast.IterationBinding.read, program.functions[0].statements[4].for_statement.binding);
 }
 
 test "parse compact and named integer ranges" {
@@ -2145,7 +2145,7 @@ test "parse for binding without let or var" {
     );
 
     const program = try parser.parse();
-    try std.testing.expectEqual(Ast.Mutability.immutable, program.functions[0].statements[1].for_statement.mutability);
+    try std.testing.expectEqual(Ast.IterationBinding.read, program.functions[0].statements[1].for_statement.binding);
 }
 
 test "reserve range intrinsic name" {

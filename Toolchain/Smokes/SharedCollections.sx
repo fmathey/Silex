@@ -1,0 +1,80 @@
+protocol Drawable {
+    func draw() str
+}
+
+class Player {
+    pub var name:str
+
+    pub func rename(name:str) {
+        self.name = name
+    }
+
+    pub func get_name() str {
+        return self.name
+    }
+}
+
+struct Sprite : Drawable {
+    let name:str
+
+    func draw() str {
+        return self.name
+    }
+}
+
+class Image : Drawable {
+    pub func draw() str {
+        return "Image"
+    }
+}
+
+struct Team {
+    var player:Player
+}
+
+func main() {
+    let players:Player[] = [Player(name:"Ada"), Player(name:"Bob")]
+    players[0].rename("Eve")
+    players[1].name = "Rob"
+    var names = ""
+    for player in players {
+        if player.name == "Rob" {
+            player.name = "Bob"
+        }
+        names += player.get_name()
+    }
+    assert(names == "EveBob", "a let list protects its storage without freezing class instances")
+
+    let fixed:Player[2] = [Player(name:"One"), Player(name:"Two")]
+    var fixed_names = ""
+    for (player in fixed) {
+        fixed_names += player.get_name()
+    }
+    assert(fixed_names == "OneTwo", "neutral iteration accepts fixed class arrays and parentheses")
+
+    let drawables:Drawable[] = [Sprite(name:"Sprite"), Image()]
+    var drawings = ""
+    for drawable in drawables {
+        drawings += drawable.draw()
+    }
+    assert(drawings == "SpriteImage", "neutral iteration dispatches protocol requirements")
+
+    var callback_called = false
+    let callbacks:func()[] = [func() { callback_called = true }]
+    for callback in callbacks {
+        callback()
+    }
+    assert(callback_called, "neutral iteration accepts functions")
+
+    let teams:Team[] = [Team(player:Player(name:"Team"))]
+    for team in teams {
+        assert(team.player.get_name() == "Team", "neutral iteration accepts structures containing classes")
+    }
+
+    let nested:Player[][] = [[Player(name:"Nested")]]
+    for row in nested {
+        for player in row {
+            assert(player.get_name() == "Nested", "neutral iteration accepts nested shared collections")
+        }
+    }
+}

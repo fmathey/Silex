@@ -1,4 +1,4 @@
 func main() {
     var callbacks:func()[] = [func() {}]
-    for callback in callbacks {}
+    for let callback in callbacks {}
 }

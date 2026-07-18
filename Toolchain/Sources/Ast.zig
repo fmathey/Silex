@@ -107,6 +107,12 @@ pub const Mutability = enum {
     mutable,
 };
 
+pub const IterationBinding = enum {
+    read,
+    immutable,
+    mutable,
+};
+
 pub const MemberVisibility = enum {
     private_access,
     subclass,
@@ -412,7 +418,7 @@ pub const Statement = union(enum) {
         position: Source.Position,
         name: []const u8,
         name_position: Source.Position,
-        mutability: Mutability,
+        binding: IterationBinding,
         source: IterationSource,
         body: []const Statement,
 

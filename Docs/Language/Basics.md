@@ -31,8 +31,9 @@ struct WindowSession {
 
 ## Local variables
 
-`let` declares a constant, independent value. `var` declares general mutable
-state. A declaration needs an initializer, an explicit type, or both.
+`let` declares a constant value. Except for a local collection shell, its type
+must also be independent. `var` declares general mutable state. A declaration
+needs an initializer, an explicit type, or both.
 
 ```sx
 let count = 3
@@ -42,17 +43,24 @@ var attempts:int
 let title:str
 ```
 
-`let` is accepted only when the complete type has independent value semantics:
-no mutation through another path can change what the binding observes.
-Scalars, strings, and structures or collections recursively composed from such
-values qualify. Function values do not qualify because their captures may
-share mutable bindings. Class references and every value containing one do not
-qualify either. Use `var` for those types even when the local name is not
-eventually reassigned.
+Outside the collection exception, `let` is accepted only when the complete type
+has independent value semantics: no mutation through another path can change
+what the binding observes. Scalars, strings, and structures recursively
+composed from such values qualify. Function values do not qualify because
+their captures may share mutable bindings. Class references and values that
+contain one do not qualify either. Use `var` for those types even when the
+local name is not eventually reassigned.
+
+A local fixed array or dynamic list may use `let` with any element type. In
+that case, `let` protects the collection storage: it prevents reassignment,
+element replacement, and collection mutation. It does not freeze class
+instances referenced by its elements.
 
 ```sx
-let session = WindowSession()
-let sessions:WindowSession[] = [session]
+class Session {}
+
+let sessions:Session[] = [Session()] // accepted: immutable list storage
+let session = Session()              // invalid: shared class reference
 
 var callback = func() {}
 ```

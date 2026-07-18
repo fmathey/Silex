@@ -335,10 +335,10 @@ pub fn build(b: *std.Build) void {
     invalid_implicit_conditional_function_command.expectExitCode(1);
     invalid_implicit_conditional_function_command.expectStdErrEqual("Tests/InvalidImplicitConditionalFunction.sx:3:8: error: type 'func' is not an independent value and cannot be bound with 'let'; use 'var'\n");
 
-    const invalid_implicit_function_iteration_command = b.addRunArtifact(executable);
-    invalid_implicit_function_iteration_command.addArgs(&.{ "compile", "Tests/InvalidImplicitFunctionIteration.sx" });
-    invalid_implicit_function_iteration_command.expectExitCode(1);
-    invalid_implicit_function_iteration_command.expectStdErrEqual("Tests/InvalidImplicitFunctionIteration.sx:3:9: error: type 'func' is not an independent value and cannot be bound with 'let'; use 'var'\n");
+    const invalid_let_function_iteration_command = b.addRunArtifact(executable);
+    invalid_let_function_iteration_command.addArgs(&.{ "compile", "Tests/InvalidLetFunctionIteration.sx" });
+    invalid_let_function_iteration_command.expectExitCode(1);
+    invalid_let_function_iteration_command.expectStdErrEqual("Tests/InvalidLetFunctionIteration.sx:3:13: error: type 'func' is not an independent value and cannot be bound with 'let'; use 'var'\n");
 
     const invalid_let_class_command = b.addRunArtifact(executable);
     invalid_let_class_command.addArgs(&.{ "compile", "Tests/InvalidLetClass.sx" });
@@ -360,10 +360,10 @@ pub fn build(b: *std.Build) void {
     invalid_implicit_class_conditional_command.expectExitCode(1);
     invalid_implicit_class_conditional_command.expectStdErrEqual("Tests/InvalidImplicitClassConditional.sx:8:8: error: type 'Player' is not an independent value and cannot be bound with 'let'; use 'var'\n");
 
-    const invalid_implicit_class_iteration_command = b.addRunArtifact(executable);
-    invalid_implicit_class_iteration_command.addArgs(&.{ "compile", "Tests/InvalidImplicitClassIteration.sx" });
-    invalid_implicit_class_iteration_command.expectExitCode(1);
-    invalid_implicit_class_iteration_command.expectStdErrEqual("Tests/InvalidImplicitClassIteration.sx:5:9: error: type 'Player' is not an independent value and cannot be bound with 'let'; use 'var'\n");
+    const invalid_let_class_iteration_command = b.addRunArtifact(executable);
+    invalid_let_class_iteration_command.addArgs(&.{ "compile", "Tests/InvalidLetClassIteration.sx" });
+    invalid_let_class_iteration_command.expectExitCode(1);
+    invalid_let_class_iteration_command.expectStdErrEqual("Tests/InvalidLetClassIteration.sx:5:13: error: type 'Player' is not an independent value and cannot be bound with 'let'; use 'var'\n");
 
     const invalid_class_default_variable_command = b.addRunArtifact(executable);
     invalid_class_default_variable_command.addArgs(&.{ "compile", "Tests/InvalidClassDefaultVariable.sx" });
@@ -1312,7 +1312,7 @@ pub fn build(b: *std.Build) void {
         "silex: native compilation failed for target 'x86_64-linux-musl'; target support, SDKs, or native sources may be unavailable or incomplete\n",
     );
     backend_discovered_target_failure_command.expectStdErrMatch(b.fmt(
-        "silex: backend details: .silex{c}build{c}v37{c}x86_64-linux-musl{c}",
+        "silex: backend details: .silex{c}build{c}v38{c}x86_64-linux-musl{c}",
         .{
             std.fs.path.sep,
             std.fs.path.sep,
@@ -1689,12 +1689,12 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&invalid_let_function_command.step);
     test_step.dependOn(&invalid_let_function_field_command.step);
     test_step.dependOn(&invalid_implicit_conditional_function_command.step);
-    test_step.dependOn(&invalid_implicit_function_iteration_command.step);
+    test_step.dependOn(&invalid_let_function_iteration_command.step);
     test_step.dependOn(&invalid_let_class_command.step);
     test_step.dependOn(&invalid_let_class_container_command.step);
     test_step.dependOn(&invalid_class_reference_command.step);
     test_step.dependOn(&invalid_implicit_class_conditional_command.step);
-    test_step.dependOn(&invalid_implicit_class_iteration_command.step);
+    test_step.dependOn(&invalid_let_class_iteration_command.step);
     test_step.dependOn(&invalid_class_default_variable_command.step);
     test_step.dependOn(&invalid_missing_class_constructor_command.step);
     test_step.dependOn(&invalid_inheritance_cycle_command.step);
@@ -2137,8 +2137,13 @@ pub fn build(b: *std.Build) void {
     iteration_command.addArgs(&.{ "run", "Smokes/Iteration.sx" });
     iteration_command.expectStdOutEqual(hostText(b, "6\n2\n6\n2\n6\n3\n2\n1\n3\n8\n10\n"));
 
+    const shared_collections_command = b.addRunArtifact(executable);
+    shared_collections_command.step.dependOn(&iteration_command.step);
+    shared_collections_command.addArgs(&.{ "run", "Smokes/SharedCollections.sx" });
+    shared_collections_command.expectStdOutEqual("");
+
     const integer_ranges_command = b.addRunArtifact(executable);
-    integer_ranges_command.step.dependOn(&iteration_command.step);
+    integer_ranges_command.step.dependOn(&shared_collections_command.step);
     integer_ranges_command.addArgs(&.{ "run", "Smokes/IntegerRanges.sx" });
     integer_ranges_command.expectStdOutEqual(hostText(
         b,

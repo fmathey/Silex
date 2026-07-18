@@ -78,13 +78,21 @@ Newlines and comments may separate two branches, including between `else` and
 initial condition. `elif` is reserved and cannot be used as an identifier.
 
 `for` iterates through a fixed array, dynamic list, or exclusive integer range.
-Without a marker, its iteration binding is an implicit `let`: it is immutable
-and requires an independent element type. An explicit `let` expresses the same
-guarantee. `var` creates a mutable binding and is required for non-independent
-element types such as callbacks or classes.
+Without a marker, it creates a read binding. This binding accepts every element
+type, cannot be reassigned, and cannot mutate the stored element. It may inspect
+the value, call a function element, dispatch a protocol requirement, or call a
+method on a referenced class instance.
+
+An explicit `let` instead requests an independent element copy and therefore
+requires an independent element type. An explicit `var` binds mutably to the
+stored element, so its mutations are reflected in the collection.
 
 ```sx
 for value in values {
+    print(value)
+}
+
+for let value in values {
     print(value)
 }
 
@@ -99,9 +107,12 @@ the whole iteration binding rather than an expression. The form without them
 is canonical.
 
 For a collection, the source is evaluated once and held for the duration of
-each loop body. An immutable loop allows other reads but no mutation of the
-collection; a mutable loop binds directly to each element and allows no other
-direct access to the collection.
+each loop body. A read loop uses a temporary element value and permits other
+reads but no mutation of the collection. With a structure element, a mutating
+method therefore requires `for var`. With a class element, the temporary value
+retains the shared object identity, so a method may change that object without
+replacing the collection element. A mutable loop binds directly to each element
+and allows no other direct access to the collection.
 
 An integer range can use `start...end` or the equivalent intrinsic
 `range(start, end)`. `range` is reserved and available without an import. The

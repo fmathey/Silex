@@ -136,7 +136,11 @@ and cycle tracing rules.
 
 A protocol value may therefore contain shared identity even when its current
 concrete value is a structure. It is not considered an independent value and
-uses `var` rather than `let`, directly or through a containing value. Calls
+uses `var` rather than `let` as a direct binding or inside an ordinary
+containing value. It may be stored in a local `let` collection because that
+special form protects only the collection storage. A neutral
+`for value in values` loop copies the erased value for the iteration and may
+dispatch its requirements without making the stored element mutable. Calls
 through a protocol value are conservatively mutable because a conforming
 structure implementation may change its erased state.
 

@@ -1863,8 +1863,11 @@ fn generateStatement(
                 .collection => |collection| {
                     try indent(allocator, output, indentation);
                     try output.appendSlice(allocator, "for (");
-                    if (for_statement.mutability == .immutable) try output.appendSlice(allocator, "const ");
-                    try output.appendSlice(allocator, "auto& ");
+                    try output.appendSlice(allocator, switch (for_statement.binding) {
+                        .read => "auto ",
+                        .immutable => "const auto& ",
+                        .mutable => "auto& ",
+                    });
                     try output.appendSlice(allocator, for_statement.generated_name);
                     if (for_statement.capture_box.*) try output.appendSlice(allocator, "Input");
                     try output.appendSlice(allocator, " : ");
@@ -2044,7 +2047,7 @@ fn generateIntegerRangeStatement(
     try output.appendSlice(allocator, ") {\n");
 
     try indent(allocator, output, indentation + 1);
-    if (for_statement.mutability == .immutable) try output.appendSlice(allocator, "const ");
+    if (for_statement.binding != .mutable) try output.appendSlice(allocator, "const ");
     try output.appendSlice(allocator, "std::int64_t ");
     try output.appendSlice(allocator, for_statement.generated_name);
     try output.appendSlice(allocator, " = ");

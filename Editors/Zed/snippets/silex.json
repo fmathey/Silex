@@ -283,7 +283,7 @@
       "    $0",
       "}"
     ],
-    "description": "Iterate through a collection with an immutable binding"
+    "description": "Read each value from a collection"
   },
   "Mutable for loop": {
     "prefix": "forv",

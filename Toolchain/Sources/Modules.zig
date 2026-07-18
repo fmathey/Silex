@@ -999,7 +999,7 @@ pub const Resolver = struct {
                 .position = value.position,
                 .name = value.name,
                 .name_position = value.name_position,
-                .mutability = value.mutability,
+                .binding = value.binding,
                 .source = switch (value.source) {
                     .collection => |collection| .{ .collection = try self.transformExpression(collection) },
                     .integer_range => |range| .{ .integer_range = .{

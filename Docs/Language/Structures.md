@@ -101,9 +101,12 @@ a binding declared with `let` remains fully immutable. A `let` field cannot be
 assigned or mutated through a nested path after construction, including by a
 mutating method on a contained structure or collection.
 
-Both a `let` binding and a `let` field require a recursively independent value.
-A function value, class reference, or container that reaches either one must
-therefore be declared with `var`.
+A `let` field and an ordinary `let` binding require a recursively independent
+value. A function value, class reference, or container that reaches either one
+must therefore be declared with `var`. Only a local array or list binding has a
+narrow exception: its `let` protects the collection storage without requiring
+independent elements.
+
 Structures compare by value when they have the same declared type, except when
 they contain a function value directly or recursively; such values are not
 comparable. A function field has no intrinsic default and must be supplied by

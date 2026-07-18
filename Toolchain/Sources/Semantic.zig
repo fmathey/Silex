@@ -399,7 +399,7 @@ pub const Statement = union(enum) {
     pub const For = struct {
         generated_name: []const u8,
         element_type: Type,
-        mutability: Ast.Mutability,
+        binding: Ast.IterationBinding,
         source: IterationSource,
         body: []const Statement,
         capture_box: *const bool,
@@ -539,6 +539,8 @@ pub const Receiver = union(enum) {
     immutable: struct {
         name: []const u8,
         control_binding: bool,
+        read_iteration: bool,
+        collection_shell: bool,
     },
     immutable_field: []const u8,
     borrowed: []const u8,
@@ -554,6 +556,8 @@ const Symbol = struct {
     state: *BindingState,
     scope_depth: usize,
     control_binding: bool = false,
+    read_iteration: bool = false,
+    immutable_collection_shell: bool = false,
     unwrap_optional: bool = false,
     original_type: ?Type = null,
 };
@@ -2296,7 +2300,7 @@ pub const Analyzer = struct {
             return self.fail(if (declaration.initializer) |value| value.position else declaration.name_position, message);
         }
 
-        if (declaration.mutability == .immutable) {
+        if (declaration.mutability == .immutable and declared_type != .list and declared_type != .fixed_array) {
             try self.requireIndependentLetType(declared_type, declaration.name_position);
         }
         if (declared_type == .reference and declaration.mutability == .mutable) {
@@ -2329,6 +2333,8 @@ pub const Analyzer = struct {
             .mutability = declaration.mutability,
             .state = state,
             .scope_depth = scope.depth,
+            .immutable_collection_shell = declaration.mutability == .immutable and
+                (declared_type == .list or declared_type == .fixed_array),
         });
 
         return .{ .variable_declaration = .{
@@ -2380,6 +2386,7 @@ pub const Analyzer = struct {
         }
 
         const root = assignmentRoot(ast.target) orelse return self.fail(ast.position, "invalid assignment target");
+        var prepared_target: ?*Expression = null;
         switch (root) {
             .static => {},
             .self => {
@@ -2396,28 +2403,50 @@ pub const Analyzer = struct {
                     return self.fail(ast.position, message);
                 };
                 if (symbol.mutability == .immutable) {
-                    const message = if (symbol.control_binding)
-                        try std.fmt.allocPrint(
-                            self.allocator,
-                            "cannot assign to immutable control binding '{s}'; use 'var' in the header",
-                            .{root_name},
-                        )
-                    else
-                        try std.fmt.allocPrint(
-                            self.allocator,
-                            "cannot assign to immutable variable '{s}'",
-                            .{root_name},
-                        );
-                    return self.fail(ast.position, message);
+                    if ((symbol.read_iteration or symbol.immutable_collection_shell) and ast.target.value != .identifier) {
+                        prepared_target = if (ast.target.value == .member_access)
+                            try self.memberAccessExpressionRaw(ast.target.value.member_access, scope, false)
+                        else
+                            try self.expression(ast.target, scope);
+                        if (!mutationReachesClassIdentity(prepared_target.?)) {
+                            const message = if (symbol.control_binding)
+                                try std.fmt.allocPrint(
+                                    self.allocator,
+                                    "cannot assign to immutable control binding '{s}'; use 'var' in the header",
+                                    .{root_name},
+                                )
+                            else
+                                try std.fmt.allocPrint(
+                                    self.allocator,
+                                    "cannot assign to immutable variable '{s}'",
+                                    .{root_name},
+                                );
+                            return self.fail(ast.position, message);
+                        }
+                    } else {
+                        const message = if (symbol.control_binding)
+                            try std.fmt.allocPrint(
+                                self.allocator,
+                                "cannot assign to immutable control binding '{s}'; use 'var' in the header",
+                                .{root_name},
+                            )
+                        else
+                            try std.fmt.allocPrint(
+                                self.allocator,
+                                "cannot assign to immutable variable '{s}'",
+                                .{root_name},
+                            );
+                        return self.fail(ast.position, message);
+                    }
                 }
-                if (symbol.state.immutable_borrows != 0 or symbol.state.mutable_borrow) {
+                if (prepared_target == null and (symbol.state.immutable_borrows != 0 or symbol.state.mutable_borrow)) {
                     const message = try std.fmt.allocPrint(self.allocator, "cannot mutate borrowed variable '{s}'", .{root_name});
                     return self.fail(ast.position, message);
                 }
             },
         }
 
-        const target = if (ast.target.value == .identifier and findSymbol(scope, ast.target.value.identifier) != null and
+        const target = prepared_target orelse if (ast.target.value == .identifier and findSymbol(scope, ast.target.value.identifier) != null and
             findSymbol(scope, ast.target.value.identifier).?.unwrap_optional)
         narrowed_assignment: {
             const symbol = findSymbol(scope, ast.target.value.identifier).?;
@@ -2669,7 +2698,7 @@ pub const Analyzer = struct {
     ) AnalyzeError!Statement {
         var body_scope = Scope{ .parent = parent_scope, .depth = parent_scope.depth + 1 };
         try self.requireAvailableVariableName(&body_scope, ast.name, ast.name_position);
-        const mutable = ast.mutability == .mutable;
+        const mutable = ast.binding == .mutable;
         const symbol_id = self.next_symbol_id;
         var element_type: Type = undefined;
         var iteration_borrow: ?Borrow = null;
@@ -2747,7 +2776,7 @@ pub const Analyzer = struct {
         };
         defer if (iteration_borrow) |borrow| releaseBorrow(borrow);
 
-        if (ast.mutability == .immutable) {
+        if (ast.binding == .immutable) {
             try self.requireIndependentLetType(element_type, ast.name_position);
         }
 
@@ -2758,10 +2787,11 @@ pub const Analyzer = struct {
             .source_name = ast.name,
             .generated_name = generated_name,
             .type = element_type,
-            .mutability = ast.mutability,
+            .mutability = if (mutable) .mutable else .immutable,
             .state = state,
             .scope_depth = body_scope.depth,
             .control_binding = true,
+            .read_iteration = ast.binding == .read,
         });
 
         self.loop_depth += 1;
@@ -2771,7 +2801,7 @@ pub const Analyzer = struct {
         return .{ .for_statement = .{
             .generated_name = generated_name,
             .element_type = element_type,
-            .mutability = ast.mutability,
+            .binding = ast.binding,
             .source = source,
             .body = body,
             .capture_box = &state.capture_box,
@@ -3555,7 +3585,17 @@ pub const Analyzer = struct {
             scope,
             self.current_self_state.mutable_borrow or self.current_self_state.immutable_borrows != 0,
         );
-        if (object.type == .structure and object.type.structure.is_class and receiver == .temporary) {
+        const shared_identity_receiver = switch (receiver) {
+            .immutable => |value| value.read_iteration or value.collection_shell,
+            else => false,
+        };
+        if ((object.type == .structure and object.type.structure.is_class and
+            (receiver == .temporary or shared_identity_receiver)) or
+            (object.type == .protocol and switch (receiver) {
+                .immutable => |value| value.read_iteration,
+                else => false,
+            }))
+        {
             receiver = .mutable;
         }
         if (self.immutableFieldInPlace(object)) |field_candidate| receiver = .{ .immutable_field = field_candidate.symbol.source_name };
@@ -6140,6 +6180,15 @@ fn directSelfFieldIndex(structure: *const StructureSymbol, target: *const Expres
     return generatedFieldIndex(structure, member.generated_name);
 }
 
+fn mutationReachesClassIdentity(target: *const Expression) bool {
+    return switch (target.value) {
+        .member_access => |member| (member.object.type == .structure and member.object.type.structure.is_class) or
+            mutationReachesClassIdentity(member.object),
+        .index_access => |access| mutationReachesClassIdentity(access.object),
+        else => false,
+    };
+}
+
 fn findInCurrentScope(scope: *const Scope, name: []const u8) ?*const Symbol {
     for (scope.symbols.items) |*symbol| {
         if (std.mem.eql(u8, symbol.source_name, name)) return symbol;
@@ -6944,7 +6993,12 @@ fn receiverFor(expression: *const Ast.Expression, scope: *const Scope, self_borr
             break :receiver if (symbol.mutability == .mutable)
                 .mutable
             else
-                .{ .immutable = .{ .name = name, .control_binding = symbol.control_binding } };
+                .{ .immutable = .{
+                    .name = name,
+                    .control_binding = symbol.control_binding,
+                    .read_iteration = symbol.read_iteration,
+                    .collection_shell = symbol.immutable_collection_shell,
+                } };
         },
         .member_access => |member| receiverFor(member.object, scope, self_borrowed),
         .index_access => |access| receiverFor(access.object, scope, self_borrowed),
@@ -7782,6 +7836,48 @@ test "let rejects non-independent conditional and iteration bindings" {
     );
 }
 
+test "let accepts non-independent elements only through a local collection shell" {
+    const Parser = @import("Parser.zig").Parser;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var parser = Parser.init(allocator,
+        \\class Player { pub var value:int; pub func show() {} }
+        \\func main() {
+        \\    let players:Player[] = [Player()]
+        \\    players[0].show()
+        \\    players[0].value = 1
+        \\    for player in players { player.show() }
+        \\    let fixed:Player[1] = [Player()]
+        \\    for (player in fixed) { player.show() }
+        \\    let callbacks:func()[] = [func() {}]
+        \\    for callback in callbacks { callback() }
+        \\}
+    );
+    var analyzer = Analyzer.init(allocator);
+    _ = try analyzer.analyze(try resolveSingleTestProgram(allocator, try parser.parse()));
+}
+
+test "read iteration and let collection shells reject storage mutation" {
+    try expectResolvedSemanticError(
+        "class Player {} func main() { let players:Player[] = [Player()]; players[0] = Player() }",
+        "cannot assign to immutable variable 'players'",
+    );
+    try expectResolvedSemanticError(
+        "class Player {} func main() { let players:Player[] = [Player()]; for player in players { player = Player() } }",
+        "cannot assign to immutable control binding 'player'; use 'var' in the header",
+    );
+    try expectResolvedSemanticError(
+        "struct Counter { var value:int; func bump() { self.value += 1 } } func main() { let counters:Counter[] = [Counter(value:0)]; for counter in counters { counter.bump() } }",
+        "cannot mutate immutable control binding 'counter'; use 'var' in the header",
+    );
+    try expectResolvedSemanticError(
+        "class Player {} struct Team { var player:Player } func main() { let teams:Team[] = [Team(player:Player())]; teams[0].player = Player() }",
+        "cannot assign to immutable variable 'teams'",
+    );
+}
+
 test "reject assignment to immutable variable" {
     const Parser = @import("Parser.zig").Parser;
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -7912,10 +8008,10 @@ test "analyze compact and named integer ranges" {
     const program = try analyzer.analyze(try parser.parse());
 
     const compact = program.functions[0].statements[0].for_statement;
-    try std.testing.expectEqual(Ast.Mutability.immutable, compact.mutability);
+    try std.testing.expectEqual(Ast.IterationBinding.immutable, compact.binding);
     try std.testing.expectEqual(Type.int, compact.source.integer_range.start.type);
     const named = program.functions[0].statements[1].for_statement;
-    try std.testing.expectEqual(Ast.Mutability.mutable, named.mutability);
+    try std.testing.expectEqual(Ast.IterationBinding.mutable, named.binding);
     try std.testing.expectEqual(Type.int, named.source.integer_range.end.type);
 }
 
@@ -8187,14 +8283,10 @@ test "reject while condition that is not bool" {
     try std.testing.expectEqualStrings("expected 'bool', found 'int'", analyzer.diagnostic.?.message);
 }
 
-test "implicit control bindings keep let semantics" {
+test "implicit conditional bindings keep let semantics" {
     try expectSemanticError(
         "func main() { var source:int? = 1; if value = source { value = 2 } }",
         "cannot assign to immutable control binding 'value'; use 'var' in the header",
-    );
-    try expectSemanticError(
-        "func main() { var callbacks:func()[] = [func() {}]; for callback in callbacks {} }",
-        "type 'func' is not an independent value and cannot be bound with 'let'; use 'var'",
     );
     try expectResolvedSemanticError(
         "struct Counter { var value:int; func bump() { self.value += 1 } } func main() { var source:Counter? = Counter(value:0); if counter = source { counter.bump() } }",
