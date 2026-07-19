@@ -11,6 +11,11 @@ const Header = struct {
     contents: []const u8,
 };
 
+pub const Generated = struct {
+    cache_root: []const u8,
+    editor_root: []const u8,
+};
+
 pub fn write(
     allocator: Allocator,
     io: Io,
@@ -18,7 +23,8 @@ pub fn write(
     project: ProjectModule.Project,
     runtimes: []const NativeDependency.ModuleRuntime,
     target_cache_dir: []const u8,
-) !?[]const u8 {
+    artifact_root: []const u8,
+) !?Generated {
     var headers: std.ArrayList(Header) = .empty;
 
     for (runtimes, 0..) |runtime, index| {
@@ -49,16 +55,90 @@ pub fn write(
     var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
     hasher.final(&digest);
     const key = std.fmt.bytesToHex(digest, .lower);
-    const root = try std.fs.path.join(allocator, &.{ target_cache_dir, "interfaces", &key });
+    const cache_root = try std.fs.path.join(allocator, &.{ target_cache_dir, "interfaces", &key });
+    const editor_root = try std.fs.path.join(allocator, &.{ artifact_root, ".silex", "interfaces" });
 
     for (headers.items) |header| {
-        const module_path = try modulePath(allocator, header.module_name);
-        const filename = try std.fmt.allocPrint(allocator, "{s}.h", .{module_path});
-        const path = try std.fs.path.join(allocator, &.{ root, "SilexNative", filename });
+        const path = try headerPath(allocator, cache_root, header.module_name);
         if (std.fs.path.dirname(path)) |directory| try Io.Dir.cwd().createDirPath(io, directory);
         try Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = header.contents });
     }
-    return root;
+    try synchronizeEditorHeaders(allocator, io, editor_root, headers.items, &key);
+    return .{ .cache_root = cache_root, .editor_root = editor_root };
+}
+
+fn synchronizeEditorHeaders(
+    allocator: Allocator,
+    io: Io,
+    root: []const u8,
+    headers: []const Header,
+    generation: []const u8,
+) !void {
+    try Io.Dir.cwd().createDirPath(io, root);
+    var manifest: std.ArrayList(u8) = .empty;
+    var current_paths: std.ArrayList([]const u8) = .empty;
+    for (headers) |header| {
+        const relative_path = try headerPath(allocator, "", header.module_name);
+        try current_paths.append(allocator, relative_path);
+        try manifest.appendSlice(allocator, relative_path);
+        try manifest.append(allocator, '\n');
+
+        const path = try std.fs.path.join(allocator, &.{ root, relative_path });
+        if (std.fs.path.dirname(path)) |directory| try Io.Dir.cwd().createDirPath(io, directory);
+        try Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = header.contents });
+    }
+
+    const manifest_path = try std.fs.path.join(allocator, &.{ root, ".headers" });
+    const previous_manifest: ?[]const u8 = Io.Dir.cwd().readFileAlloc(
+        io,
+        manifest_path,
+        allocator,
+        .limited(1024 * 1024),
+    ) catch |err| switch (err) {
+        error.FileNotFound => null,
+        else => return err,
+    };
+    if (previous_manifest) |contents| {
+        var lines = std.mem.splitScalar(u8, contents, '\n');
+        while (lines.next()) |relative_path| {
+            if (relative_path.len == 0 or containsPath(current_paths.items, relative_path)) continue;
+            if (!isSafeEditorHeaderPath(relative_path)) continue;
+            const obsolete_path = try std.fs.path.join(allocator, &.{ root, relative_path });
+            Io.Dir.cwd().deleteFile(io, obsolete_path) catch |err| switch (err) {
+                error.FileNotFound => {},
+                else => return err,
+            };
+        }
+    }
+
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = manifest_path, .data = manifest.items });
+    const generation_path = try std.fs.path.join(allocator, &.{ root, ".generation" });
+    const generation_contents = try std.fmt.allocPrint(allocator, "{s}\n", .{generation});
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = generation_path, .data = generation_contents });
+}
+
+fn containsPath(paths: []const []const u8, candidate: []const u8) bool {
+    for (paths) |path| if (std.mem.eql(u8, path, candidate)) return true;
+    return false;
+}
+
+fn isSafeEditorHeaderPath(path: []const u8) bool {
+    if (std.fs.path.isAbsolute(path) or !std.mem.endsWith(u8, path, ".h")) return false;
+    var components = std.mem.splitScalar(u8, path, std.fs.path.sep);
+    const root = components.next() orelse return false;
+    if (!std.mem.eql(u8, root, "SilexNative")) return false;
+    var count: usize = 1;
+    while (components.next()) |component| {
+        if (component.len == 0 or std.mem.eql(u8, component, ".") or std.mem.eql(u8, component, "..")) return false;
+        count += 1;
+    }
+    return count >= 2;
+}
+
+fn headerPath(allocator: Allocator, root: []const u8, module_name: []const u8) ![]const u8 {
+    const module_path = try modulePath(allocator, module_name);
+    const filename = try std.fmt.allocPrint(allocator, "{s}.h", .{module_path});
+    return std.fs.path.join(allocator, &.{ root, "SilexNative", filename });
 }
 
 fn runtimeAppearedEarlier(runtimes: []const NativeDependency.ModuleRuntime, runtime_name: []const u8) bool {
@@ -577,6 +657,33 @@ fn modulePath(allocator: Allocator, module_name: []const u8) ![]const u8 {
     return path;
 }
 
+test "stable editor headers track one generated interface" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const temporary_root = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &temporary.sub_path });
+    const editor_root = try std.fs.path.join(allocator, &.{ temporary_root, "interfaces" });
+
+    try synchronizeEditorHeaders(allocator, std.testing.io, editor_root, &.{
+        .{ .module_name = "Math", .contents = "old Math\n" },
+        .{ .module_name = "Removed.Module", .contents = "obsolete\n" },
+    }, "first-generation");
+    try synchronizeEditorHeaders(allocator, std.testing.io, editor_root, &.{
+        .{ .module_name = "Math", .contents = "new Math\n" },
+    }, "second-generation");
+
+    const math_path = try std.fs.path.join(allocator, &.{ editor_root, "SilexNative", "Math.h" });
+    const math = try Io.Dir.cwd().readFileAlloc(std.testing.io, math_path, allocator, .limited(1024));
+    try std.testing.expectEqualStrings("new Math\n", math);
+    const removed_path = try std.fs.path.join(allocator, &.{ editor_root, "SilexNative", "Removed", "Module.h" });
+    try std.testing.expectError(error.FileNotFound, Io.Dir.cwd().access(std.testing.io, removed_path, .{}));
+    const generation_path = try std.fs.path.join(allocator, &.{ editor_root, ".generation" });
+    const generation = try Io.Dir.cwd().readFileAlloc(std.testing.io, generation_path, allocator, .limited(1024));
+    try std.testing.expectEqualStrings("second-generation\n", generation);
+}
+
 test "selected runtimes receive an empty root header without native declarations" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -616,11 +723,23 @@ test "selected runtimes receive an empty root header without native declarations
         .functions = &.{},
     };
 
-    const root = (try write(allocator, std.testing.io, program, project, &.{runtime}, target_cache_dir)).?;
-    const path = try std.fs.path.join(allocator, &.{ root, "SilexNative", "Pure.h" });
+    const artifact_root = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &temporary.sub_path });
+    const generated = (try write(
+        allocator,
+        std.testing.io,
+        program,
+        project,
+        &.{runtime},
+        target_cache_dir,
+        artifact_root,
+    )).?;
+    const path = try std.fs.path.join(allocator, &.{ generated.cache_root, "SilexNative", "Pure.h" });
     const header = try Io.Dir.cwd().readFileAlloc(std.testing.io, path, allocator, .limited(4096));
     try std.testing.expect(std.mem.indexOf(u8, header, "#ifndef SILEX_NATIVE_PURE_H") != null);
     try std.testing.expect(std.mem.indexOf(u8, header, "extern \"C\"") != null);
+    const editor_path = try std.fs.path.join(allocator, &.{ generated.editor_root, "SilexNative", "Pure.h" });
+    const editor_header = try Io.Dir.cwd().readFileAlloc(std.testing.io, editor_path, allocator, .limited(4096));
+    try std.testing.expectEqualStrings(header, editor_header);
 }
 
 test "native headers are C compatible and preserve the string ABI" {

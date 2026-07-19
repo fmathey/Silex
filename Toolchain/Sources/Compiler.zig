@@ -114,18 +114,19 @@ pub fn compile(
     cleanObsoleteCacheLayouts(allocator, io, cache_root) catch |err| {
         std.debug.print("silex: warning: unable to remove obsolete cache layouts: {t}\n", .{err});
     };
-    const native_interface_root = try NativeInterface.write(
+    const native_interface = try NativeInterface.write(
         allocator,
         io,
         program,
         project,
         loaded_module_runtimes,
         target_cache_dir,
+        artifact_root,
     );
     const module_runtimes = try applyNativeInterface(
         allocator,
         loaded_module_runtimes,
-        native_interface_root,
+        if (native_interface) |generated| generated.cache_root else null,
     );
     const object_plan = try NativeObjectCache.makePlan(
         allocator,
@@ -182,6 +183,19 @@ pub fn compile(
         }
     else
         null;
+    if (needs_compilation_database) {
+        _ = try CompilationDatabase.write(
+            allocator,
+            io,
+            artifact_root,
+            zig_path.?,
+            target,
+            default_native_configuration.compilerFlags(),
+            module_runtimes,
+            compilation_database_scope,
+            if (native_interface) |generated| generated.editor_root else null,
+        );
+    }
     if (!cache_hit) {
         try Io.Dir.cwd().writeFile(io, .{ .sub_path = cpp_path, .data = cpp });
         const local_runtime_objects = try compileLocalRuntimeObjects(
@@ -254,19 +268,6 @@ pub fn compile(
         try Io.Dir.cwd().rename(temporary_executable_path, .cwd(), executable_path, io);
     }
     Io.Dir.cwd().deleteFile(io, backend_log_path) catch {};
-    if (needs_compilation_database) {
-        _ = try CompilationDatabase.write(
-            allocator,
-            io,
-            artifact_root,
-            zig_path.?,
-            target,
-            default_native_configuration.compilerFlags(),
-            module_runtimes,
-            compilation_database_scope,
-        );
-    }
-
     return .{
         .executable_path = executable_path,
         .cpp_path = cpp_path,

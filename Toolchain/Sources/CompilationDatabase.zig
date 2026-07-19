@@ -23,6 +23,7 @@ pub fn write(
     compiler_flags: []const []const u8,
     runtimes: []const NativeDependency.ModuleRuntime,
     scope: Scope,
+    editor_interface_root: ?[]const u8,
 ) !?[]const u8 {
     var entries: std.ArrayList(Entry) = .empty;
     const directory = try Io.Dir.cwd().realPathFileAlloc(
@@ -37,6 +38,13 @@ pub fn write(
             .distributed => runtime.origin == .distributed,
         };
         if (!selected) continue;
+        var editor_runtime = runtime;
+        if (editor_interface_root) |root| {
+            var include_dirs: std.ArrayList([]const u8) = .empty;
+            try include_dirs.append(allocator, root);
+            try include_dirs.appendSlice(allocator, runtime.include_dirs);
+            editor_runtime.include_dirs = try include_dirs.toOwnedSlice(allocator);
+        }
         for (runtime.sources) |source| {
             try entries.append(allocator, .{
                 .directory = directory,
@@ -45,7 +53,7 @@ pub fn write(
                     zig_path,
                     target,
                     compiler_flags,
-                    runtime,
+                    editor_runtime,
                     source,
                     null,
                 ),
@@ -119,6 +127,7 @@ test "write native C and C++ compilation entries" {
         &.{"-O2"},
         &.{ runtime, distributed_runtime },
         .project,
+        ".silex/interfaces",
     )).?;
     const contents = try Io.Dir.cwd().readFileAlloc(std.testing.io, path, std.testing.allocator, .limited(64 * 1024));
     defer std.testing.allocator.free(contents);
@@ -126,6 +135,7 @@ test "write native C and C++ compilation entries" {
     try std.testing.expect(std.mem.indexOf(u8, contents, "\"cc\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, contents, "\"c++\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, contents, "\"-std=c++23\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, contents, "\"-I.silex/interfaces\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, contents, "\"-IIncludes\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, contents, "\"-DMODE=editor\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, contents, "\"-O2\"") != null);
@@ -140,6 +150,7 @@ test "write native C and C++ compilation entries" {
         &.{},
         &.{ runtime, distributed_runtime },
         .distributed,
+        ".silex/interfaces",
     )).?;
     const distributed_contents = try Io.Dir.cwd().readFileAlloc(
         std.testing.io,
@@ -168,6 +179,7 @@ test "do not create a compilation database without native sources" {
         &.{},
         &.{},
         .project,
+        null,
     )) == null);
     try std.testing.expectError(
         error.FileNotFound,
