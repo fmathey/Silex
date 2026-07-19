@@ -1,5 +1,5 @@
 const std = @import("std");
-const silex_version = "0.22.0";
+const silex_version = "0.23.0";
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
