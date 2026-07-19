@@ -1,0 +1,25 @@
+native func native_visit(limit:int, visitor:func(int) bool) int
+native func native_notify(visitor:func()) void
+native func native_increment(value:int) int
+
+pub func verify() {
+    var zeroCalls:int = 0
+    assert(native_visit(0, func(value:int) bool { zeroCalls += value; return true }) == 0, "zero invocations")
+    assert(zeroCalls == 0, "zero callback state")
+
+    let factor:int = 3
+    var total:int = 0
+    assert(native_visit(1, func(value:int) bool { total += value * factor; return true }) == 1, "one invocation")
+    assert(total == 3, "capturing callback")
+
+    assert(native_visit(4, func(value:int) bool { total += value; return true }) == 4, "multiple invocations")
+    assert(total == 13, "mutable capture")
+
+    var nested:int = 0
+    assert(native_visit(3, func(value:int) bool { nested += native_increment(value); return true }) == 3, "nested invocation count")
+    assert(nested == 9, "nested native call")
+
+    var notified:bool = false
+    native_notify(func() { notified = true })
+    assert(notified, "void callback")
+}

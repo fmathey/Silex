@@ -6983,6 +6983,7 @@ pub const Analyzer = struct {
     }
 
     fn isNativeParameterType(self: *const Analyzer, value: Type) Allocator.Error!bool {
+        if (isNativeCallbackType(value)) return true;
         if (isNativeByteViewType(value)) return true;
         if (isNativeScalarParameterType(value)) return true;
         const structure_type = switch (value) {
@@ -7637,6 +7638,26 @@ fn isNativeStructureFieldType(value: Type) bool {
 
 fn isNativeScalarParameterType(value: Type) bool {
     return value == .str or isNativeScalarReturnType(value);
+}
+
+fn isNativeCallbackScalarType(value: Type) bool {
+    return switch (value) {
+        .int, .int8, .int16, .int32, .uint8, .uint16, .uint32, .uint64, .float, .float64, .bool => true,
+        else => false,
+    };
+}
+
+fn isNativeCallbackType(value: Type) bool {
+    const function = switch (value) {
+        .function => |function_value| function_value,
+        else => return false,
+    };
+    if (function.owner != null) return false;
+    if (function.return_type.* != .void and !isNativeCallbackScalarType(function.return_type.*)) return false;
+    for (function.parameters, function.parameter_modes) |parameter, mode| {
+        if (mode != .value or !isNativeCallbackScalarType(parameter)) return false;
+    }
+    return true;
 }
 
 fn isNativeByteViewType(value: Type) bool {
@@ -9851,12 +9872,28 @@ test "reject extracting an owner callback beyond its owner" {
     );
 }
 
-test "reject function values at the native boundary" {
+test "accept scalar function values at the native boundary" {
     const Parser = @import("Parser.zig").Parser;
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-    var parser = Parser.init(allocator, "native func native_hook(callback:func()) void; func main() {}");
+    var parser = Parser.init(allocator, "native func native_hook(callback:func(int) bool) void; func main() {}");
+    const parsed = try parser.parse();
+    const functions = try allocator.dupe(Ast.Function, parsed.functions);
+    functions[0].name = "Test.native_hook";
+    var program = parsed;
+    program.functions = functions;
+    var analyzer = Analyzer.init(allocator);
+    analyzer.native_module_names = &.{"Test"};
+    _ = try analyzer.analyze(program);
+}
+
+test "reject non scalar function values at the native boundary" {
+    const Parser = @import("Parser.zig").Parser;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var parser = Parser.init(allocator, "native func native_hook(callback:func(str) bool) void; func main() {}");
     const parsed = try parser.parse();
     const functions = try allocator.dupe(Ast.Function, parsed.functions);
     functions[0].name = "Test.native_hook";

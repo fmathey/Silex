@@ -218,6 +218,32 @@ Only the dynamic `uint8[]` return has this ABI: fixed arrays, other element
 types, nested collections, optional byte lists, caller-owned mutation, and
 adoption without a copy remain unavailable.
 
+A native function may receive a synchronous callback whose parameters and return
+are `void` or scalar numeric and boolean values. For `func(int) bool`, the C
+header carries a plain function pointer plus an opaque context:
+
+```cpp
+int64_t silexNative_Module_native_visit(
+    int64_t limit,
+    bool (*visitor)(void*, int64_t),
+    void* visitor_context
+);
+```
+
+During the native call, the bridge keeps the Silex function and its captures
+alive. The pointer invokes a temporary trampoline, which reconstructs scalar
+arguments, calls the Silex callback, and returns its scalar result. Native code
+may invoke it zero, one, or several times, only before the native function
+returns and only on the calling thread. It must not retain either pointer,
+invoke it later, pass it to another thread, or transfer it to another API.
+There is no `std::function` in the ABI.
+
+The ordinary Silex capture rules still apply: a unique resource cannot become a
+callback capture. Strings, structures, references, optionals, `Result`, byte
+buffers, collections, callbacks with an owner, and all non-scalar callback
+parameters or results remain excluded. Deferred callbacks, subscriptions,
+event loops, and interaction with `async` are not part of this ABI.
+
 A native function may return `T?` when `T` is one of the transferable return
 types above: a scalar boolean or number, `str`, or an admitted flat structure.
 The C symbol returns `bool` to report presence and receives the same transport

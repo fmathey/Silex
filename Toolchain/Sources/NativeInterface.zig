@@ -152,6 +152,11 @@ fn appendFunctionSignature(
             parameter_count += 2;
             continue;
         }
+        if (isNativeCallbackType(parameter.type)) {
+            try appendCallbackParameter(allocator, output, parameter.type.function, parameter.generated_name);
+            parameter_count += 2;
+            continue;
+        }
         if (structureForType(program, parameter.type)) |parameter_structure| {
             try output.appendSlice(allocator, "const ");
             try output.appendSlice(allocator, try inputTransportName(
@@ -240,6 +245,45 @@ fn isNativeByteViewType(value: Semantic.Type) bool {
 
 fn isNativeByteBufferReturnType(value: Semantic.Type) bool {
     return value == .list and value.list.* == .uint8;
+}
+
+fn isNativeCallbackType(value: Semantic.Type) bool {
+    const function = switch (value) {
+        .function => |function_value| function_value,
+        else => return false,
+    };
+    if (function.owner != null) return false;
+    if (function.return_type.* != .void and !isNativeCallbackScalarType(function.return_type.*)) return false;
+    for (function.parameters, function.parameter_modes) |parameter, mode| {
+        if (mode != .value or !isNativeCallbackScalarType(parameter)) return false;
+    }
+    return true;
+}
+
+fn isNativeCallbackScalarType(value: Semantic.Type) bool {
+    return switch (value) {
+        .int, .int8, .int16, .int32, .uint8, .uint16, .uint32, .uint64, .float, .float64, .bool => true,
+        else => false,
+    };
+}
+
+fn appendCallbackParameter(
+    allocator: Allocator,
+    output: *std.ArrayList(u8),
+    callback: Semantic.FunctionType,
+    name: []const u8,
+) !void {
+    try appendType(allocator, output, callback.return_type.*);
+    try output.appendSlice(allocator, " (*");
+    try output.appendSlice(allocator, name);
+    try output.appendSlice(allocator, ")(void*");
+    for (callback.parameters) |parameter| {
+        try output.appendSlice(allocator, ", ");
+        try appendType(allocator, output, parameter);
+    }
+    try output.appendSlice(allocator, "), void* ");
+    try output.appendSlice(allocator, name);
+    try output.appendSlice(allocator, "_context");
 }
 
 fn appendResultTransportIfNew(
@@ -715,6 +759,36 @@ test "native headers expose uint8 collections as borrowed byte views" {
         u8,
         header,
         "bool silexNative_Bytes_native_write_block(const uint8_t* silexValue1Bytes, int64_t silexValue1Length);",
+    ) != null);
+}
+
+test "native headers expose synchronous scalar callbacks" {
+    const Parser = @import("Parser.zig").Parser;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var parser = Parser.init(allocator,
+        \\native func native_visit(limit:int, visitor:func(int) bool) int
+        \\native func native_notify(visitor:func()) void
+        \\func main() {}
+    );
+    const ast = try parser.parse();
+    @constCast(ast.functions)[0].name = "Visitors.native_visit";
+    @constCast(ast.functions)[1].name = "Visitors.native_notify";
+    var analyzer = Semantic.Analyzer.init(allocator);
+    analyzer.native_module_names = &.{"Visitors"};
+    const header = try renderHeader(allocator, try analyzer.analyze(ast), "Visitors");
+
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        header,
+        "int64_t silexNative_Visitors_native_visit(int64_t silexValue0, bool (*silexValue1)(void*, int64_t), void* silexValue1_context);",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        header,
+        "void silexNative_Visitors_native_notify(void (*silexValue0)(void*), void* silexValue0_context);",
     ) != null);
 }
 

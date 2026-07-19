@@ -1,0 +1,6 @@
+use NativeCallbacks as Native
+
+func main() {
+    Native.verify()
+    print("native callbacks ok")
+}

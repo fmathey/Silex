@@ -2617,8 +2617,13 @@ pub fn build(b: *std.Build) void {
         "runtime error: native function 'NativeByteBuffers.native_null_with_positive_length' failed: returned a null pointer with a positive length\n",
     );
 
+    const native_callback_command = b.addRunArtifact(executable);
+    native_callback_command.step.dependOn(&native_byte_buffer_null_pointer_command.step);
+    native_callback_command.addArgs(&.{ "run", "Smokes/NativeCallbacks/Main.sx" });
+    native_callback_command.expectStdOutEqual(hostText(b, "native callbacks ok\n"));
+
     const native_string_command = b.addRunArtifact(executable);
-    native_string_command.step.dependOn(&native_byte_buffer_null_pointer_command.step);
+    native_string_command.step.dependOn(&native_callback_command.step);
     native_string_command.addArgs(&.{ "run", "Smokes/NativeStrings/Main.sx" });
     native_string_command.expectStdOutEqual(hostText(b, "true\ntrue\ntrue\ntrue\ntrue\ntrue\n"));
 
@@ -3210,8 +3215,30 @@ pub fn build(b: *std.Build) void {
         ".silex/cross-native-smoke/NativeByteBuffers-x86_64-windows.exe",
     });
 
+    const cross_native_callback_linux_smoke_command = b.addRunArtifact(executable);
+    cross_native_callback_linux_smoke_command.step.dependOn(&cross_native_byte_buffer_windows_smoke_command.step);
+    cross_native_callback_linux_smoke_command.addArgs(&.{
+        "compile",
+        "Smokes/NativeCallbacks/Main.sx",
+        "--target",
+        "x86_64-linux-musl",
+        "-o",
+        ".silex/cross-native-smoke/NativeCallbacks-x86_64-linux",
+    });
+
+    const cross_native_callback_windows_smoke_command = b.addRunArtifact(executable);
+    cross_native_callback_windows_smoke_command.step.dependOn(&cross_native_callback_linux_smoke_command.step);
+    cross_native_callback_windows_smoke_command.addArgs(&.{
+        "compile",
+        "Smokes/NativeCallbacks/Main.sx",
+        "--target",
+        "x86_64-windows-gnu",
+        "-o",
+        ".silex/cross-native-smoke/NativeCallbacks-x86_64-windows.exe",
+    });
+
     const cross_native_string_linux_smoke_command = b.addRunArtifact(executable);
-    cross_native_string_linux_smoke_command.step.dependOn(&cross_native_byte_buffer_windows_smoke_command.step);
+    cross_native_string_linux_smoke_command.step.dependOn(&cross_native_callback_windows_smoke_command.step);
     cross_native_string_linux_smoke_command.addArgs(&.{
         "compile",
         "Smokes/NativeStrings/Main.sx",

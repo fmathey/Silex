@@ -1758,6 +1758,8 @@ fn generateNativeFunctionSignature(
             } else {
                 try output.appendSlice(allocator, ", std::int64_t");
             }
+        } else if (isNativeCallbackType(parameter.type)) {
+            try appendCppNativeCallbackParameter(allocator, output, parameter.type.function, if (include_names) parameter.generated_name else null);
         } else if (nativeStructureForType(program, parameter.type)) |parameter_structure| {
             try output.appendSlice(allocator, "const ");
             try output.appendSlice(allocator, try NativeInterface.inputTransportName(
@@ -1927,6 +1929,50 @@ fn isNativeByteBufferReturnType(value: Semantic.Type) bool {
     return value == .list and value.list.* == .uint8;
 }
 
+fn isNativeCallbackType(value: Semantic.Type) bool {
+    const function = switch (value) {
+        .function => |function_value| function_value,
+        else => return false,
+    };
+    if (function.owner != null) return false;
+    if (function.return_type.* != .void and !isNativeCallbackScalarType(function.return_type.*)) return false;
+    for (function.parameters, function.parameter_modes) |parameter, mode| {
+        if (mode != .value or !isNativeCallbackScalarType(parameter)) return false;
+    }
+    return true;
+}
+
+fn isNativeCallbackScalarType(value: Semantic.Type) bool {
+    return switch (value) {
+        .int, .int8, .int16, .int32, .uint8, .uint16, .uint32, .uint64, .float, .float64, .bool => true,
+        else => false,
+    };
+}
+
+fn appendCppNativeCallbackParameter(
+    allocator: Allocator,
+    output: *std.ArrayList(u8),
+    callback: Semantic.FunctionType,
+    name: ?[]const u8,
+) GenerateError!void {
+    try appendCppType(allocator, output, callback.return_type.*);
+    try output.appendSlice(allocator, " (*");
+    if (name) |parameter_name| try output.appendSlice(allocator, parameter_name);
+    try output.appendSlice(allocator, ")(void*");
+    for (callback.parameters) |parameter| {
+        try output.appendSlice(allocator, ", ");
+        try appendCppType(allocator, output, parameter);
+    }
+    try output.appendSlice(allocator, ")");
+    if (name) |parameter_name| {
+        try output.appendSlice(allocator, ", void* ");
+        try output.appendSlice(allocator, parameter_name);
+        try output.appendSlice(allocator, "_context");
+    } else {
+        try output.appendSlice(allocator, ", void*");
+    }
+}
+
 fn generateNativeResultTransportIfNew(
     allocator: Allocator,
     output: *std.ArrayList(u8),
@@ -2088,6 +2134,14 @@ fn generateNativeArgumentPreludes(
             try output.append(allocator, ';');
             continue;
         }
+        if (isNativeCallbackType(argument.type)) {
+            try output.appendSlice(allocator, "auto silexNativeCallback");
+            try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}", .{index}));
+            try output.appendSlice(allocator, " = ");
+            try generateExpression(allocator, output, argument);
+            try output.append(allocator, ';');
+            continue;
+        }
         const structure = parameter_structure orelse continue;
         try output.appendSlice(allocator, "const auto& silexNativeStructure");
         try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}", .{index}));
@@ -2142,12 +2196,46 @@ fn generateNativeArgument(
         try output.appendSlice(allocator, ".data(), static_cast<std::int64_t>(silexNativeBytes");
         try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}", .{index}));
         try output.appendSlice(allocator, ".size())");
+    } else if (isNativeCallbackType(argument.type)) {
+        try generateNativeCallbackTrampoline(allocator, output, argument.type.function, index);
     } else if (call.native_parameter_structures[index] != null) {
         try output.appendSlice(allocator, "&silexNativeInput");
         try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}", .{index}));
     } else {
         try generateExpression(allocator, output, argument);
     }
+}
+
+fn generateNativeCallbackTrampoline(
+    allocator: Allocator,
+    output: *std.ArrayList(u8),
+    callback: Semantic.FunctionType,
+    index: usize,
+) GenerateError!void {
+    try output.appendSlice(allocator, "+[](void* silexNativeContext");
+    for (callback.parameters, 0..) |parameter, parameter_index| {
+        try output.appendSlice(allocator, ", ");
+        try appendCppType(allocator, output, parameter);
+        try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, " silexNativeArgument{d}", .{parameter_index}));
+    }
+    try output.appendSlice(allocator, ") -> ");
+    try appendCppType(allocator, output, callback.return_type.*);
+    try output.appendSlice(allocator, " {auto& silexNativeCallback = *static_cast<SilexFunction<");
+    try appendCppType(allocator, output, callback.return_type.*);
+    try output.append(allocator, '(');
+    for (callback.parameters, 0..) |parameter, parameter_index| {
+        if (parameter_index != 0) try output.appendSlice(allocator, ", ");
+        try appendCppType(allocator, output, parameter);
+    }
+    try output.appendSlice(allocator, ")>*>(silexNativeContext);");
+    if (callback.return_type.* != .void) try output.appendSlice(allocator, "return ");
+    try output.appendSlice(allocator, "silexNativeCallback(");
+    for (callback.parameters, 0..) |_, parameter_index| {
+        if (parameter_index != 0) try output.appendSlice(allocator, ", ");
+        try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "silexNativeArgument{d}", .{parameter_index}));
+    }
+    try output.appendSlice(allocator, ");}, &silexNativeCallback");
+    try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}", .{index}));
 }
 
 const NativeResultOwnedAction = enum { raw_free, guard, reset };
@@ -4819,6 +4907,36 @@ test "generate borrowed uint8 collection native parameters" {
         "silexNative_Bytes_native_block(silexNativeBytes0.data(), static_cast<std::int64_t>(silexNativeBytes0.size()))",
     ) != null);
     try std.testing.expect(std.mem.indexOf(u8, cpp, "const T* data() const { return values_.data(); }") != null);
+}
+
+test "generate synchronous scalar native callback trampolines" {
+    const Parser = @import("Parser.zig").Parser;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var parser = Parser.init(allocator,
+        \\native func native_visit(limit:int, visitor:func(int) bool) int
+        \\func main() {
+        \\    var total:int = 0
+        \\    print(native_visit(3, func(value:int) bool { total += value; return true }))
+        \\}
+    );
+    const program = try parser.parse();
+    @constCast(program.functions)[0].name = "Visitors.native_visit";
+    var analyzer = Semantic.Analyzer.init(allocator);
+    analyzer.native_module_names = &.{"Visitors"};
+    const cpp = try generate(allocator, try analyzer.analyze(program));
+
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        cpp,
+        "extern \"C\" std::int64_t silexNative_Visitors_native_visit(std::int64_t silexValue0, bool (*silexValue1)(void*, std::int64_t), void* silexValue1_context);",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "auto silexNativeCallback1 = silexMakeFunction<") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "+[](void* silexNativeContext, std::int64_t silexNativeArgument0) -> bool") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "static_cast<SilexFunction<bool(std::int64_t)>*>(silexNativeContext)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "}, &silexNativeCallback1") != null);
 }
 
 test "generate owned uint8 list native returns" {
