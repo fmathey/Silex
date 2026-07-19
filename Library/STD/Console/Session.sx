@@ -1,14 +1,19 @@
 native func native_session_create() int
 native func native_session_close(handle:int) void
 native func native_session_is_open(handle:int) bool
-native func native_session_read(handle:int, timeout_milliseconds:int) int
+native func native_session_read(handle:int) NativeKeyEvent
+native func native_session_poll(handle:int, timeout_milliseconds:int) NativeKeyEvent?
 native func native_session_enter_alternate_screen(handle:int) void
 native func native_session_leave_alternate_screen(handle:int) void
-native func native_event_shift() bool
-native func native_event_control() bool
-native func native_event_alt() bool
-native func native_event_number() int
-native func native_event_take_text() str
+
+struct NativeKeyEvent {
+    let code:int
+    let shift:bool
+    let control:bool
+    let alt:bool
+    let number:int
+    let text:str
+}
 
 pub enum Key {
     character(str)
@@ -44,18 +49,17 @@ pub struct Session {
     }
 
     func read_key() KeyEvent {
-        return event_from_code(native_session_read(self.handle, -1))
+        return event_from_native(native_session_read(self.handle))
     }
 
     func poll_key(timeout_milliseconds:int) KeyEvent? {
         if timeout_milliseconds < 0 {
             panic("Console.Session.poll_key requires a non-negative timeout")
         }
-        let code = native_session_read(self.handle, timeout_milliseconds)
-        if code == 0 {
-            return null
+        if native_event = native_session_poll(self.handle, timeout_milliseconds) {
+            return event_from_native(native_event)
         }
-        return event_from_code(code)
+        return null
     }
 
     func enter_alternate_screen() {
@@ -79,30 +83,27 @@ pub struct Session {
     }
 }
 
-func event_from_code(code:int) KeyEvent {
-    if code == 1 { return event(Key.character(native_event_take_text())) }
-    if code == 2 { return event(Key.enter()) }
-    if code == 3 { return event(Key.escape()) }
-    if code == 4 { return event(Key.tab()) }
-    if code == 5 { return event(Key.backspace()) }
-    if code == 6 { return event(Key.delete()) }
-    if code == 7 { return event(Key.arrow_up()) }
-    if code == 8 { return event(Key.arrow_down()) }
-    if code == 9 { return event(Key.arrow_left()) }
-    if code == 10 { return event(Key.arrow_right()) }
-    if code == 11 { return event(Key.home()) }
-    if code == 12 { return event(Key.end()) }
-    if code == 13 { return event(Key.page_up()) }
-    if code == 14 { return event(Key.page_down()) }
-    if code == 15 { return event(Key.function(native_event_number())) }
-    return event(Key.unknown(native_event_take_text()))
-}
-
-func event(key:Key) KeyEvent {
+func event_from_native(native_event:NativeKeyEvent) KeyEvent {
+    var key = Key.unknown(native_event.text)
+    if native_event.code == 1 { key = Key.character(native_event.text) }
+    elif native_event.code == 2 { key = Key.enter() }
+    elif native_event.code == 3 { key = Key.escape() }
+    elif native_event.code == 4 { key = Key.tab() }
+    elif native_event.code == 5 { key = Key.backspace() }
+    elif native_event.code == 6 { key = Key.delete() }
+    elif native_event.code == 7 { key = Key.arrow_up() }
+    elif native_event.code == 8 { key = Key.arrow_down() }
+    elif native_event.code == 9 { key = Key.arrow_left() }
+    elif native_event.code == 10 { key = Key.arrow_right() }
+    elif native_event.code == 11 { key = Key.home() }
+    elif native_event.code == 12 { key = Key.end() }
+    elif native_event.code == 13 { key = Key.page_up() }
+    elif native_event.code == 14 { key = Key.page_down() }
+    elif native_event.code == 15 { key = Key.function(native_event.number) }
     return KeyEvent(
         key:key,
-        shift:native_event_shift(),
-        control:native_event_control(),
-        alt:native_event_alt()
+        shift:native_event.shift,
+        control:native_event.control,
+        alt:native_event.alt
     )
 }

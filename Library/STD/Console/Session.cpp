@@ -11,6 +11,20 @@
 #include <string>
 #include <utility>
 
+#if __has_include(<SilexNative/STD/Console.h>)
+#include <SilexNative/STD/Console.h>
+#else
+struct SilexNative_STD_Console_NativeKeyEvent {
+    std::int64_t code;
+    bool shift;
+    bool control;
+    bool alt;
+    std::int64_t number;
+    char* text_bytes;
+    std::int64_t text_length;
+};
+#endif
+
 #if defined(_WIN32)
 #include <windows.h>
 #else
@@ -59,8 +73,6 @@ struct SessionState {
     std::int64_t handle = 0;
     bool open = false;
     bool alternateScreen = false;
-    const char* eventMethod = "read_key";
-    Event event;
 
 #if defined(_WIN32)
     HANDLE input = INVALID_HANDLE_VALUE;
@@ -104,12 +116,27 @@ void requireOpen(std::int64_t handle, const char* method) {
     }
 }
 
-char* copyText(const std::string& text) {
+char* copyText(const std::string& text, const char* method) {
     if (text.empty()) return nullptr;
     auto* result = static_cast<char*>(std::malloc(text.size()));
-    if (result == nullptr) fail(session.eventMethod, "unable to allocate event text");
+    if (result == nullptr) fail(method, "unable to allocate event text");
     std::memcpy(result, text.data(), text.size());
     return result;
+}
+
+void writeEvent(
+    const Event& event,
+    const char* method,
+    SilexNative_STD_Console_NativeKeyEvent* output
+) {
+    char* text = copyText(event.text, method);
+    output->code = static_cast<std::int64_t>(event.code);
+    output->shift = event.shift;
+    output->control = event.control;
+    output->alt = event.alt;
+    output->number = event.number;
+    output->text_bytes = text;
+    output->text_length = static_cast<std::int64_t>(event.text.size());
 }
 
 [[maybe_unused]] std::string hexadecimal(
@@ -625,7 +652,6 @@ std::int64_t createSession() {
     session.handle = nextHandle++;
     session.open = true;
     session.alternateScreen = false;
-    session.event = Event{};
     sessionActive.store(true);
     return session.handle;
 }
@@ -649,20 +675,34 @@ extern "C" bool silexNative_STD_Console_native_session_is_open(std::int64_t hand
     return session.open && session.handle == handle;
 }
 
-extern "C" std::int64_t silexNative_STD_Console_native_session_read(
+extern "C" void silexNative_STD_Console_native_session_read(
     std::int64_t handle,
-    std::int64_t timeoutMilliseconds
+    SilexNative_STD_Console_NativeKeyEvent* output
 ) {
-    const char* method = timeoutMilliseconds < 0 ? "read_key" : "poll_key";
-    requireOpen(handle, method);
-    if (timeoutMilliseconds < -1) fail("poll_key", "timeout must be non-negative");
-    session.eventMethod = method;
+    requireOpen(handle, "read_key");
 #if defined(_WIN32)
-    session.event = readWindowsEvent(timeoutMilliseconds, method);
+    const Event event = readWindowsEvent(-1, "read_key");
 #else
-    session.event = readPosixEvent(timeoutMilliseconds, method);
+    const Event event = readPosixEvent(-1, "read_key");
 #endif
-    return static_cast<std::int64_t>(session.event.code);
+    writeEvent(event, "read_key", output);
+}
+
+extern "C" bool silexNative_STD_Console_native_session_poll(
+    std::int64_t handle,
+    std::int64_t timeoutMilliseconds,
+    SilexNative_STD_Console_NativeKeyEvent* output
+) {
+    requireOpen(handle, "poll_key");
+    if (timeoutMilliseconds < 0) fail("poll_key", "timeout must be non-negative");
+#if defined(_WIN32)
+    const Event event = readWindowsEvent(timeoutMilliseconds, "poll_key");
+#else
+    const Event event = readPosixEvent(timeoutMilliseconds, "poll_key");
+#endif
+    if (event.code == EventCode::timeout) return false;
+    writeEvent(event, "poll_key", output);
+    return true;
 }
 
 extern "C" void silexNative_STD_Console_native_session_enter_alternate_screen(
@@ -681,29 +721,4 @@ extern "C" void silexNative_STD_Console_native_session_leave_alternate_screen(
     if (!session.alternateScreen) return;
     writeControl("\x1b[?1049l", "leave_alternate_screen");
     session.alternateScreen = false;
-}
-
-extern "C" bool silexNative_STD_Console_native_event_shift() {
-    return session.event.shift;
-}
-
-extern "C" bool silexNative_STD_Console_native_event_control() {
-    return session.event.control;
-}
-
-extern "C" bool silexNative_STD_Console_native_event_alt() {
-    return session.event.alt;
-}
-
-extern "C" std::int64_t silexNative_STD_Console_native_event_number() {
-    return session.event.number;
-}
-
-extern "C" void silexNative_STD_Console_native_event_take_text(
-    char** outputBytes,
-    std::int64_t* outputLength
-) {
-    *outputBytes = copyText(session.event.text);
-    *outputLength = static_cast<std::int64_t>(session.event.text.size());
-    session.event.text.clear();
 }

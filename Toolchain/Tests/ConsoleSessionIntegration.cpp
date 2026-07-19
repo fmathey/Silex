@@ -6,6 +6,16 @@
 #include <stdexcept>
 #include <string>
 
+struct SilexNative_STD_Console_NativeKeyEvent {
+    std::int64_t code;
+    bool shift;
+    bool control;
+    bool alt;
+    std::int64_t number;
+    char* text_bytes;
+    std::int64_t text_length;
+};
+
 #if defined(_WIN32)
 
 #include <windows.h>
@@ -13,9 +23,9 @@
 extern "C" std::int64_t silexNative_STD_Console_native_session_create();
 extern "C" void silexNative_STD_Console_native_session_close(std::int64_t handle);
 extern "C" bool silexNative_STD_Console_native_session_is_open(std::int64_t handle);
-extern "C" std::int64_t silexNative_STD_Console_native_session_read(
+extern "C" void silexNative_STD_Console_native_session_read(
     std::int64_t handle,
-    std::int64_t timeoutMilliseconds
+    SilexNative_STD_Console_NativeKeyEvent* output
 );
 extern "C" bool silexNative_STD_Console_native_prepare_line();
 
@@ -54,7 +64,8 @@ int main() {
     valid = valid && restoredInput == inputMode && restoredOutput == outputMode;
     valid = valid && !silexNative_STD_Console_native_session_is_open(handle);
     valid = valid && failsWith("Console.Session.read_key", [handle] {
-        static_cast<void>(silexNative_STD_Console_native_session_read(handle, -1));
+        SilexNative_STD_Console_NativeKeyEvent output{};
+        silexNative_STD_Console_native_session_read(handle, &output);
     });
     silexNative_STD_Console_native_session_close(handle);
     return valid ? 0 : 10;
@@ -83,9 +94,9 @@ namespace {
 extern "C" std::int64_t silexNative_STD_Console_native_session_create();
 extern "C" void silexNative_STD_Console_native_session_close(std::int64_t handle);
 extern "C" bool silexNative_STD_Console_native_session_is_open(std::int64_t handle);
-extern "C" std::int64_t silexNative_STD_Console_native_session_read(
+extern "C" void silexNative_STD_Console_native_session_read(
     std::int64_t handle,
-    std::int64_t timeoutMilliseconds
+    SilexNative_STD_Console_NativeKeyEvent* output
 );
 extern "C" void silexNative_STD_Console_native_session_enter_alternate_screen(
     std::int64_t handle
@@ -133,7 +144,8 @@ int testNativeContract() {
         silexNative_STD_Console_native_session_enter_alternate_screen(handle);
     });
     const bool readRejected = failsWith("Console.Session.read_key", [handle] {
-        static_cast<void>(silexNative_STD_Console_native_session_read(handle, -1));
+        SilexNative_STD_Console_NativeKeyEvent output{};
+        silexNative_STD_Console_native_session_read(handle, &output);
     });
     valid = valid && alternateRejected && readRejected;
     silexNative_STD_Console_native_session_close(handle);
