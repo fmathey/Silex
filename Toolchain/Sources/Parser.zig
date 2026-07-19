@@ -50,8 +50,8 @@ pub const Parser = struct {
                 } else if (self.current.tag == .keyword_func) {
                     try functions.append(self.allocator, try self.parseFunction(true));
                 } else if (self.current.tag == .identifier and std.mem.eql(u8, self.current.lexeme, "native")) {
-                    return self.fail("native functions cannot be public");
-                } else return self.fail("expected 'enum', 'protocol', 'struct', 'class', 'func', or 'use' after 'pub'");
+                    try functions.append(self.allocator, try self.parseNativeFunction(true));
+                } else return self.fail("expected 'enum', 'protocol', 'struct', 'class', 'func', 'native func', or 'use' after 'pub'");
             } else if (self.current.tag == .keyword_enum) {
                 try enums.append(self.allocator, try self.parseEnum(false));
             } else if (self.current.tag == .keyword_protocol) {
@@ -63,7 +63,7 @@ pub const Parser = struct {
             } else if (self.current.tag == .keyword_func) {
                 try functions.append(self.allocator, try self.parseFunction(false));
             } else if (self.current.tag == .identifier and std.mem.eql(u8, self.current.lexeme, "native")) {
-                try functions.append(self.allocator, try self.parseNativeFunction());
+                try functions.append(self.allocator, try self.parseNativeFunction(false));
             } else if (self.current.tag == .keyword_elif) {
                 return self.fail("'elif' must directly continue an if chain");
             } else {
@@ -495,7 +495,7 @@ pub const Parser = struct {
         };
     }
 
-    fn parseNativeFunction(self: *Parser) ParseError!Ast.Function {
+    fn parseNativeFunction(self: *Parser, is_public: bool) ParseError!Ast.Function {
         const position = self.current.position;
         if (self.current.tag != .identifier or !std.mem.eql(u8, self.current.lexeme, "native")) {
             return self.fail("expected 'native'");
@@ -511,6 +511,7 @@ pub const Parser = struct {
         const return_type = try self.parseReturnType();
         try self.expectStatementTerminator();
         return .{
+            .is_public = is_public,
             .is_native = true,
             .position = position,
             .name = name,
@@ -2779,6 +2780,24 @@ test "void return type is optional but typed returns remain explicit" {
     try std.testing.expectEqual(Ast.ReturnType.void, program.functions[0].return_type);
     try std.testing.expectEqual(Ast.ReturnType.void, program.functions[1].return_type);
     try std.testing.expectEqual(Ast.ReturnType.int, program.functions[2].return_type);
+}
+
+test "parse public and private native functions" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var parser = Parser.init(arena.allocator(),
+        \\pub native func pow(value:int) int
+        \\native func native_seed() int
+    );
+    const program = try parser.parse();
+
+    try std.testing.expectEqual(@as(usize, 2), program.functions.len);
+    try std.testing.expect(program.functions[0].is_native);
+    try std.testing.expect(program.functions[0].is_public);
+    try std.testing.expectEqualStrings("pow", program.functions[0].name);
+    try std.testing.expect(program.functions[1].is_native);
+    try std.testing.expect(!program.functions[1].is_public);
+    try std.testing.expectEqualStrings("native_seed", program.functions[1].name);
 }
 
 test "parse fixed arrays and lists" {

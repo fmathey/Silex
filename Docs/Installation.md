@@ -102,7 +102,7 @@ readable intermediate output in `.silex/generated/`. `--target` accepts a Zig
 architecture, operating system, and ABI triple. `--native` adds a JSON-described
 link dependency with `name`, `sources`, and supported `targets`. It is separate
 from the optional `native` section of an automatically discovered `@Module.json`,
-which authorizes that named module's private `native func` API.
+which authorizes that named module's native function implementations.
 
 When a link is required, `compile` reports each native package compiled or
 reused, then reports the application link separately. An unchanged local build
@@ -176,10 +176,10 @@ standard used by its object compilation.
 
 Generated native contracts remain immutable under the content-addressed build
 cache used by the compiler. The same header contents are refreshed at stable
-paths such as `.silex/interfaces/SilexNative/Math.h`, and the compilation
-database places `.silex/interfaces` before the cached include root for editor
-navigation. `.silex/interfaces/.generation` records the matching cached
-interface hash. Stable headers are generated output and must not be edited.
+paths under `.silex/interfaces/SilexNative/`, and the compilation database
+places `.silex/interfaces` before the cached include root for editor navigation.
+`.silex/interfaces/.generation` records the matching cached interface hash.
+Stable headers are generated output and must not be edited.
 
 The project database excludes the distributed Silex library, Git packages and
 other external package sources even when they participate in the same build.

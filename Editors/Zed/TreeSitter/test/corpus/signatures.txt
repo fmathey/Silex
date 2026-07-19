@@ -36,6 +36,7 @@ Native standard function
 ==================
 
 native func native_next() int
+pub native func next() int
 
 ---
 
@@ -45,7 +46,14 @@ native func native_next() int
     name: (identifier)
     (parameter_list)
     return_type: (type
-      (builtin_type))))
+      (builtin_type)))
+  (public_declaration
+    (native_function_declaration
+      native: (identifier)
+      name: (identifier)
+      (parameter_list)
+      return_type: (type
+        (builtin_type)))))
 
 ==================
 Read reference signature and ordinary argument

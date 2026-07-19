@@ -27,7 +27,10 @@ extern "C" void silexNative_STD_Console_native_session_read(
     std::int64_t handle,
     SilexNative_STD_Console_NativeKeyEvent* output
 );
-extern "C" bool silexNative_STD_Console_native_prepare_line();
+extern "C" bool silexNative_STD_Console_read_line(
+    char** outputBytes,
+    std::int64_t* outputLength
+);
 
 bool failsWith(const std::string& expected, const auto& operation) {
     try {
@@ -54,7 +57,9 @@ int main() {
         static_cast<void>(silexNative_STD_Console_native_session_create());
     });
     valid = valid && failsWith("Console.read_line", [] {
-        static_cast<void>(silexNative_STD_Console_native_prepare_line());
+        char* bytes = nullptr;
+        std::int64_t length = 0;
+        static_cast<void>(silexNative_STD_Console_read_line(&bytes, &length));
     });
     silexNative_STD_Console_native_session_close(handle);
     DWORD restoredInput = 0;
@@ -101,8 +106,11 @@ extern "C" void silexNative_STD_Console_native_session_read(
 extern "C" void silexNative_STD_Console_native_session_enter_alternate_screen(
     std::int64_t handle
 );
-extern "C" bool silexNative_STD_Console_native_prepare_line();
-extern "C" void silexNative_STD_Console_native_wait_for_enter();
+extern "C" bool silexNative_STD_Console_read_line(
+    char** outputBytes,
+    std::int64_t* outputLength
+);
+extern "C" void silexNative_STD_Console_wait_for_enter();
 
 bool sameMode(const termios& left, const termios& right);
 
@@ -130,10 +138,12 @@ int testNativeContract() {
         static_cast<void>(silexNative_STD_Console_native_session_create());
     });
     const bool lineRejected = failsWith("Console.read_line", [] {
-        static_cast<void>(silexNative_STD_Console_native_prepare_line());
+        char* bytes = nullptr;
+        std::int64_t length = 0;
+        static_cast<void>(silexNative_STD_Console_read_line(&bytes, &length));
     });
     const bool waitRejected = failsWith("Console.wait_for_enter", [] {
-        silexNative_STD_Console_native_wait_for_enter();
+        silexNative_STD_Console_wait_for_enter();
     });
     valid = valid && secondRejected && lineRejected && waitRejected;
     silexNative_STD_Console_native_session_close(handle);

@@ -14,6 +14,7 @@ files use the `.sx` extension; `silex` is the compiler command.
 - [Values and references](Language/Values-and-References.md)
 - [Expressions and statements](Language/Expressions.md)
 - [Functions](Language/Functions.md)
+- [Native interoperability](Language/Native-Interop.md)
 - [Control flow](Language/Control-Flow.md)
 - [Structures](Language/Structures.md)
 - [Classes](Language/Classes.md)

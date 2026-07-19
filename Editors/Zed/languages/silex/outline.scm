@@ -1,6 +1,9 @@
 (function_definition
   name: (identifier) @name) @item
 
+(native_function_declaration
+  name: (identifier) @name) @item
+
 (structure_definition
   name: (identifier) @name) @item
 

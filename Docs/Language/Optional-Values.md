@@ -17,7 +17,8 @@ var callback:(func(int))? = null
 annotation, parameter, return, field, or already typed collection. It cannot
 infer `let value = null`, an untyped `[null]`, or `null == null`. A plain `T`
 promotes to `T?`; an optional never converts implicitly to `T`. Native function
-interfaces do not accept optional parameters or returns.
+interfaces do not accept optional parameters. They may return selected `T?`
+forms described in [Native interoperability](Native-Interop.md#admitted-signatures).
 
 ## Presence and equality
 

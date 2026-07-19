@@ -151,7 +151,7 @@ module. Its name is reserved and cannot be declared or introduced by a type or
 module alias. It has no fields or methods. A `Result<T,E>` whose branches are
 already transferable may be returned by a `native func`; it cannot be passed as
 a native parameter. The native return transport and ownership contract are
-defined in [Functions](Functions.md#functions).
+defined in [Native interoperability](Native-Interop.md#optional-and-result-returns).
 
 ## The `main` boundary
 

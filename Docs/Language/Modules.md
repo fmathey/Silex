@@ -207,6 +207,15 @@ root interface directly:
 `STD.Time.native_monotonic_microseconds` becomes
 `silexNative_STD_Time_native_monotonic_microseconds`.
 
+`Console.sx` uses `pub native func` directly when its public Silex signature is
+the complete native contract. Scalar and string operations include `write`,
+`flush`, and `is_interactive`; `get_dimensions() Dimensions?` and
+`read_line() str?` exercise optional flat-structure and string returns.
+Operations that validate coordinates or translate enums retain a private
+primitive—named with STD's internal `native_` convention—behind an ordinary
+Silex function. For example,
+`STD.Console.write` becomes `silexNative_STD_Console_write`.
+
 ```json
 {
   "native": {
@@ -271,9 +280,9 @@ or defines intended for direct consumers in `public_include_dirs` and
 
 `provides` contains declared native identities, not inferred symbols. Two
 distinct resolved package identities cannot provide the same value; Silex
-reports both dependency chains before invoking the C or C++ compiler. Private
-C symbols generated for Silex `native func` declarations need no `provides`
-entry.
+reports both dependency chains before invoking the C or C++ compiler. C symbols
+generated for Silex `native func` declarations are implementation symbols
+regardless of their Silex visibility and need no `provides` entry.
 
 `include_dirs` and `defines` remain private to the package's own native
 sources. `public_include_dirs` and `public_defines` also apply to the owner,

@@ -234,13 +234,6 @@ pub fn build(b: *std.Build) void {
     legacy_module_manifest_command.expectExitCode(1);
     legacy_module_manifest_command.expectStdErrMatch("'; rename it to '@Module.json'\n");
 
-    const invalid_public_native_function_command = b.addRunArtifact(executable);
-    invalid_public_native_function_command.addArgs(&.{ "compile", "Tests/InvalidPublicNativeFunction.sx" });
-    invalid_public_native_function_command.expectExitCode(1);
-    invalid_public_native_function_command.expectStdErrEqual(
-        "Tests/InvalidPublicNativeFunction.sx:1:5: error: native functions cannot be public\n",
-    );
-
     const invalid_native_type_command = b.addRunArtifact(native_module_test_executable);
     invalid_native_type_command.addArgs(&.{ "compile", "Tests/DistributedModules/NativeInvalidType/Main.sx" });
     invalid_native_type_command.expectExitCode(1);
@@ -1806,7 +1799,6 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&invalid_local_reference_command.step);
     test_step.dependOn(&invalid_native_function_command.step);
     test_step.dependOn(&legacy_module_manifest_command.step);
-    test_step.dependOn(&invalid_public_native_function_command.step);
     test_step.dependOn(&invalid_native_type_command.step);
     test_step.dependOn(&missing_native_symbol_command.step);
     test_step.dependOn(&native_exception_command.step);

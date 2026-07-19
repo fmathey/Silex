@@ -3036,6 +3036,40 @@ test "qualified completion resolves a used module and its typed prefix" {
     );
 }
 
+test "module completion exposes public native functions" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var temporary = std.testing.tmpDir(.{ .iterate = true });
+    defer temporary.cleanup();
+
+    try temporary.dir.createDir(std.testing.io, "Math", .default_dir);
+    try temporary.dir.writeFile(std.testing.io, .{
+        .sub_path = "Main.sx",
+        .data = "use Math\nfunc main() {}\n",
+    });
+    try temporary.dir.writeFile(std.testing.io, .{
+        .sub_path = "Math/Runtime.sx",
+        .data = "pub native func pow(value:int) int\nnative func native_seed() int\n",
+    });
+
+    const relative_root = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &temporary.sub_path });
+    const absolute_root = try std.fs.path.resolve(allocator, &.{relative_root});
+    const main_path = try std.fs.path.join(allocator, &.{ absolute_root, "Main.sx" });
+    const uri = try std.fmt.allocPrint(allocator, "file://{s}", .{main_path});
+    const items = try moduleExportCompletionItems(
+        allocator,
+        std.testing.io,
+        uri,
+        "Math",
+        .{ .qualifier = "Math", .prefix = "", .type_only = false },
+        .public_api,
+    );
+
+    try std.testing.expect(containsCompletion(items, "Math.pow"));
+    try std.testing.expect(!containsCompletion(items, "Math.native_seed"));
+}
+
 test "file URIs are decoded for local module discovery" {
     const path = (try filePathFromUri(std.testing.allocator, "file:///tmp/Silex%20Project/Main.sx")).?;
     defer std.testing.allocator.free(path);

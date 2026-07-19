@@ -1,3 +1,4 @@
+#include <cstddef>
 #include <cstdint>
 #include <csignal>
 #include <cstdio>
@@ -6,7 +7,6 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
-#include <utility>
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -21,6 +21,30 @@
 #endif
 
 extern "C" bool silexConsoleSessionIsActive();
+
+struct SilexNative_STD_Console_Dimensions;
+
+struct DimensionsOutput {
+    std::int64_t columns;
+    std::int64_t rows;
+};
+
+#if defined(SILEX_NATIVE_TRANSPORT_SILEXNATIVE_STD_CONSOLE_DIMENSIONS)
+static_assert(
+    sizeof(DimensionsOutput) == sizeof(SilexNative_STD_Console_Dimensions)
+);
+static_assert(
+    alignof(DimensionsOutput) == alignof(SilexNative_STD_Console_Dimensions)
+);
+static_assert(
+    offsetof(DimensionsOutput, columns) ==
+    offsetof(SilexNative_STD_Console_Dimensions, columns)
+);
+static_assert(
+    offsetof(DimensionsOutput, rows) ==
+    offsetof(SilexNative_STD_Console_Dimensions, rows)
+);
+#endif
 
 namespace {
 
@@ -130,8 +154,6 @@ void flush() {
 
 // -----------------------------------------------------------------------------
 
-std::optional<std::string> pendingLine;
-
 void flushPrompt() {
     if (std::fflush(stdout) != 0) consoleFail("read_line", "unable to flush standard output");
 }
@@ -142,7 +164,7 @@ int readByte(const char* operation) {
     consoleFail(operation, "unable to read standard input");
 }
 
-bool prepareLine() {
+std::optional<std::string> readLine() {
     if (silexConsoleSessionIsActive()) {
         consoleFail("read_line", "interactive session is active");
     }
@@ -151,24 +173,20 @@ bool prepareLine() {
     while (true) {
         const int value = readByte("read_line");
         if (value == EOF) {
-            if (line.empty()) return false;
-            pendingLine = std::move(line);
-            return true;
+            if (line.empty()) return std::nullopt;
+            return line;
         }
         if (value == '\n') {
-            pendingLine = std::move(line);
-            return true;
+            return line;
         }
         if (value == '\r') {
             const int next = readByte("read_line");
             if (next == '\n') {
-                pendingLine = std::move(line);
-                return true;
+                return line;
             }
             line.push_back('\r');
             if (next == EOF) {
-                pendingLine = std::move(line);
-                return true;
+                return line;
             }
             if (std::ungetc(next, stdin) == EOF) consoleFail("read_line", "unable to preserve input");
             continue;
@@ -192,43 +210,48 @@ void waitForEnter() {
 
 } // namespace
 
-extern "C" void silexNative_STD_Console_native_write(const char* text, std::int64_t length) {
+extern "C" void silexNative_STD_Console_write(const char* text, std::int64_t length) {
     writeAll(false, text, length, "write");
 }
 
-extern "C" void silexNative_STD_Console_native_write_line(const char* text, std::int64_t length) {
+extern "C" void silexNative_STD_Console_write_line(const char* text, std::int64_t length) {
     line(false, text, length, "write_line");
 }
 
-extern "C" void silexNative_STD_Console_native_write_error(const char* text, std::int64_t length) {
+extern "C" void silexNative_STD_Console_write_error(const char* text, std::int64_t length) {
     writeAll(true, text, length, "write_error");
 }
 
-extern "C" void silexNative_STD_Console_native_write_error_line(const char* text, std::int64_t length) {
+extern "C" void silexNative_STD_Console_write_error_line(const char* text, std::int64_t length) {
     line(true, text, length, "write_error_line");
 }
 
-extern "C" void silexNative_STD_Console_native_flush() {
+extern "C" void silexNative_STD_Console_flush() {
     flush();
 }
 
-extern "C" bool silexNative_STD_Console_native_is_interactive() {
+extern "C" bool silexNative_STD_Console_is_interactive() {
     return interactive();
 }
 
-extern "C" std::int64_t silexNative_STD_Console_native_columns() {
-    return interactive() ? dimension(true) : 0;
+extern "C" bool silexNative_STD_Console_get_dimensions(
+    SilexNative_STD_Console_Dimensions* output
+) {
+    if (!interactive()) return false;
+    const auto columns = dimension(true);
+    const auto rows = dimension(false);
+    if (columns <= 0 || rows <= 0) return false;
+    auto* dimensions = reinterpret_cast<DimensionsOutput*>(output);
+    dimensions->columns = columns;
+    dimensions->rows = rows;
+    return true;
 }
 
-extern "C" std::int64_t silexNative_STD_Console_native_rows() {
-    return interactive() ? dimension(false) : 0;
-}
-
-extern "C" void silexNative_STD_Console_native_clear_screen() {
+extern "C" void silexNative_STD_Console_clear_screen() {
     control("\x1b[2J\x1b[H", "clear_screen");
 }
 
-extern "C" void silexNative_STD_Console_native_clear_line() {
+extern "C" void silexNative_STD_Console_clear_line() {
     control("\x1b[2K\x1b[1G", "clear_line");
 }
 
@@ -236,11 +259,11 @@ extern "C" void silexNative_STD_Console_native_move_cursor(std::int64_t column, 
     control("\x1b[" + std::to_string(static_cast<std::uint64_t>(row) + 1) + ";" + std::to_string(static_cast<std::uint64_t>(column) + 1) + "H", "move_cursor");
 }
 
-extern "C" void silexNative_STD_Console_native_show_cursor() {
+extern "C" void silexNative_STD_Console_show_cursor() {
     control("\x1b[?25h", "show_cursor");
 }
 
-extern "C" void silexNative_STD_Console_native_hide_cursor() {
+extern "C" void silexNative_STD_Console_hide_cursor() {
     control("\x1b[?25l", "hide_cursor");
 }
 
@@ -256,28 +279,25 @@ extern "C" void silexNative_STD_Console_native_enable_style(std::int64_t code) {
     control("\x1b[" + std::to_string(code) + "m", "enable_style");
 }
 
-extern "C" void silexNative_STD_Console_native_reset_style() {
+extern "C" void silexNative_STD_Console_reset_style() {
     control("\x1b[0m", "reset_style");
 }
 
-extern "C" bool silexNative_STD_Console_native_prepare_line() {
-    return prepareLine();
-}
-
-extern "C" void silexNative_STD_Console_native_take_line(
+extern "C" bool silexNative_STD_Console_read_line(
     char** output_bytes,
     std::int64_t* output_length
 ) {
-    if (!pendingLine.has_value()) consoleFail("read_line", "line was not prepared");
-    const auto length = pendingLine->size();
+    const auto line = readLine();
+    if (!line.has_value()) return false;
+    const auto length = line->size();
     auto* bytes = length == 0 ? nullptr : static_cast<char*>(std::malloc(length));
     if (length != 0 && bytes == nullptr) consoleFail("read_line", "unable to allocate line");
-    if (length != 0) std::memcpy(bytes, pendingLine->data(), length);
-    pendingLine.reset();
+    if (length != 0) std::memcpy(bytes, line->data(), length);
     *output_bytes = bytes;
     *output_length = static_cast<std::int64_t>(length);
+    return true;
 }
 
-extern "C" void silexNative_STD_Console_native_wait_for_enter() {
+extern "C" void silexNative_STD_Console_wait_for_enter() {
     waitForEnter();
 }

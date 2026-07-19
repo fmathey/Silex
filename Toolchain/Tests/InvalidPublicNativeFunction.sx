@@ -1,3 +1,0 @@
-pub native func native_value() int
-
-func main() {}

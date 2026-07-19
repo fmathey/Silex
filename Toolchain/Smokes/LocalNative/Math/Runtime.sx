@@ -1,5 +1,1 @@
-native func native_half(value:int) int
-
-pub func half(value:int) int {
-    return native_half(value)
-}
+pub native func half(value:int) int

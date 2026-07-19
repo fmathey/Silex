@@ -2311,18 +2311,7 @@
   {
     "type": "public_declaration",
     "named": true,
-    "fields": {
-      "visibility": {
-        "multiple": false,
-        "required": true,
-        "types": [
-          {
-            "type": "pub",
-            "named": false
-          }
-        ]
-      }
-    },
+    "fields": {},
     "children": {
       "multiple": false,
       "required": true,
@@ -2333,6 +2322,10 @@
         },
         {
           "type": "function_definition",
+          "named": true
+        },
+        {
+          "type": "native_function_declaration",
           "named": true
         },
         {

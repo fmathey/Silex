@@ -55,7 +55,16 @@ module.exports = grammar({
       ),
 
     public_declaration: ($) =>
-      seq(field("visibility", "pub"), choice($.enum_definition, $.protocol_definition, $.structure_definition, $.function_definition)),
+      seq(
+        "pub",
+        choice(
+          $.enum_definition,
+          $.protocol_definition,
+          $.structure_definition,
+          $.function_definition,
+          $.native_function_declaration,
+        ),
+      ),
 
     protocol_definition: ($) =>
       seq(

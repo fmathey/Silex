@@ -121,11 +121,24 @@ func require_positive(value:int) int {
 }
 ```
 
+## Native functions
+
 `native func` declares a private, top-level function implemented by a named
-module's native runtime rather than by a Silex body. The local or distributed
-module, or one of its parents, must contain a `@Module.json` with a `native`
-section. A standalone main source cannot declare native functions, and
-`pub native func` is invalid. Native function names begin with `native_`.
+module's native runtime rather than by a Silex body. Its name follows the
+ordinary function naming rules; `native_` is only an optional library
+convention. `pub native func` instead exposes the native implementation
+directly as an ordinary public module function:
+
+```sx
+pub native func pow(value:int) int
+```
+
+The local or distributed module, or one of its parents, must contain a
+`@Module.json` with a `native` section. A standalone main source cannot declare
+native functions. Both forms share the same generated C interface and the same
+signature restrictions. The exhaustive type matrix, transports, ownership
+rules, generated headers, and examples are specified in
+[Native interoperability](Native-Interop.md).
 
 Their ABI is intentionally narrow: scalar booleans and numbers may be passed
 or returned, and `str` may be passed or returned. `uint8[]` and `uint8[N]` are
@@ -291,8 +304,9 @@ the failure tag explicitly for recoverable errors. `Result` parameters and
 nested Result branches remain unavailable.
 
 Before compiling a native runtime, Silex generates its authoritative C
-interface beneath `.silex/build/`. Every module segment becomes a header-path
-segment, so the exact interface of `STD.Console` remains available as:
+interface beneath `.silex/build/` and synchronizes an editor-facing copy under
+`.silex/interfaces/`. Every module segment becomes a header-path segment, so
+the exact interface of `STD.Console` remains available as:
 
 ```cpp
 #include <SilexNative/STD/Console.h>

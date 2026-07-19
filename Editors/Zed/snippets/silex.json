@@ -42,6 +42,14 @@
     ],
     "description": "Expose a module declaration"
   },
+  "Public native function": {
+    "prefix": "pubnative",
+    "body": [
+      "pub native func ${1:name}(${2}) ${3:void}",
+      "$0"
+    ],
+    "description": "Expose a module function implemented by its native runtime"
+  },
   "Enum": {
     "prefix": "enum",
     "body": [

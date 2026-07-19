@@ -1,23 +1,22 @@
-native func native_write(text:str) void
-native func native_write_line(text:str) void
-native func native_write_error(text:str) void
-native func native_write_error_line(text:str) void
-native func native_flush() void
-native func native_is_interactive() bool
-native func native_columns() int
-native func native_rows() int
-native func native_clear_screen() void
-native func native_clear_line() void
 native func native_move_cursor(column:int, row:int) void
-native func native_show_cursor() void
-native func native_hide_cursor() void
 native func native_set_foreground(code:int) void
 native func native_set_background(code:int) void
 native func native_enable_style(code:int) void
-native func native_reset_style() void
-native func native_prepare_line() bool
-native func native_take_line() str
-native func native_wait_for_enter() void
+
+pub native func write(text:str) void
+pub native func write_line(text:str) void
+pub native func write_error(text:str) void
+pub native func write_error_line(text:str) void
+pub native func flush() void
+pub native func is_interactive() bool
+pub native func get_dimensions() Dimensions?
+pub native func clear_screen() void
+pub native func clear_line() void
+pub native func show_cursor() void
+pub native func hide_cursor() void
+pub native func reset_style() void
+pub native func read_line() str?
+pub native func wait_for_enter() void
 
 pub struct Dimensions {
     let columns:int
@@ -52,28 +51,6 @@ pub enum TextStyle {
     inverse
 }
 
-pub func write(text:str) { native_write(text) }
-pub func write_line(text:str) { native_write_line(text) }
-pub func write_error(text:str) { native_write_error(text) }
-pub func write_error_line(text:str) { native_write_error_line(text) }
-pub func flush() { native_flush() }
-pub func is_interactive() bool { return native_is_interactive() }
-
-pub func get_dimensions() Dimensions? {
-    if !is_interactive() {
-        return null
-    }
-    let columns = native_columns()
-    let rows = native_rows()
-    if columns <= 0 || rows <= 0 {
-        return null
-    }
-    return Dimensions(columns:columns, rows:rows)
-}
-
-pub func clear_screen() { native_clear_screen() }
-pub func clear_line() { native_clear_line() }
-
 pub func move_cursor(column:int, row:int) {
     if column < 0 || row < 0 {
         panic("Console.move_cursor requires non-negative coordinates")
@@ -81,23 +58,9 @@ pub func move_cursor(column:int, row:int) {
     native_move_cursor(column, row)
 }
 
-pub func show_cursor() { native_show_cursor() }
-pub func hide_cursor() { native_hide_cursor() }
 pub func set_foreground(color:Color) { native_set_foreground(color_code(color, false)) }
 pub func set_background(color:Color) { native_set_background(color_code(color, true)) }
 pub func enable_style(style:TextStyle) { native_enable_style(style_code(style)) }
-pub func reset_style() { native_reset_style() }
-
-pub func read_line() str? {
-    if native_prepare_line() {
-        return native_take_line()
-    }
-    return null
-}
-
-pub func wait_for_enter() {
-    native_wait_for_enter()
-}
 
 func color_code(color:Color, background:bool) int {
     let foreground = match color {

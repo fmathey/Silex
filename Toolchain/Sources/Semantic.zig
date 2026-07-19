@@ -1606,10 +1606,6 @@ pub const Analyzer = struct {
                     );
                     return self.fail(ast_function.position, message);
                 }
-                if (!std.mem.startsWith(u8, native_function_name.?, "native_")) {
-                    return self.fail(ast_function.name_position, "native function names must begin with 'native_'");
-                }
-                if (ast_function.is_public) return self.fail(ast_function.position, "native functions cannot be public");
             }
             var parameter_types: std.ArrayList(Type) = .empty;
             var parameter_modes: std.ArrayList(Ast.ParameterMode) = .empty;
@@ -8451,6 +8447,40 @@ test "native ABI accepts optional transferable returns" {
     var analyzer = Analyzer.init(allocator);
     analyzer.native_module_names = &.{"Native"};
     _ = try analyzer.analyze(program);
+}
+
+test "public native functions use ordinary API names" {
+    const Parser = @import("Parser.zig").Parser;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var parser = Parser.init(allocator, "pub native func pow(value:int) int\nfunc main() {}\n");
+    const program = try parser.parse();
+    @constCast(program.functions)[0].name = "Math.pow";
+    var analyzer = Analyzer.init(allocator);
+    analyzer.native_module_names = &.{"Math"};
+    const analyzed = try analyzer.analyze(program);
+    try std.testing.expect(analyzed.functions[0].is_native);
+    try std.testing.expectEqualStrings("pow", analyzed.functions[0].native_function_name.?);
+    try std.testing.expectEqualStrings("silexNative_Math_pow", analyzed.functions[0].generated_name);
+}
+
+test "private native functions use ordinary names" {
+    const Parser = @import("Parser.zig").Parser;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var parser = Parser.init(allocator, "native func pow(value:int) int\nfunc main() {}\n");
+    const program = try parser.parse();
+    @constCast(program.functions)[0].name = "Math.pow";
+    var analyzer = Analyzer.init(allocator);
+    analyzer.native_module_names = &.{"Math"};
+    const analyzed = try analyzer.analyze(program);
+    try std.testing.expect(analyzed.functions[0].is_native);
+    try std.testing.expectEqualStrings("pow", analyzed.functions[0].native_function_name.?);
+    try std.testing.expectEqualStrings("silexNative_Math_pow", analyzed.functions[0].generated_name);
 }
 
 test "native ABI rejects optional non-transferable returns" {

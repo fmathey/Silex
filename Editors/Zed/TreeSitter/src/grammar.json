@@ -166,12 +166,8 @@
       "type": "SEQ",
       "members": [
         {
-          "type": "FIELD",
-          "name": "visibility",
-          "content": {
-            "type": "STRING",
-            "value": "pub"
-          }
+          "type": "STRING",
+          "value": "pub"
         },
         {
           "type": "CHOICE",
@@ -191,6 +187,10 @@
             {
               "type": "SYMBOL",
               "name": "function_definition"
+            },
+            {
+              "type": "SYMBOL",
+              "name": "native_function_declaration"
             }
           ]
         }
