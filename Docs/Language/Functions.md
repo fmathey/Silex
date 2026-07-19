@@ -172,8 +172,19 @@ The generated C transport—not the structure emitted in `Generated.cpp`—is th
 ABI. Static members and methods add no transport field. Nested structures,
 enums, classes, protocols, collections, optionals, `Result`, functions, generic
 structures, and structures with `drop` remain unavailable in a native return
-structure. Strings in structures passed as parameters are not yet supported;
-structures remain unavailable as native parameters.
+structure.
+
+A copyable, non-generic structure whose stored fields are directly scalar
+booleans or numbers may also be passed by value to a native function. The bridge
+evaluates the Silex argument once, copies its fields in declaration order into
+an independent C transport, and passes `const SilexNative_Module_Type*`. That
+pointer is valid only for the duration of the call: the native function cannot
+modify the Silex value or retain its address. Input and output positions reuse
+the same named transport definition. Several structured arguments each receive
+their own transport. String fields, nested structures, enums, classes,
+protocols, collections, references, optionals, `Result`, functions, generic
+structures, and structures with `drop` remain unavailable as native structure
+parameters.
 
 A native function may return `T?` when `T` is one of the transferable return
 types above: a scalar boolean or number, `str`, or an admitted flat structure.

@@ -1,0 +1,34 @@
+pub struct NativeScalars {
+    var integer:int
+    var signed8:int8
+    var signed16:int16
+    var signed32:int32
+    var unsigned8:uint8
+    var unsigned16:uint16
+    var unsigned32:uint32
+    var unsigned64:uint64
+    var decimal32:float
+    var decimal64:float64
+    var ready:bool
+}
+
+pub struct NativeBounds {
+    var width:int
+    var height:int
+}
+
+native func native_verify(
+    values:NativeScalars,
+    first:NativeBounds,
+    second:NativeBounds,
+    marker:int
+) bool
+
+pub func verify(
+    values:NativeScalars,
+    first:NativeBounds,
+    second:NativeBounds,
+    marker:int
+) bool {
+    return native_verify(values, first, second, marker)
+}

@@ -166,7 +166,8 @@ pub const Expression = struct {
         is_native: bool,
         native_module_name: ?[]const u8,
         native_function_name: ?[]const u8,
-        native_return_structure: ?NativeReturnStructure = null,
+        native_return_structure: ?NativeStructureTransport = null,
+        native_parameter_structures: []const ?NativeStructureTransport = &.{},
     };
 
     pub const ValueCall = struct {
@@ -519,13 +520,13 @@ pub const StructureField = struct {
     reset_value: ?*Expression = null,
 };
 
-pub const NativeReturnStructure = struct {
+pub const NativeStructureTransport = struct {
     source_name: []const u8,
     generated_name: []const u8,
-    fields: []const NativeReturnField,
+    fields: []const NativeTransportField,
 };
 
-pub const NativeReturnField = struct {
+pub const NativeTransportField = struct {
     source_name: []const u8,
     generated_name: []const u8,
     type: Type,
@@ -1637,7 +1638,7 @@ pub const Analyzer = struct {
                     return self.fail(ast_function.position, message);
                 }
                 for (ast_function.parameters, parameter_types.items, parameter_modes.items) |parameter, parameter_type, mode| {
-                    if (!isNativeParameterType(parameter_type) or mode != .value) {
+                    if (!try self.isNativeParameterType(parameter_type) or mode != .value) {
                         const parameter_name = try allocatedTypeName(self.allocator, parameter_type);
                         const message = try std.fmt.allocPrint(
                             self.allocator,
@@ -3797,9 +3798,13 @@ pub const Analyzer = struct {
                 .native_module_name = function_symbol.native_module_name,
                 .native_function_name = function_symbol.native_function_name,
                 .native_return_structure = if (function_symbol.is_native)
-                    try self.nativeReturnStructure(function_symbol.return_type)
+                    try self.nativeStructureTransport(function_symbol.return_type)
                 else
                     null,
+                .native_parameter_structures = if (function_symbol.is_native)
+                    try self.nativeParameterStructures(function_symbol.parameter_types)
+                else
+                    &.{},
             } },
         });
     }
@@ -6908,14 +6913,14 @@ pub const Analyzer = struct {
         return true;
     }
 
-    fn nativeReturnStructure(self: *const Analyzer, value: Type) Allocator.Error!?NativeReturnStructure {
+    fn nativeStructureTransport(self: *const Analyzer, value: Type) Allocator.Error!?NativeStructureTransport {
         const returned = if (value == .optional) value.optional.* else value;
         const structure_type = switch (returned) {
             .structure => |type_value| type_value,
             else => return null,
         };
         const structure = self.findStructureByGeneratedName(structure_type.generated_name) orelse return null;
-        var fields: std.ArrayList(NativeReturnField) = .empty;
+        var fields: std.ArrayList(NativeTransportField) = .empty;
         for (structure.fields) |field| try fields.append(self.allocator, .{
             .source_name = field.source_name,
             .generated_name = field.generated_name,
@@ -6926,6 +6931,30 @@ pub const Analyzer = struct {
             .generated_name = structure.generated_name,
             .fields = try fields.toOwnedSlice(self.allocator),
         };
+    }
+
+    fn nativeParameterStructures(
+        self: *const Analyzer,
+        parameter_types: []const Type,
+    ) Allocator.Error![]const ?NativeStructureTransport {
+        var structures: std.ArrayList(?NativeStructureTransport) = .empty;
+        for (parameter_types) |parameter_type| {
+            try structures.append(self.allocator, try self.nativeStructureTransport(parameter_type));
+        }
+        return structures.toOwnedSlice(self.allocator);
+    }
+
+    fn isNativeParameterType(self: *const Analyzer, value: Type) Allocator.Error!bool {
+        if (isNativeScalarParameterType(value)) return true;
+        const structure_type = switch (value) {
+            .structure => |type_value| type_value,
+            else => return false,
+        };
+        if (structure_type.is_class or structure_type.is_owner) return false;
+        const structure = self.findStructureByGeneratedName(structure_type.generated_name) orelse return false;
+        if (structure.is_generic or try self.isNonCopyableType(value)) return false;
+        for (structure.fields) |field| if (!isNativeScalarFieldType(field.type)) return false;
+        return true;
     }
 
     fn fail(self: *Analyzer, position: Source.Position, message: []const u8) Source.Error {
@@ -7567,7 +7596,14 @@ fn isNativeStructureFieldType(value: Type) bool {
     };
 }
 
-fn isNativeParameterType(value: Type) bool {
+fn isNativeScalarFieldType(value: Type) bool {
+    return switch (value) {
+        .int, .int8, .int16, .int32, .uint8, .uint16, .uint32, .uint64, .float, .float64, .bool => true,
+        else => false,
+    };
+}
+
+fn isNativeScalarParameterType(value: Type) bool {
     return value == .str or isNativeScalarReturnType(value);
 }
 
@@ -7909,6 +7945,23 @@ fn expectNativeStructureReturnRejected(source: []const u8) !void {
     analyzer.native_module_names = &.{"Native"};
     try std.testing.expectError(error.InvalidSource, analyzer.analyze(try specializer.specialize()));
     try std.testing.expect(std.mem.startsWith(u8, analyzer.diagnostic.?.message, "native functions cannot return 'Payload"));
+}
+
+fn expectNativeStructureParameterRejected(source: []const u8) !void {
+    const Parser = @import("Parser.zig").Parser;
+    const Generics = @import("Generics.zig");
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var parser = Parser.init(allocator, source);
+    const program = try parser.parse();
+    @constCast(program.functions)[0].name = "Native.native_accept";
+    var specializer = Generics.Specializer.init(allocator, program);
+    var analyzer = Analyzer.init(allocator);
+    analyzer.native_module_names = &.{"Native"};
+    try std.testing.expectError(error.InvalidSource, analyzer.analyze(try specializer.specialize()));
+    try std.testing.expect(std.mem.startsWith(u8, analyzer.diagnostic.?.message, "native parameter 'value' cannot use 'Payload"));
 }
 
 test "analyze enum construction and exhaustive match" {
@@ -8392,6 +8445,54 @@ test "native ABI rejects non scalar structure returns" {
         "struct Payload<T> { let value:T } native func native_read() Payload<int>; func main() {}",
     };
     for (cases) |source| try expectNativeStructureReturnRejected(source);
+}
+
+test "native ABI accepts scalar structure parameters" {
+    const Parser = @import("Parser.zig").Parser;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var parser = Parser.init(allocator,
+        \\struct NativeScalars {
+        \\    let integer:int
+        \\    let signed8:int8
+        \\    let signed16:int16
+        \\    let signed32:int32
+        \\    let unsigned8:uint8
+        \\    let unsigned16:uint16
+        \\    let unsigned32:uint32
+        \\    let unsigned64:uint64
+        \\    let decimal32:float
+        \\    let decimal64:float64
+        \\    let ready:bool
+        \\}
+        \\struct NativeBounds { let width:int; let height:int }
+        \\native func native_accept(values:NativeScalars, first:NativeBounds, second:NativeBounds) bool
+        \\func main() {}
+    );
+    const program = try parser.parse();
+    @constCast(program.functions)[0].name = "Native.native_accept";
+    var analyzer = Analyzer.init(allocator);
+    analyzer.native_module_names = &.{"Native"};
+    _ = try analyzer.analyze(program);
+}
+
+test "native ABI rejects non scalar structure parameters" {
+    const cases = [_][]const u8{
+        "struct Payload { let value:str } native func native_accept(value:Payload) bool; func main() {}",
+        "struct Inner { let value:int } struct Payload { let value:Inner } native func native_accept(value:Payload) bool; func main() {}",
+        "enum State { ready } struct Payload { let value:State } native func native_accept(value:Payload) bool; func main() {}",
+        "class Payload {} native func native_accept(value:Payload) bool; func main() {}",
+        "protocol Value {} struct Payload { var value:Value } native func native_accept(value:Payload) bool; func main() {}",
+        "struct Payload { var value:int[] } native func native_accept(value:Payload) bool; func main() {}",
+        "struct Payload { var value:int? } native func native_accept(value:Payload) bool; func main() {}",
+        "struct Payload { var value:Result<int,str> } native func native_accept(value:Payload) bool; func main() {}",
+        "struct Payload { var value:func() } native func native_accept(value:Payload) bool; func main() {}",
+        "struct Payload { drop {} } native func native_accept(value:Payload) bool; func main() {}",
+        "struct Payload<T> { let value:T } native func native_accept(value:Payload<int>) bool; func main() {}",
+    };
+    for (cases) |source| try expectNativeStructureParameterRejected(source);
 }
 
 test "native ABI rejects optional parameters" {

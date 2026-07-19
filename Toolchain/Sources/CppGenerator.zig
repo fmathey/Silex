@@ -44,12 +44,29 @@ pub fn generateWithSources(
         \\#include <vector>
         \\
     );
-    for (program.functions, 0..) |function, index| {
+    var emitted_native_transports: std.ArrayList([]const u8) = .empty;
+    for (program.functions) |function| {
         if (!function.is_native) continue;
-        const structure = nativeReturnStructure(program, function) orelse continue;
-        if (nativeReturnStructureAppearedEarlier(program, program.functions[0..index], function, structure)) continue;
-        try generateNativeTransportDefinition(allocator, &output, function.native_module_name.?, structure);
-        try output.append(allocator, '\n');
+        if (nativeReturnStructure(program, function)) |structure| {
+            try generateNativeTransportIfNew(
+                allocator,
+                &output,
+                &emitted_native_transports,
+                function.native_module_name.?,
+                structure,
+            );
+        }
+        for (function.parameters) |parameter| {
+            if (nativeStructureForType(program, parameter.type)) |structure| {
+                try generateNativeTransportIfNew(
+                    allocator,
+                    &output,
+                    &emitted_native_transports,
+                    function.native_module_name.?,
+                    structure,
+                );
+            }
+        }
     }
     for (program.functions) |function| {
         if (!function.is_native) continue;
@@ -1703,6 +1720,18 @@ fn generateNativeFunctionSignature(
             } else {
                 try output.appendSlice(allocator, ", std::int64_t");
             }
+        } else if (nativeStructureForType(program, parameter.type)) |parameter_structure| {
+            try output.appendSlice(allocator, "const ");
+            try output.appendSlice(allocator, try NativeInterface.transportName(
+                allocator,
+                function.native_module_name.?,
+                parameter_structure.source_name,
+            ));
+            try output.append(allocator, '*');
+            if (include_names) {
+                try output.append(allocator, ' ');
+                try output.appendSlice(allocator, parameter.generated_name);
+            }
         } else {
             try appendCppType(allocator, output, parameter.type);
             if (include_names) {
@@ -1735,6 +1764,22 @@ fn generateNativeFunctionSignature(
     try output.append(allocator, ')');
 }
 
+fn generateNativeTransportIfNew(
+    allocator: Allocator,
+    output: *std.ArrayList(u8),
+    emitted: *std.ArrayList([]const u8),
+    module_name: []const u8,
+    structure: Semantic.Structure,
+) !void {
+    const transport_name = try NativeInterface.transportName(allocator, module_name, structure.source_name);
+    for (emitted.items) |name| {
+        if (std.mem.eql(u8, name, transport_name)) return;
+    }
+    try emitted.append(allocator, transport_name);
+    try generateNativeTransportDefinition(allocator, output, module_name, structure);
+    try output.append(allocator, '\n');
+}
+
 fn generateNativeTransportDefinition(
     allocator: Allocator,
     output: *std.ArrayList(u8),
@@ -1765,28 +1810,18 @@ fn generateNativeTransportDefinition(
 }
 
 fn nativeReturnStructure(program: Semantic.Program, function: Semantic.Function) ?Semantic.Structure {
-    const structure_type = switch (nativeReturnValueType(function.return_type)) {
-        .structure => |value| value,
+    return nativeStructureForType(program, nativeReturnValueType(function.return_type));
+}
+
+fn nativeStructureForType(program: Semantic.Program, value: Semantic.Type) ?Semantic.Structure {
+    const structure_type = switch (value) {
+        .structure => |structure| structure,
         else => return null,
     };
     for (program.structures) |structure| {
         if (std.mem.eql(u8, structure.generated_name, structure_type.generated_name)) return structure;
     }
     return null;
-}
-
-fn nativeReturnStructureAppearedEarlier(
-    program: Semantic.Program,
-    functions: []const Semantic.Function,
-    function: Semantic.Function,
-    structure: Semantic.Structure,
-) bool {
-    for (functions) |previous| {
-        if (!previous.is_native or !std.mem.eql(u8, previous.native_module_name.?, function.native_module_name.?)) continue;
-        const previous_structure = nativeReturnStructure(program, previous) orelse continue;
-        if (std.mem.eql(u8, previous_structure.source_name, structure.source_name)) return true;
-    }
-    return false;
 }
 
 fn structureIsNativeReturn(functions: []const Semantic.Function, structure: Semantic.Structure) bool {
@@ -1808,7 +1843,7 @@ fn containsNativeFunction(functions: []const Semantic.Function) bool {
     return false;
 }
 
-fn nativeReturnHasString(structure: Semantic.NativeReturnStructure) bool {
+fn nativeReturnHasString(structure: Semantic.NativeStructureTransport) bool {
     for (structure.fields) |field| if (field.type == .str) return true;
     return false;
 }
@@ -1816,13 +1851,72 @@ fn nativeReturnHasString(structure: Semantic.NativeReturnStructure) bool {
 fn generateNativeStringGuardCleanup(
     allocator: Allocator,
     output: *std.ArrayList(u8),
-    structure: Semantic.NativeReturnStructure,
+    structure: Semantic.NativeStructureTransport,
 ) GenerateError!void {
     for (structure.fields) |field| {
         if (field.type != .str) continue;
         try output.appendSlice(allocator, "silexNativeGuard_");
         try output.appendSlice(allocator, field.generated_name);
         try output.appendSlice(allocator, ".reset();");
+    }
+}
+
+fn generateNativeArgumentPreludes(
+    allocator: Allocator,
+    output: *std.ArrayList(u8),
+    call: Semantic.Expression.Call,
+) GenerateError!void {
+    for (call.arguments, call.native_parameter_structures, 0..) |argument, parameter_structure, index| {
+        if (argument.type == .str) {
+            try output.appendSlice(allocator, "auto&& silexNativeString");
+            try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}", .{index}));
+            try output.appendSlice(allocator, " = ");
+            try generateExpression(allocator, output, argument);
+            try output.append(allocator, ';');
+            continue;
+        }
+        const structure = parameter_structure orelse continue;
+        try output.appendSlice(allocator, "const auto& silexNativeStructure");
+        try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}", .{index}));
+        try output.appendSlice(allocator, " = ");
+        try generateExpression(allocator, output, argument);
+        try output.append(allocator, ';');
+        try output.appendSlice(allocator, try NativeInterface.transportName(
+            allocator,
+            call.native_module_name.?,
+            structure.source_name,
+        ));
+        try output.appendSlice(allocator, " silexNativeInput");
+        try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}", .{index}));
+        try output.appendSlice(allocator, "{");
+        for (structure.fields, 0..) |field, field_index| {
+            if (field_index != 0) try output.appendSlice(allocator, ", ");
+            try output.appendSlice(allocator, "silexNativeStructure");
+            try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}.", .{index}));
+            try output.appendSlice(allocator, field.generated_name);
+        }
+        try output.appendSlice(allocator, "};");
+    }
+}
+
+fn generateNativeArgument(
+    allocator: Allocator,
+    output: *std.ArrayList(u8),
+    call: Semantic.Expression.Call,
+    index: usize,
+) GenerateError!void {
+    const argument = call.arguments[index];
+    if (argument.type == .str) {
+        try output.appendSlice(allocator, "silexNativeString");
+        try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}", .{index}));
+        try output.appendSlice(allocator, ".data(), static_cast<std::int64_t>(silexNativeString");
+        try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}", .{index}));
+        try output.appendSlice(allocator, ".size())");
+    } else if (call.native_parameter_structures[index] != null) {
+        try output.appendSlice(allocator, "&silexNativeInput");
+        try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}", .{index}));
+    } else {
+        try generateExpression(allocator, output, argument);
     }
 }
 
@@ -1844,14 +1938,7 @@ fn generateNativeFunctionCall(
     try output.appendSlice(allocator, ", ");
     try appendCppByteStringLiteral(allocator, output, function_name);
     try output.appendSlice(allocator, if (returns_string) ", [&](char** output_bytes, std::int64_t* output_length) {" else ", [&]() {");
-    for (call.arguments, 0..) |argument, index| {
-        if (argument.type != .str) continue;
-        try output.appendSlice(allocator, "auto&& silexNativeString");
-        try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}", .{index}));
-        try output.appendSlice(allocator, " = ");
-        try generateExpression(allocator, output, argument);
-        try output.appendSlice(allocator, ";");
-    }
+    try generateNativeArgumentPreludes(allocator, output, call);
     if (returned_structure) |structure| {
         try output.appendSlice(allocator, try NativeInterface.transportName(
             allocator,
@@ -1864,17 +1951,9 @@ fn generateNativeFunctionCall(
     if (!returns_string and returned_structure == null) try output.appendSlice(allocator, "return ");
     try output.appendSlice(allocator, call.generated_name);
     try output.append(allocator, '(');
-    for (call.arguments, 0..) |argument, index| {
+    for (call.arguments, 0..) |_, index| {
         if (index != 0) try output.appendSlice(allocator, ", ");
-        if (argument.type == .str) {
-            try output.appendSlice(allocator, "silexNativeString");
-            try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}", .{index}));
-            try output.appendSlice(allocator, ".data(), static_cast<std::int64_t>(silexNativeString");
-            try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}", .{index}));
-            try output.appendSlice(allocator, ".size())");
-        } else {
-            try generateExpression(allocator, output, argument);
-        }
+        try generateNativeArgument(allocator, output, call, index);
     }
     if (returns_string) {
         if (call.arguments.len != 0) try output.appendSlice(allocator, ", ");
@@ -1988,14 +2067,7 @@ fn generateNativeOptionalFunctionCall(
     try appendCppType(allocator, output, returned_type);
     try output.appendSlice(allocator, "> {");
 
-    for (call.arguments, 0..) |argument, index| {
-        if (argument.type != .str) continue;
-        try output.appendSlice(allocator, "auto&& silexNativeString");
-        try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}", .{index}));
-        try output.appendSlice(allocator, " = ");
-        try generateExpression(allocator, output, argument);
-        try output.append(allocator, ';');
-    }
+    try generateNativeArgumentPreludes(allocator, output, call);
 
     if (returns_string) {
         try output.appendSlice(allocator, "char* silexNativeOutputBytes = nullptr;std::int64_t silexNativeOutputLength = 0;");
@@ -2014,17 +2086,9 @@ fn generateNativeOptionalFunctionCall(
     if (has_owned_buffers) try output.appendSlice(allocator, "silexNativePresent = ");
     try output.appendSlice(allocator, call.generated_name);
     try output.append(allocator, '(');
-    for (call.arguments, 0..) |argument, index| {
+    for (call.arguments, 0..) |_, index| {
         if (index != 0) try output.appendSlice(allocator, ", ");
-        if (argument.type == .str) {
-            try output.appendSlice(allocator, "silexNativeString");
-            try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}", .{index}));
-            try output.appendSlice(allocator, ".data(), static_cast<std::int64_t>(silexNativeString");
-            try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}", .{index}));
-            try output.appendSlice(allocator, ".size())");
-        } else {
-            try generateExpression(allocator, output, argument);
-        }
+        try generateNativeArgument(allocator, output, call, index);
     }
     if (call.arguments.len != 0) try output.appendSlice(allocator, ", ");
     if (returns_string) {
@@ -3950,6 +4014,38 @@ test "generate optional native return bridges" {
     try std.testing.expect(std.mem.indexOf(u8, cpp, "if (!silexNativePresent) return std::nullopt") != null);
     try std.testing.expect(std.mem.indexOf(u8, cpp, "returned an owned buffer while reporting absence") != null);
     try std.testing.expect(std.mem.indexOf(u8, cpp, "std::optional<SilexStruct0>") != null);
+}
+
+test "generate independent scalar structure native parameters" {
+    const Parser = @import("Parser.zig").Parser;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var parser = Parser.init(allocator,
+        \\struct NativeBounds { let width:int; let height:int }
+        \\native func native_contains(first:NativeBounds, second:NativeBounds) bool
+        \\func main() {
+        \\    let first = NativeBounds(width:10, height:20)
+        \\    let second = NativeBounds(width:30, height:40)
+        \\    print(native_contains(first, second))
+        \\}
+    );
+    const program = try parser.parse();
+    @constCast(program.functions)[0].name = "Geometry.native_contains";
+    var analyzer = Semantic.Analyzer.init(allocator);
+    analyzer.native_module_names = &.{"Geometry"};
+    const cpp = try generate(allocator, try analyzer.analyze(program));
+
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        cpp,
+        "extern \"C\" bool silexNative_Geometry_native_contains(const SilexNative_Geometry_NativeBounds* silexValue0, const SilexNative_Geometry_NativeBounds* silexValue1);",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "const auto& silexNativeStructure0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "SilexNative_Geometry_NativeBounds silexNativeInput0{") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "silexNativeStructure0.field0, silexNativeStructure0.field1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "silexNative_Geometry_native_contains(&silexNativeInput0, &silexNativeInput1)") != null);
 }
 
 test "generate recursive structural equality" {

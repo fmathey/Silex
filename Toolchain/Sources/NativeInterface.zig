@@ -66,12 +66,17 @@ fn renderHeader(
             "extern \"C\" {\n#endif\n\n",
     );
 
-    for (program.functions, 0..) |function, index| {
+    var emitted_transports: std.ArrayList([]const u8) = .empty;
+    for (program.functions) |function| {
         if (!function.is_native or !std.mem.eql(u8, function.native_module_name.?, module_name)) continue;
-        const structure = returnedStructure(program, function) orelse continue;
-        if (returnedStructureAppearedEarlier(program, program.functions[0..index], function, structure)) continue;
-        try appendTransportDefinition(allocator, &output, module_name, structure);
-        try output.append(allocator, '\n');
+        if (returnedStructure(program, function)) |structure| {
+            try appendTransportIfNew(allocator, &output, &emitted_transports, module_name, structure);
+        }
+        for (function.parameters) |parameter| {
+            if (structureForType(program, parameter.type)) |structure| {
+                try appendTransportIfNew(allocator, &output, &emitted_transports, module_name, structure);
+            }
+        }
     }
 
     for (program.functions) |function| {
@@ -125,6 +130,18 @@ fn appendFunctionSignature(
             parameter_count += 2;
             continue;
         }
+        if (structureForType(program, parameter.type)) |parameter_structure| {
+            try output.appendSlice(allocator, "const ");
+            try output.appendSlice(allocator, try transportName(
+                allocator,
+                function.native_module_name.?,
+                parameter_structure.source_name,
+            ));
+            try output.appendSlice(allocator, "* ");
+            try output.appendSlice(allocator, parameter.generated_name);
+            parameter_count += 1;
+            continue;
+        }
         try appendType(allocator, output, parameter.type);
         try output.append(allocator, ' ');
         try output.appendSlice(allocator, parameter.generated_name);
@@ -144,6 +161,21 @@ fn appendFunctionSignature(
     }
     if (parameter_count == 0 and returned != .str and structure == null and !optional) try output.appendSlice(allocator, "void");
     try output.append(allocator, ')');
+}
+
+fn appendTransportIfNew(
+    allocator: Allocator,
+    output: *std.ArrayList(u8),
+    emitted: *std.ArrayList([]const u8),
+    module_name: []const u8,
+    structure: Semantic.Structure,
+) !void {
+    for (emitted.items) |name| {
+        if (std.mem.eql(u8, name, structure.source_name)) return;
+    }
+    try emitted.append(allocator, structure.source_name);
+    try appendTransportDefinition(allocator, output, module_name, structure);
+    try output.append(allocator, '\n');
 }
 
 fn appendTransportDefinition(
@@ -179,8 +211,12 @@ fn appendTransportDefinition(
 }
 
 fn returnedStructure(program: Semantic.Program, function: Semantic.Function) ?Semantic.Structure {
-    const structure_type = switch (nativeReturnValueType(function.return_type)) {
-        .structure => |value| value,
+    return structureForType(program, nativeReturnValueType(function.return_type));
+}
+
+fn structureForType(program: Semantic.Program, value: Semantic.Type) ?Semantic.Structure {
+    const structure_type = switch (value) {
+        .structure => |structure| structure,
         else => return null,
     };
     for (program.structures) |structure| {
@@ -191,20 +227,6 @@ fn returnedStructure(program: Semantic.Program, function: Semantic.Function) ?Se
 
 fn nativeReturnValueType(return_type: Semantic.Type) Semantic.Type {
     return if (return_type == .optional) return_type.optional.* else return_type;
-}
-
-fn returnedStructureAppearedEarlier(
-    program: Semantic.Program,
-    functions: []const Semantic.Function,
-    function: Semantic.Function,
-    structure: Semantic.Structure,
-) bool {
-    for (functions) |previous| {
-        if (!previous.is_native or !std.mem.eql(u8, previous.native_module_name.?, function.native_module_name.?)) continue;
-        const previous_structure = returnedStructure(program, previous) orelse continue;
-        if (std.mem.eql(u8, previous_structure.source_name, structure.source_name)) return true;
-    }
-    return false;
 }
 
 pub fn transportName(allocator: Allocator, module_name: []const u8, structure_name: []const u8) ![]const u8 {
@@ -374,5 +396,33 @@ test "native headers define optional return presence and outputs" {
         u8,
         header,
         "bool silexNative_Events_native_message(SilexNative_Events_Message* output);",
+    ) != null);
+}
+
+test "native headers reuse scalar structure transports for const parameters" {
+    const Parser = @import("Parser.zig").Parser;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var parser = Parser.init(allocator,
+        \\struct NativeBounds { let width:int; let height:int }
+        \\native func native_round_trip(first:NativeBounds, second:NativeBounds) NativeBounds
+        \\func main() {}
+    );
+    const ast = try parser.parse();
+    @constCast(ast.functions)[0].name = "Geometry.native_round_trip";
+    var analyzer = Semantic.Analyzer.init(allocator);
+    analyzer.native_module_names = &.{"Geometry"};
+    const header = try renderHeader(allocator, try analyzer.analyze(ast), "Geometry");
+
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        std.mem.count(u8, header, "typedef struct SilexNative_Geometry_NativeBounds"),
+    );
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        header,
+        "void silexNative_Geometry_native_round_trip(const SilexNative_Geometry_NativeBounds* silexValue0, const SilexNative_Geometry_NativeBounds* silexValue1, SilexNative_Geometry_NativeBounds* output);",
     ) != null);
 }

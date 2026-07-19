@@ -2549,8 +2549,13 @@ pub fn build(b: *std.Build) void {
         "runtime error: native function 'NativeOptionalReturns.native_absent_event_with_buffer' field 'text' failed: returned an owned buffer while reporting absence\n",
     );
 
+    const native_structure_parameter_command = b.addRunArtifact(executable);
+    native_structure_parameter_command.step.dependOn(&native_optional_absent_event_buffer_command.step);
+    native_structure_parameter_command.addArgs(&.{ "run", "Smokes/NativeStructureParameters/Main.sx" });
+    native_structure_parameter_command.expectStdOutEqual(hostText(b, "true\n"));
+
     const native_string_command = b.addRunArtifact(executable);
-    native_string_command.step.dependOn(&native_optional_absent_event_buffer_command.step);
+    native_string_command.step.dependOn(&native_structure_parameter_command.step);
     native_string_command.addArgs(&.{ "run", "Smokes/NativeStrings/Main.sx" });
     native_string_command.expectStdOutEqual(hostText(b, "true\ntrue\ntrue\ntrue\ntrue\ntrue\n"));
 
@@ -3032,8 +3037,30 @@ pub fn build(b: *std.Build) void {
         ".silex/cross-native-smoke/NativeOptionalReturns-x86_64-windows.exe",
     });
 
+    const cross_native_structure_parameter_linux_smoke_command = b.addRunArtifact(executable);
+    cross_native_structure_parameter_linux_smoke_command.step.dependOn(&cross_native_optional_return_windows_smoke_command.step);
+    cross_native_structure_parameter_linux_smoke_command.addArgs(&.{
+        "compile",
+        "Smokes/NativeStructureParameters/Main.sx",
+        "--target",
+        "x86_64-linux-musl",
+        "-o",
+        ".silex/cross-native-smoke/NativeStructureParameters-x86_64-linux",
+    });
+
+    const cross_native_structure_parameter_windows_smoke_command = b.addRunArtifact(executable);
+    cross_native_structure_parameter_windows_smoke_command.step.dependOn(&cross_native_structure_parameter_linux_smoke_command.step);
+    cross_native_structure_parameter_windows_smoke_command.addArgs(&.{
+        "compile",
+        "Smokes/NativeStructureParameters/Main.sx",
+        "--target",
+        "x86_64-windows-gnu",
+        "-o",
+        ".silex/cross-native-smoke/NativeStructureParameters-x86_64-windows.exe",
+    });
+
     const cross_native_string_linux_smoke_command = b.addRunArtifact(executable);
-    cross_native_string_linux_smoke_command.step.dependOn(&cross_native_optional_return_windows_smoke_command.step);
+    cross_native_string_linux_smoke_command.step.dependOn(&cross_native_structure_parameter_windows_smoke_command.step);
     cross_native_string_linux_smoke_command.addArgs(&.{
         "compile",
         "Smokes/NativeStrings/Main.sx",
