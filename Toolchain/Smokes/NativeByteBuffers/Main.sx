@@ -1,0 +1,35 @@
+use NativeByteBuffers as Native
+
+func main() {
+    let source:uint8[] = [0, 17, 0, 255]
+    let first = Native.compress(source)
+    assert(first.count() == 4, "direct length")
+    assert(first[0] == 0 && first[1] == 17 && first[2] == 0 && first[3] == 255, "direct bytes")
+    assert(source.count() == 4 && source[0] == 0 && source[1] == 17 && source[2] == 0 && source[3] == 255, "input remains independent")
+
+    let empty = Native.empty()
+    assert(empty.count() == 0, "null empty output")
+
+    let large = Native.large()
+    assert(large.count() == 1024, "large output length")
+    assert(large[0] == 0 && large[255] == 255 && large[256] == 0 && large[1023] == 255, "large output bytes")
+
+    match Native.read(1) {
+        success(bytes) => {
+            assert(bytes.count() == 4, "Result success length")
+            assert(bytes[0] == 0 && bytes[1] == 255 && bytes[2] == 1 && bytes[3] == 0, "Result success bytes")
+        }
+        failure(error) => { panic(error) }
+    }
+    match Native.read(2) {
+        success(bytes) => { panic("Result must fail") }
+        failure(error) => { assert(error == "not found", "Result failure") }
+    }
+
+    let secondInput:uint8[] = [8, 9]
+    let second = Native.compress(secondInput)
+    assert(first.count() == 4 && first[0] == 0 && first[1] == 17 && first[2] == 0 && first[3] == 255, "successive direct outputs independent")
+    assert(second.count() == 2 && second[0] == 8 && second[1] == 9, "second direct output")
+    assert(Native.outputs_freed(), "every native buffer is freed once")
+    print("native byte buffers ok")
+}

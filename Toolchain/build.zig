@@ -2596,8 +2596,29 @@ pub fn build(b: *std.Build) void {
     native_byte_view_command.addArgs(&.{ "run", "Smokes/NativeByteViews/Main.sx" });
     native_byte_view_command.expectStdOutEqual(hostText(b, "272\n0\n272\ntrue\n130560\ntrue\n"));
 
+    const native_byte_buffer_command = b.addRunArtifact(executable);
+    native_byte_buffer_command.step.dependOn(&native_byte_view_command.step);
+    native_byte_buffer_command.addArgs(&.{ "run", "Smokes/NativeByteBuffers/Main.sx" });
+    native_byte_buffer_command.expectStdOutEqual(hostText(b, "native byte buffers ok\n"));
+
+    const native_byte_buffer_negative_length_command = b.addRunArtifact(executable);
+    native_byte_buffer_negative_length_command.step.dependOn(&native_byte_buffer_command.step);
+    native_byte_buffer_negative_length_command.addArgs(&.{ "run", "Smokes/NativeByteBuffers/NegativeLength.sx" });
+    native_byte_buffer_negative_length_command.expectExitCode(1);
+    native_byte_buffer_negative_length_command.expectStdErrEqual(
+        "runtime error: native function 'NativeByteBuffers.native_negative_length' failed: returned a negative length\n",
+    );
+
+    const native_byte_buffer_null_pointer_command = b.addRunArtifact(executable);
+    native_byte_buffer_null_pointer_command.step.dependOn(&native_byte_buffer_negative_length_command.step);
+    native_byte_buffer_null_pointer_command.addArgs(&.{ "run", "Smokes/NativeByteBuffers/NullPointer.sx" });
+    native_byte_buffer_null_pointer_command.expectExitCode(1);
+    native_byte_buffer_null_pointer_command.expectStdErrEqual(
+        "runtime error: native function 'NativeByteBuffers.native_null_with_positive_length' failed: returned a null pointer with a positive length\n",
+    );
+
     const native_string_command = b.addRunArtifact(executable);
-    native_string_command.step.dependOn(&native_byte_view_command.step);
+    native_string_command.step.dependOn(&native_byte_buffer_null_pointer_command.step);
     native_string_command.addArgs(&.{ "run", "Smokes/NativeStrings/Main.sx" });
     native_string_command.expectStdOutEqual(hostText(b, "true\ntrue\ntrue\ntrue\ntrue\ntrue\n"));
 
@@ -3167,8 +3188,30 @@ pub fn build(b: *std.Build) void {
         ".silex/cross-native-smoke/NativeByteViews-x86_64-windows.exe",
     });
 
+    const cross_native_byte_buffer_linux_smoke_command = b.addRunArtifact(executable);
+    cross_native_byte_buffer_linux_smoke_command.step.dependOn(&cross_native_byte_view_windows_smoke_command.step);
+    cross_native_byte_buffer_linux_smoke_command.addArgs(&.{
+        "compile",
+        "Smokes/NativeByteBuffers/Main.sx",
+        "--target",
+        "x86_64-linux-musl",
+        "-o",
+        ".silex/cross-native-smoke/NativeByteBuffers-x86_64-linux",
+    });
+
+    const cross_native_byte_buffer_windows_smoke_command = b.addRunArtifact(executable);
+    cross_native_byte_buffer_windows_smoke_command.step.dependOn(&cross_native_byte_buffer_linux_smoke_command.step);
+    cross_native_byte_buffer_windows_smoke_command.addArgs(&.{
+        "compile",
+        "Smokes/NativeByteBuffers/Main.sx",
+        "--target",
+        "x86_64-windows-gnu",
+        "-o",
+        ".silex/cross-native-smoke/NativeByteBuffers-x86_64-windows.exe",
+    });
+
     const cross_native_string_linux_smoke_command = b.addRunArtifact(executable);
-    cross_native_string_linux_smoke_command.step.dependOn(&cross_native_byte_view_windows_smoke_command.step);
+    cross_native_string_linux_smoke_command.step.dependOn(&cross_native_byte_buffer_windows_smoke_command.step);
     cross_native_string_linux_smoke_command.addArgs(&.{
         "compile",
         "Smokes/NativeStrings/Main.sx",

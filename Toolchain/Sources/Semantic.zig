@@ -6917,11 +6917,17 @@ pub const Analyzer = struct {
             return try self.isNativeResultBranchType(shape.success_type) and
                 try self.isNativeResultBranchType(shape.error_type);
         }
-        return self.isNativeResultBranchType(value);
+        if (isNativeByteBufferReturnType(value)) return true;
+        return self.isNativeLegacyReturnType(value);
     }
 
     fn isNativeResultBranchType(self: *const Analyzer, value: Type) Allocator.Error!bool {
-        if (value == .optional) return self.isNativeResultBranchType(value.optional.*);
+        if (isNativeByteBufferReturnType(value)) return true;
+        return self.isNativeLegacyReturnType(value);
+    }
+
+    fn isNativeLegacyReturnType(self: *const Analyzer, value: Type) Allocator.Error!bool {
+        if (value == .optional) return self.isNativeLegacyReturnType(value.optional.*);
         if (isNativeScalarReturnType(value)) return true;
         const structure_type = switch (value) {
             .structure => |type_value| type_value,
@@ -7639,6 +7645,10 @@ fn isNativeByteViewType(value: Type) bool {
         .fixed_array => |array| array.element.* == .uint8,
         else => false,
     };
+}
+
+fn isNativeByteBufferReturnType(value: Type) bool {
+    return value == .list and value.list.* == .uint8;
 }
 
 fn moduleName(function_name: []const u8) ?[]const u8 {
@@ -8506,12 +8516,36 @@ test "native ABI accepts transferable Result returns" {
     _ = try analyzer.analyze(try specializer.specialize());
 }
 
+test "native ABI accepts owned uint8 list returns" {
+    const Parser = @import("Parser.zig").Parser;
+    const Generics = @import("Generics.zig");
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var parser = Parser.init(allocator,
+        \\native func native_compress(bytes:uint8[]) uint8[]
+        \\native func native_read(path:str) Result<uint8[],str>
+        \\func main() {}
+    );
+    const program = try parser.parse();
+    for (@constCast(program.functions)[0..2]) |*function| {
+        function.name = try std.fmt.allocPrint(allocator, "Native.{s}", .{function.name});
+    }
+    var specializer = Generics.Specializer.init(allocator, program);
+    var analyzer = Analyzer.init(allocator);
+    analyzer.native_module_names = &.{"Native"};
+    _ = try analyzer.analyze(try specializer.specialize());
+}
+
 test "native ABI rejects non transferable Result returns and Result parameters" {
     const Parser = @import("Parser.zig").Parser;
     const Generics = @import("Generics.zig");
     const result_return_cases = [_][]const u8{
         "class Value {} native func native_read() Result<Value,str>; func main() {}",
         "native func native_read() Result<int[],str>; func main() {}",
+        "native func native_read() Result<uint8[4],str>; func main() {}",
+        "native func native_read() Result<uint8[]?,str>; func main() {}",
         "native func native_read() Result<int,func()>; func main() {}",
         "native func native_read() Result<Result<int,str>,str>; func main() {}",
     };

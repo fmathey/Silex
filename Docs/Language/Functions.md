@@ -206,6 +206,18 @@ Only these two input types are admitted: `uint8[]` and `uint8[N]`. Other list
 or array element types, mutable buffers, collection returns, general slices,
 and pointers visible in `.sx` remain outside the native ABI.
 
+A native function may return an owned `uint8[]`. Its C symbol returns `void`
+and receives `uint8_t** output_bytes` plus `int64_t* output_length` after its
+ordinary parameters. The native code allocates the bytes with `malloc`; Silex
+copies exactly `output_length` bytes into a new, independent list, then calls
+`free` exactly once. No terminator or UTF-8 interpretation is involved, so null
+bytes and every byte value remain intact. An empty result may use a null pointer
+and zero length. A negative length, or a null pointer with a positive length,
+is a fatal native contract violation after the bridge has released the output.
+Only the dynamic `uint8[]` return has this ABI: fixed arrays, other element
+types, nested collections, optional byte lists, caller-owned mutation, and
+adoption without a copy remain unavailable.
+
 A native function may return `T?` when `T` is one of the transferable return
 types above: a scalar boolean or number, `str`, or an admitted flat structure.
 The C symbol returns `bool` to report presence and receives the same transport
@@ -229,10 +241,11 @@ nested optionals, `Result`, and additional transferable types are not introduced
 by this ABI.
 
 A native function may return `Result<T,E>` when both branches use the
-transferable return types above; `T` may also be `void`. Its generated header
+transferable return types above, and either branch may additionally be an owned
+`uint8[]`; `T` may also be `void`. Its generated header
 defines a function-specific output transport containing a `success`/`failure`
-tag and the output fields for both branches. Strings and string fields are owned
-outputs allocated with `malloc`, exactly as for a direct return. For example,
+tag and the output fields for both branches. Strings, string fields, and byte
+lists are owned outputs allocated with `malloc`, exactly as for a direct return. For example,
 `Result<NativeFile,str>` contains the flat `NativeFile` output transport for
 success and a `char*`/length pair for failure. The C symbol returns `void` and
 receives the complete Result transport as its final output pointer.

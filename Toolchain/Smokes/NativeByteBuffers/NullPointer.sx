@@ -1,0 +1,5 @@
+use NativeByteBuffers as Native
+
+func main() {
+    Native.null_with_positive_length()
+}

@@ -117,12 +117,13 @@ fn appendFunctionSignature(
     const result = nativeResultShape(program, function.return_type);
     const structure = returnedStructure(program, function);
     const returned = nativeReturnValueType(function.return_type);
+    const returns_bytes = isNativeByteBufferReturnType(returned);
     const optional = function.return_type == .optional;
     if (result != null) {
         try output.appendSlice(allocator, "void");
     } else if (optional) {
         try output.appendSlice(allocator, "bool");
-    } else if (returned == .str or structure != null) {
+    } else if (returned == .str or returns_bytes or structure != null) {
         try output.appendSlice(allocator, "void");
     } else {
         try appendType(allocator, output, returned);
@@ -180,6 +181,9 @@ fn appendFunctionSignature(
     } else if (returned == .str) {
         if (parameter_count != 0) try output.appendSlice(allocator, ", ");
         try output.appendSlice(allocator, "char** output_bytes, int64_t* output_length");
+    } else if (returns_bytes) {
+        if (parameter_count != 0) try output.appendSlice(allocator, ", ");
+        try output.appendSlice(allocator, "uint8_t** output_bytes, int64_t* output_length");
     } else if (structure) |returned_structure| {
         if (parameter_count != 0) try output.appendSlice(allocator, ", ");
         try output.appendSlice(allocator, try transportName(allocator, function.native_module_name.?, returned_structure.source_name));
@@ -189,7 +193,7 @@ fn appendFunctionSignature(
         try appendType(allocator, output, returned);
         try output.appendSlice(allocator, "* output");
     }
-    if (parameter_count == 0 and result == null and returned != .str and structure == null and !optional) try output.appendSlice(allocator, "void");
+    if (parameter_count == 0 and result == null and returned != .str and !returns_bytes and structure == null and !optional) try output.appendSlice(allocator, "void");
     try output.append(allocator, ')');
 }
 
@@ -232,6 +236,10 @@ fn isNativeByteViewType(value: Semantic.Type) bool {
         .fixed_array => |array| array.element.* == .uint8,
         else => false,
     };
+}
+
+fn isNativeByteBufferReturnType(value: Semantic.Type) bool {
+    return value == .list and value.list.* == .uint8;
 }
 
 fn appendResultTransportIfNew(
@@ -282,7 +290,13 @@ fn appendResultBranchFields(
     }
     const value = nativeBranchValueType(branch_type);
     if (value == .void) return;
-    if (value == .str) {
+    if (isNativeByteBufferReturnType(value)) {
+        try output.appendSlice(allocator, "    uint8_t* ");
+        try output.appendSlice(allocator, prefix);
+        try output.appendSlice(allocator, "_bytes;\n    int64_t ");
+        try output.appendSlice(allocator, prefix);
+        try output.appendSlice(allocator, "_length;\n");
+    } else if (value == .str) {
         try output.appendSlice(allocator, "    char* ");
         try output.appendSlice(allocator, prefix);
         try output.appendSlice(allocator, "_bytes;\n    int64_t ");
@@ -702,4 +716,33 @@ test "native headers expose uint8 collections as borrowed byte views" {
         header,
         "bool silexNative_Bytes_native_write_block(const uint8_t* silexValue1Bytes, int64_t silexValue1Length);",
     ) != null);
+}
+
+test "native headers expose owned uint8 list returns" {
+    const Parser = @import("Parser.zig").Parser;
+    const Generics = @import("Generics.zig");
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var parser = Parser.init(allocator,
+        \\native func native_compress(bytes:uint8[]) uint8[]
+        \\native func native_read(path:str) Result<uint8[],str>
+        \\func main() {}
+    );
+    const ast = try parser.parse();
+    @constCast(ast.functions)[0].name = "Bytes.native_compress";
+    @constCast(ast.functions)[1].name = "Bytes.native_read";
+    var specializer = Generics.Specializer.init(allocator, ast);
+    var analyzer = Semantic.Analyzer.init(allocator);
+    analyzer.native_module_names = &.{"Bytes"};
+    const header = try renderHeader(allocator, try analyzer.analyze(try specializer.specialize()), "Bytes");
+
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        header,
+        "void silexNative_Bytes_native_compress(const uint8_t* silexValue0Bytes, int64_t silexValue0Length, uint8_t** output_bytes, int64_t* output_length);",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(u8, header, "uint8_t* success_bytes;") != null);
+    try std.testing.expect(std.mem.indexOf(u8, header, "int64_t success_length;") != null);
 }

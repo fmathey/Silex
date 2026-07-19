@@ -1720,12 +1720,13 @@ fn generateNativeFunctionSignature(
     const result = nativeResultShape(program, function.return_type);
     const structure = nativeReturnStructure(program, function);
     const returned = nativeReturnValueType(function.return_type);
+    const returns_bytes = isNativeByteBufferReturnType(returned);
     const optional = function.return_type == .optional;
     if (result != null) {
         try output.appendSlice(allocator, "void");
     } else if (optional) {
         try output.appendSlice(allocator, "bool");
-    } else if (returned == .str or structure != null) {
+    } else if (returned == .str or returns_bytes or structure != null) {
         try output.appendSlice(allocator, "void");
     } else {
         try appendCppType(allocator, output, returned);
@@ -1790,6 +1791,12 @@ fn generateNativeFunctionSignature(
     } else if (returned == .str) {
         if (function.parameters.len != 0) try output.appendSlice(allocator, ", ");
         try output.appendSlice(allocator, "char**");
+        if (include_names) try output.appendSlice(allocator, " output_bytes");
+        try output.appendSlice(allocator, ", std::int64_t*");
+        if (include_names) try output.appendSlice(allocator, " output_length");
+    } else if (returns_bytes) {
+        if (function.parameters.len != 0) try output.appendSlice(allocator, ", ");
+        try output.appendSlice(allocator, "std::uint8_t**");
         if (include_names) try output.appendSlice(allocator, " output_bytes");
         try output.appendSlice(allocator, ", std::int64_t*");
         if (include_names) try output.appendSlice(allocator, " output_length");
@@ -1916,6 +1923,10 @@ fn isNativeByteViewType(value: Semantic.Type) bool {
     };
 }
 
+fn isNativeByteBufferReturnType(value: Semantic.Type) bool {
+    return value == .list and value.list.* == .uint8;
+}
+
 fn generateNativeResultTransportIfNew(
     allocator: Allocator,
     output: *std.ArrayList(u8),
@@ -1964,7 +1975,13 @@ fn generateNativeResultBranchFields(
     }
     const value = nativeBranchValueType(branch_type);
     if (value == .void) return;
-    if (value == .str) {
+    if (isNativeByteBufferReturnType(value)) {
+        try output.appendSlice(allocator, "    std::uint8_t* ");
+        try output.appendSlice(allocator, prefix);
+        try output.appendSlice(allocator, "Bytes = nullptr;\n    std::int64_t ");
+        try output.appendSlice(allocator, prefix);
+        try output.appendSlice(allocator, "Length = 0;\n");
+    } else if (value == .str) {
         try output.appendSlice(allocator, "    char* ");
         try output.appendSlice(allocator, prefix);
         try output.appendSlice(allocator, "Bytes = nullptr;\n    std::int64_t ");
@@ -2140,7 +2157,7 @@ fn nativeResultBranchHasOwned(
     structure: ?Semantic.NativeStructureTransport,
 ) bool {
     const value = nativeBranchValueType(branch_type);
-    if (value == .str) return true;
+    if (value == .str or isNativeByteBufferReturnType(value)) return true;
     return structure != null and nativeTransportHasString(structure.?);
 }
 
@@ -2153,12 +2170,12 @@ fn generateNativeResultOwnedAction(
     action: NativeResultOwnedAction,
 ) GenerateError!void {
     const value = nativeBranchValueType(branch_type);
-    if (value == .str) {
-        try generateNativeResultPointerAction(allocator, output, branch_name, null, action);
+    if (value == .str or isNativeByteBufferReturnType(value)) {
+        try generateNativeResultPointerAction(allocator, output, branch_name, null, isNativeByteBufferReturnType(value), action);
     } else if (structure) |transport| {
         for (transport.fields) |field| {
             if (field.type != .str) continue;
-            try generateNativeResultPointerAction(allocator, output, branch_name, field.generated_name, action);
+            try generateNativeResultPointerAction(allocator, output, branch_name, field.generated_name, false, action);
         }
     }
 }
@@ -2168,11 +2185,12 @@ fn generateNativeResultPointerAction(
     output: *std.ArrayList(u8),
     branch_name: []const u8,
     field_name: ?[]const u8,
+    byte_buffer: bool,
     action: NativeResultOwnedAction,
 ) GenerateError!void {
     switch (action) {
         .raw_free => try output.appendSlice(allocator, "std::free("),
-        .guard => try output.appendSlice(allocator, "std::unique_ptr<char, decltype(&std::free)> silexNativeGuard_"),
+        .guard => try output.appendSlice(allocator, if (byte_buffer) "std::unique_ptr<std::uint8_t, decltype(&std::free)> silexNativeGuard_" else "std::unique_ptr<char, decltype(&std::free)> silexNativeGuard_"),
         .reset => try output.appendSlice(allocator, "silexNativeGuard_"),
     }
     if (action == .guard or action == .reset) {
@@ -2207,7 +2225,7 @@ fn generateNativeResultOwnedCondition(
     structure: ?Semantic.NativeStructureTransport,
 ) GenerateError!void {
     const value = nativeBranchValueType(branch_type);
-    if (value == .str) {
+    if (value == .str or isNativeByteBufferReturnType(value)) {
         try output.appendSlice(allocator, "silexNativeOutput.");
         try output.appendSlice(allocator, branch_name);
         try output.appendSlice(allocator, "Bytes != nullptr");
@@ -2224,6 +2242,48 @@ fn generateNativeResultOwnedCondition(
         try output.appendSlice(allocator, "Bytes != nullptr");
         count += 1;
     }
+}
+
+fn generateNativeResultByteBufferValidation(
+    allocator: Allocator,
+    output: *std.ArrayList(u8),
+    module_name: []const u8,
+    function_name: []const u8,
+    branch_name: []const u8,
+) GenerateError!void {
+    try output.appendSlice(allocator, "if (silexNativeOutput.");
+    try output.appendSlice(allocator, branch_name);
+    try output.appendSlice(allocator, "Length < 0) {");
+    try generateNativeResultFatal(allocator, output, module_name, function_name, try std.fmt.allocPrint(allocator, "Result {s} returned a negative length", .{branch_name}));
+    try output.appendSlice(allocator, "}if (silexNativeOutput.");
+    try output.appendSlice(allocator, branch_name);
+    try output.appendSlice(allocator, "Bytes == nullptr && silexNativeOutput.");
+    try output.appendSlice(allocator, branch_name);
+    try output.appendSlice(allocator, "Length > 0) {");
+    try generateNativeResultFatal(allocator, output, module_name, function_name, try std.fmt.allocPrint(allocator, "Result {s} returned a null pointer with a positive length", .{branch_name}));
+    try output.appendSlice(allocator, "}");
+}
+
+fn generateNativeResultByteBufferConstruction(
+    allocator: Allocator,
+    output: *std.ArrayList(u8),
+    branch_name: []const u8,
+) GenerateError!void {
+    try output.appendSlice(allocator, "SilexList<std::uint8_t> silexNativeBytes_");
+    try output.appendSlice(allocator, branch_name);
+    try output.appendSlice(allocator, ";if (silexNativeOutput.");
+    try output.appendSlice(allocator, branch_name);
+    try output.appendSlice(allocator, "Bytes != nullptr) {silexNativeBytes_");
+    try output.appendSlice(allocator, branch_name);
+    try output.appendSlice(allocator, ".insert(silexNativeBytes_");
+    try output.appendSlice(allocator, branch_name);
+    try output.appendSlice(allocator, ".end(), silexNativeOutput.");
+    try output.appendSlice(allocator, branch_name);
+    try output.appendSlice(allocator, "Bytes, silexNativeOutput.");
+    try output.appendSlice(allocator, branch_name);
+    try output.appendSlice(allocator, "Bytes + static_cast<std::size_t>(silexNativeOutput.");
+    try output.appendSlice(allocator, branch_name);
+    try output.appendSlice(allocator, "Length));}");
 }
 
 fn generateNativeResultFatal(
@@ -2356,6 +2416,10 @@ fn generateNativeResultBranchValue(
         try output.appendSlice(allocator, "std::move(silexNativeString_");
         try output.appendSlice(allocator, branch_name);
         try output.append(allocator, ')');
+    } else if (isNativeByteBufferReturnType(value)) {
+        try output.appendSlice(allocator, "std::move(silexNativeBytes_");
+        try output.appendSlice(allocator, branch_name);
+        try output.append(allocator, ')');
     } else if (structure) |transport| {
         try output.appendSlice(allocator, transport.generated_name);
         try output.appendSlice(allocator, "(SilexNativeReturnTag{}");
@@ -2416,6 +2480,9 @@ fn generateNativeResultBranchReturn(
     if (value == .str) {
         try generateNativeResultStringValidation(allocator, output, module_name, function_name, branch_name, null);
         try generateNativeResultStringConstruction(allocator, output, branch_name, null);
+    } else if (isNativeByteBufferReturnType(value)) {
+        try generateNativeResultByteBufferValidation(allocator, output, module_name, function_name, branch_name);
+        try generateNativeResultByteBufferConstruction(allocator, output, branch_name);
     } else if (structure) |transport| {
         for (transport.fields) |field| if (field.type == .str) {
             try generateNativeResultStringValidation(allocator, output, module_name, function_name, branch_name, field.generated_name);
@@ -2513,6 +2580,9 @@ fn generateNativeFunctionCall(
 ) GenerateError!void {
     if (call.native_result) |result| {
         return generateNativeResultFunctionCall(allocator, output, call, result);
+    }
+    if (isNativeByteBufferReturnType(return_type)) {
+        return generateNativeByteBufferFunctionCall(allocator, output, call);
     }
     if (return_type == .optional) {
         return generateNativeOptionalFunctionCall(allocator, output, call, return_type.optional.*);
@@ -2634,6 +2704,42 @@ fn generateNativeFunctionCall(
         try output.appendSlice(allocator, ");");
     }
     try output.appendSlice(allocator, " })");
+}
+
+fn generateNativeByteBufferFunctionCall(
+    allocator: Allocator,
+    output: *std.ArrayList(u8),
+    call: Semantic.Expression.Call,
+) GenerateError!void {
+    const module_name = call.native_module_name.?;
+    const function_name = call.native_function_name.?;
+    try output.appendSlice(allocator, "callNativeFunction(");
+    try appendCppByteStringLiteral(allocator, output, module_name);
+    try output.appendSlice(allocator, ", ");
+    try appendCppByteStringLiteral(allocator, output, function_name);
+    try output.appendSlice(allocator, ", [&]() -> SilexList<std::uint8_t> {");
+    try generateNativeArgumentPreludes(allocator, output, call);
+    try output.appendSlice(allocator, "std::uint8_t* silexNativeOutputBytes = nullptr;std::int64_t silexNativeOutputLength = 0;try {");
+    try output.appendSlice(allocator, call.generated_name);
+    try output.append(allocator, '(');
+    for (call.arguments, 0..) |_, index| {
+        if (index != 0) try output.appendSlice(allocator, ", ");
+        try generateNativeArgument(allocator, output, call, index);
+    }
+    if (call.arguments.len != 0) try output.appendSlice(allocator, ", ");
+    try output.appendSlice(allocator, "&silexNativeOutputBytes, &silexNativeOutputLength);} catch (...) {std::free(silexNativeOutputBytes);throw;}");
+    try output.appendSlice(allocator, "std::unique_ptr<std::uint8_t, decltype(&std::free)> silexNativeGuard{silexNativeOutputBytes, &std::free};");
+    try output.appendSlice(allocator, "if (silexNativeOutputLength < 0) {silexNativeGuard.reset();nativeFunctionRuntimeError(");
+    try appendCppByteStringLiteral(allocator, output, module_name);
+    try output.appendSlice(allocator, ", ");
+    try appendCppByteStringLiteral(allocator, output, function_name);
+    try output.appendSlice(allocator, ", \"returned a negative length\");}");
+    try output.appendSlice(allocator, "if (silexNativeOutputBytes == nullptr && silexNativeOutputLength > 0) {silexNativeGuard.reset();nativeFunctionRuntimeError(");
+    try appendCppByteStringLiteral(allocator, output, module_name);
+    try output.appendSlice(allocator, ", ");
+    try appendCppByteStringLiteral(allocator, output, function_name);
+    try output.appendSlice(allocator, ", \"returned a null pointer with a positive length\");}");
+    try output.appendSlice(allocator, "SilexList<std::uint8_t> silexNativeBytes;if (silexNativeOutputBytes != nullptr) {silexNativeBytes.insert(silexNativeBytes.end(), silexNativeOutputBytes, silexNativeOutputBytes + static_cast<std::size_t>(silexNativeOutputLength));}silexNativeGuard.reset();return silexNativeBytes;})");
 }
 
 fn generateNativeOptionalFunctionCall(
@@ -4713,6 +4819,39 @@ test "generate borrowed uint8 collection native parameters" {
         "silexNative_Bytes_native_block(silexNativeBytes0.data(), static_cast<std::int64_t>(silexNativeBytes0.size()))",
     ) != null);
     try std.testing.expect(std.mem.indexOf(u8, cpp, "const T* data() const { return values_.data(); }") != null);
+}
+
+test "generate owned uint8 list native returns" {
+    const Parser = @import("Parser.zig").Parser;
+    const Generics = @import("Generics.zig");
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var parser = Parser.init(allocator,
+        \\native func native_compress(bytes:uint8[]) uint8[]
+        \\native func native_read(path:str) Result<uint8[],str>
+        \\func main() {
+        \\    let bytes:uint8[] = [0, 255]
+        \\    let compressed = native_compress(bytes)
+        \\    let read = native_read("file")
+        \\}
+    );
+    const ast = try parser.parse();
+    @constCast(ast.functions)[0].name = "Bytes.native_compress";
+    @constCast(ast.functions)[1].name = "Bytes.native_read";
+    var specializer = Generics.Specializer.init(allocator, ast);
+    var analyzer = Semantic.Analyzer.init(allocator);
+    analyzer.native_module_names = &.{"Bytes"};
+    const cpp = try generate(allocator, try analyzer.analyze(try specializer.specialize()));
+
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "extern \"C\" void silexNative_Bytes_native_compress(const std::uint8_t* silexValue0Bytes, std::int64_t silexValue0Length, std::uint8_t** output_bytes, std::int64_t* output_length);") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "SilexList<std::uint8_t> silexNativeResult;") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "returned a negative length") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "std::uint8_t* successBytes = nullptr;") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "std::unique_ptr<std::uint8_t, decltype(&std::free)> silexNativeGuard_success") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "SilexList<std::uint8_t> silexNativeBytes_success;") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "std::move(silexNativeBytes_success)") != null);
 }
 
 test "generate validated native Result bridges" {

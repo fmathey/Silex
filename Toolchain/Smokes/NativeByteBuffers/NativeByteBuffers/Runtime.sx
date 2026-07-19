@@ -1,0 +1,35 @@
+native func native_compress(bytes:uint8[]) uint8[]
+native func native_empty() uint8[]
+native func native_large() uint8[]
+native func native_read(sequence:int) Result<uint8[],str>
+native func native_negative_length() uint8[]
+native func native_null_with_positive_length() uint8[]
+native func native_outputs_freed() bool
+
+pub func compress(bytes:uint8[]) uint8[] {
+    return native_compress(bytes)
+}
+
+pub func empty() uint8[] {
+    return native_empty()
+}
+
+pub func large() uint8[] {
+    return native_large()
+}
+
+pub func read(sequence:int) Result<uint8[],str> {
+    return native_read(sequence)
+}
+
+pub func negative_length() uint8[] {
+    return native_negative_length()
+}
+
+pub func null_with_positive_length() uint8[] {
+    return native_null_with_positive_length()
+}
+
+pub func outputs_freed() bool {
+    return native_outputs_freed()
+}
