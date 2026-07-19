@@ -188,6 +188,12 @@ pub const Loader = struct {
             .native_runtime_name = module.native_runtime_name,
             .module_manifest_path = module.module_manifest_path,
             .native_module_directory = module.native_module_directory,
+            .origin = switch (module.provider) {
+                .application => .application,
+                .local => .local,
+                .package => .package,
+                .distributed => .distributed,
+            },
         });
         project.modules = try project_modules.toOwnedSlice(self.allocator);
         project.single_file = loads_local_modules and self.files.items.len == 1;

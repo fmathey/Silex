@@ -10,7 +10,10 @@ pub const Module = struct {
     native_runtime_name: ?[]const u8 = null,
     module_manifest_path: ?[]const u8 = null,
     native_module_directory: ?[]const u8 = null,
+    origin: ModuleOrigin = .application,
 };
+
+pub const ModuleOrigin = enum { application, local, package, distributed };
 
 pub const Project = struct {
     program_name: []const u8,

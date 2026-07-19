@@ -1,7 +1,9 @@
 .DS_Store
+.cache/
 .zig-cache/
 zig-out/
 .silex/
+compile_commands.json
 Editors/Zed/grammars/
 Editors/Zed/.dev/
 Editors/Zed/target/

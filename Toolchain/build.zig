@@ -9,6 +9,7 @@ pub fn build(b: *std.Build) void {
     build_options.addOption([]const u8, "silex_version", silex_version);
     build_options.addOption([]const u8, "developer_zig", b.graph.zig_exe);
     build_options.addOption([]const u8, "developer_standard_library_root", b.getInstallPath(.prefix, "lib/silex"));
+    build_options.addOption(bool, "repository_compilation_database", false);
 
     const module = b.createModule(.{
         .root_source_file = b.path("Sources/Main.zig"),
@@ -30,6 +31,7 @@ pub fn build(b: *std.Build) void {
         "developer_standard_library_root",
         b.pathFromRoot("Tests/DistributedModules/Library"),
     );
+    native_module_test_options.addOption(bool, "repository_compilation_database", false);
     const native_module_test_module = b.createModule(.{
         .root_source_file = b.path("Sources/Main.zig"),
         .target = target,
@@ -97,6 +99,35 @@ pub fn build(b: *std.Build) void {
         }),
     });
     b.installArtifact(executable);
+
+    const repository_database_options = b.addOptions();
+    repository_database_options.addOption([]const u8, "silex_version", silex_version);
+    repository_database_options.addOption([]const u8, "developer_zig", b.graph.zig_exe);
+    repository_database_options.addOption(
+        []const u8,
+        "developer_standard_library_root",
+        b.pathFromRoot("../Library"),
+    );
+    repository_database_options.addOption(bool, "repository_compilation_database", true);
+    const repository_database_module = b.createModule(.{
+        .root_source_file = b.path("Sources/Main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    repository_database_module.addOptions("build_options", repository_database_options);
+    const repository_database_executable = b.addExecutable(.{
+        .name = "silex-repository-compilation-database",
+        .root_module = repository_database_module,
+    });
+    const generate_repository_database = b.addRunArtifact(repository_database_executable);
+    generate_repository_database.has_side_effects = true;
+    generate_repository_database.setCwd(b.path(".."));
+    generate_repository_database.addArgs(&.{
+        "compile",
+        "Toolchain/Smokes/IsolatedSTD/Main.sx",
+    });
+    b.getInstallStep().dependOn(&generate_repository_database.step);
+
     const clean_installed_library = b.addRunArtifact(clean_library_install);
     clean_installed_library.addArg(b.getInstallPath(.prefix, "lib/silex"));
     const install_library = b.addInstallDirectory(.{
@@ -3347,6 +3378,7 @@ pub fn build(b: *std.Build) void {
     distribution_options.addOption([]const u8, "silex_version", silex_version);
     distribution_options.addOption([]const u8, "developer_zig", "");
     distribution_options.addOption([]const u8, "developer_standard_library_root", "");
+    distribution_options.addOption(bool, "repository_compilation_database", false);
     const distribution_module = b.createModule(.{
         .root_source_file = b.path("Sources/Main.zig"),
         .target = b.graph.host,

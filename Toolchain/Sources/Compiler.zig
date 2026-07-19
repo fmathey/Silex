@@ -2,11 +2,13 @@ const std = @import("std");
 const builtin = @import("builtin");
 const build_options = @import("build_options");
 const CppGenerator = @import("CppGenerator.zig");
+const CompilationDatabase = @import("CompilationDatabase.zig");
 const NativeInterface = @import("NativeInterface.zig");
 const Generics = @import("Generics.zig");
 const Semantic = @import("Semantic.zig");
 const TargetModule = @import("Target.zig");
 const NativeDependency = @import("NativeDependency.zig");
+const NativeCommand = @import("NativeCommand.zig");
 const NativeObjectCache = @import("NativeObjectCache.zig");
 const ModuleManifest = @import("ModuleManifest.zig");
 const PackageGraph = @import("PackageGraph.zig");
@@ -164,19 +166,28 @@ pub fn compile(
 
     var compiled_packages: []const []const u8 = &.{};
     var reused_packages: []const []const u8 = &.{};
-    if (!cache_hit) {
-        try Io.Dir.cwd().writeFile(io, .{ .sub_path = cpp_path, .data = cpp });
-        const zig_path = resolveZig(allocator, io) catch {
+    const compilation_database_scope: CompilationDatabase.Scope =
+        if (build_options.repository_compilation_database) .distributed else .project;
+    const needs_compilation_database = hasCompilationDatabaseSources(
+        module_runtimes,
+        compilation_database_scope,
+    );
+    const zig_path = if (!cache_hit or needs_compilation_database)
+        resolveZig(allocator, io) catch {
             std.debug.print(
                 "silex: bundled Zig toolchain was not found; reinstall Silex or rebuild it for development\n",
                 .{},
             );
             return error.Reported;
-        };
+        }
+    else
+        null;
+    if (!cache_hit) {
+        try Io.Dir.cwd().writeFile(io, .{ .sub_path = cpp_path, .data = cpp });
         const local_runtime_objects = try compileLocalRuntimeObjects(
             allocator,
             io,
-            zig_path,
+            zig_path.?,
             target,
             target_name,
             module_runtimes,
@@ -187,7 +198,7 @@ pub fn compile(
             allocator,
             io,
             environ_map,
-            zig_path,
+            zig_path.?,
             target,
             target_name,
             default_native_configuration.compilerFlags(),
@@ -204,7 +215,7 @@ pub fn compile(
         compiled_packages = shared.compiled_packages;
         reused_packages = shared.reused_packages;
         var arguments: std.ArrayList([]const u8) = .empty;
-        try arguments.appendSlice(allocator, &.{ zig_path, "c++" });
+        try arguments.appendSlice(allocator, &.{ zig_path.?, "c++" });
         if (target.zig_triple) |triple| try arguments.appendSlice(allocator, &.{ "-target", triple });
         try arguments.appendSlice(allocator, default_native_configuration.compilerFlags());
         try arguments.appendSlice(allocator, &.{ "-std=c++23", "-Wno-nullability-completeness", cpp_path });
@@ -243,6 +254,18 @@ pub fn compile(
         try Io.Dir.cwd().rename(temporary_executable_path, .cwd(), executable_path, io);
     }
     Io.Dir.cwd().deleteFile(io, backend_log_path) catch {};
+    if (needs_compilation_database) {
+        _ = try CompilationDatabase.write(
+            allocator,
+            io,
+            artifact_root,
+            zig_path.?,
+            target,
+            default_native_configuration.compilerFlags(),
+            module_runtimes,
+            compilation_database_scope,
+        );
+    }
 
     return .{
         .executable_path = executable_path,
@@ -262,6 +285,20 @@ fn nativeModuleNames(allocator: Allocator, project: ProjectModule.Project) ![]co
         if (module.module_manifest_path != null) try names.append(allocator, module.name);
     }
     return names.toOwnedSlice(allocator);
+}
+
+fn hasCompilationDatabaseSources(
+    runtimes: []const NativeDependency.ModuleRuntime,
+    scope: CompilationDatabase.Scope,
+) bool {
+    for (runtimes) |runtime| {
+        const selected = switch (scope) {
+            .project => runtime.origin == .project,
+            .distributed => runtime.origin == .distributed,
+        };
+        if (selected and runtime.sources.len > 0) return true;
+    }
+    return false;
 }
 
 fn applyNativeInterface(
@@ -307,6 +344,7 @@ fn loadModuleRuntimes(
             package.root,
             manifest_path,
             package_index,
+            if (package_index == 0) .project else .package,
             target,
         );
     }
@@ -321,6 +359,11 @@ fn loadModuleRuntimes(
             package_graph.packages[module.package_index].root,
             manifest_path,
             module.package_index,
+            switch (module.origin) {
+                .application, .local => .project,
+                .package => .package,
+                .distributed => .distributed,
+            },
             target,
         );
     }
@@ -357,6 +400,7 @@ fn appendModuleRuntime(
     package_root: []const u8,
     manifest_path: []const u8,
     package_index: usize,
+    origin: NativeDependency.RuntimeOrigin,
     target: TargetModule.Target,
 ) !void {
     for (runtimes.items) |runtime| if (std.mem.eql(u8, runtime.manifest_path, manifest_path)) return;
@@ -389,6 +433,7 @@ fn appendModuleRuntime(
         },
     };
     runtime.package_index = package_index;
+    runtime.origin = origin;
     try runtimes.append(allocator, runtime);
 }
 
@@ -541,26 +586,18 @@ fn compileLocalRuntimeObjects(
         for (runtime.sources, 0..) |source, source_index| {
             const object_name = try std.fmt.allocPrint(allocator, "native-{d}-{d}.o", .{ runtime_index, source_index });
             const object_path = try std.fs.path.join(allocator, &.{ cache_dir, object_name });
-            var arguments: std.ArrayList([]const u8) = .empty;
-            const driver = switch (source.kind) {
-                .c, .objective_c => "cc",
-                .cpp, .objective_cpp => "c++",
-            };
-            try arguments.appendSlice(allocator, &.{ zig_path, driver });
-            if (target.zig_triple) |triple| try arguments.appendSlice(allocator, &.{ "-target", triple });
-            try arguments.appendSlice(allocator, default_native_configuration.compilerFlags());
-            if (source.kind == .cpp or source.kind == .objective_cpp) {
-                try arguments.appendSlice(allocator, &.{ "-std=c++23", "-Wno-nullability-completeness" });
-            }
-            for (runtime.include_dirs) |include_dir| try arguments.append(allocator, try std.fmt.allocPrint(allocator, "-I{s}", .{include_dir}));
-            for (runtime.defines) |define| try arguments.append(
+            const arguments = try NativeCommand.compileArguments(
                 allocator,
-                try std.fmt.allocPrint(allocator, "-D{s}={s}", .{ define.name, define.value }),
+                zig_path,
+                target,
+                default_native_configuration.compilerFlags(),
+                runtime,
+                source,
+                object_path,
             );
-            try arguments.appendSlice(allocator, &.{ "-c", source.path, "-o", object_path });
 
             const result = try std.process.run(allocator, io, .{
-                .argv = arguments.items,
+                .argv = arguments,
                 .stdout_limit = .limited(16 * 1024 * 1024),
                 .stderr_limit = .limited(16 * 1024 * 1024),
             });

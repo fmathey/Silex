@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const build_options = @import("build_options");
 const NativeDependency = @import("NativeDependency.zig");
+const NativeCommand = @import("NativeCommand.zig");
 const PackageGraph = @import("PackageGraph.zig");
 const TargetModule = @import("Target.zig");
 
@@ -250,27 +251,18 @@ fn compileObject(
     destination: []const u8,
     backend_log_path: []const u8,
 ) !void {
-    var arguments: std.ArrayList([]const u8) = .empty;
-    const driver = switch (source.kind) {
-        .c, .objective_c => "cc",
-        .cpp, .objective_cpp => "c++",
-    };
-    try arguments.appendSlice(allocator, &.{ zig_path, driver });
-    if (target.zig_triple) |triple| try arguments.appendSlice(allocator, &.{ "-target", triple });
-    try arguments.appendSlice(allocator, compiler_flags);
-    if (source.kind == .cpp or source.kind == .objective_cpp) {
-        try arguments.appendSlice(allocator, &.{ "-std=c++23", "-Wno-nullability-completeness" });
-    }
-    for (runtime.include_dirs) |include_dir| {
-        try arguments.append(allocator, try std.fmt.allocPrint(allocator, "-I{s}", .{include_dir}));
-    }
-    for (runtime.defines) |define| {
-        try arguments.append(allocator, try std.fmt.allocPrint(allocator, "-D{s}={s}", .{ define.name, define.value }));
-    }
-    try arguments.appendSlice(allocator, &.{ "-c", source.path, "-o", destination });
+    const arguments = try NativeCommand.compileArguments(
+        allocator,
+        zig_path,
+        target,
+        compiler_flags,
+        runtime,
+        source,
+        destination,
+    );
 
     const result = try std.process.run(allocator, io, .{
-        .argv = arguments.items,
+        .argv = arguments,
         .stdout_limit = .limited(16 * 1024 * 1024),
         .stderr_limit = .limited(16 * 1024 * 1024),
     });

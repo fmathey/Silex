@@ -32,11 +32,14 @@ pub const Define = struct {
     value: []const u8,
 };
 
+pub const RuntimeOrigin = enum { project, package, distributed };
+
 pub const ModuleRuntime = struct {
     module_name: []const u8,
     module_directory: []const u8,
     manifest_path: []const u8,
     package_index: usize = 0,
+    origin: RuntimeOrigin = .package,
     provides: []const []const u8 = &.{},
     sources: []const SourceFile,
     include_dirs: []const []const u8,
