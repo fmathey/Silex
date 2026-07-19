@@ -1,0 +1,7 @@
+{
+  "native": {
+    "sources": {
+      "cpp": ["Module.cpp"]
+    }
+  }
+}

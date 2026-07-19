@@ -2488,8 +2488,16 @@ pub fn build(b: *std.Build) void {
         "silex: native compilation failed for target '.*'",
     );
 
+    const native_structure_return_command = b.addRunArtifact(executable);
+    native_structure_return_command.step.dependOn(&incompatible_native_interface_command.step);
+    native_structure_return_command.addArgs(&.{ "run", "Smokes/NativeStructureReturns/Main.sx" });
+    native_structure_return_command.expectStdOutEqual(hostText(
+        b,
+        "1\n2\n-8\n-16\n-32\n8\n16\n32\n64\n1.5\n2.5\ntrue\n",
+    ));
+
     const native_string_command = b.addRunArtifact(executable);
-    native_string_command.step.dependOn(&incompatible_native_interface_command.step);
+    native_string_command.step.dependOn(&native_structure_return_command.step);
     native_string_command.addArgs(&.{ "run", "Smokes/NativeStrings/Main.sx" });
     native_string_command.expectStdOutEqual(hostText(b, "true\ntrue\ntrue\ntrue\ntrue\ntrue\n"));
 

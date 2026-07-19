@@ -148,10 +148,23 @@ positive length, is a runtime error naming the native function. The bridge
 also rejects invalid UTF-8 with `returned invalid UTF-8`; it frees the buffer
 on every valid and invalid return path. Embedded null bytes are preserved, so
 the length—not C string termination—defines the result. Collections,
-structures, references, pointers, callbacks, optionals, `Result`, and other
-non-scalar values remain unavailable in native-function signatures. Silex
-derives the C symbol from the module and function name, so a native runtime
-never chooses an arbitrary C symbol.
+references, pointers, callbacks, optionals, `Result`, and other non-scalar
+values remain unavailable in native-function signatures. Silex derives the C
+symbol from the module and function name, so a native runtime never chooses an
+arbitrary C symbol.
+
+A native function may also return a copyable, non-generic structure whose
+stored fields are directly scalar booleans or numbers. Its generated C header
+defines a transport structure derived from the module and Silex type name; the
+native symbol receives an output pointer to that transport after its ordinary
+parameters. Silex zero-initializes the transport, calls the native symbol, then
+copies every field in declaration order into an independent Silex structure.
+The generated C transport—not the structure emitted in `Generated.cpp`—is the
+ABI. Static members and methods add no transport field. Strings, nested
+structures, enums, classes, protocols, collections, optionals, `Result`,
+functions, generic structures, and structures with `drop` remain unavailable
+in a native return structure. Structures remain unavailable as native
+parameters.
 
 Before compiling a native runtime, Silex generates its authoritative C
 interface beneath `.silex/build/`. Every module segment becomes a header-path
@@ -163,10 +176,11 @@ segment, so a C or C++ implementation of `STD.Console` includes:
 
 The generated header has ordinary C types from `<stdbool.h>` and `<stdint.h>`,
 includes guards, and a C++-protected `extern "C"` block. It contains the exact
-symbols and scalar or string ABI above, never generated-program types,
-`std::string`, or project paths. Its include root is supplied automatically to
-the native runtime that implements the module. A C++ definition that disagrees
-with a generated declaration therefore fails while compiling that runtime.
+symbols and scalar, string, or scalar-structure ABI above, never
+generated-program types, `std::string`, or project paths. Its include root is
+supplied automatically to the native runtime that implements the module. A C++
+definition that disagrees with a generated declaration therefore fails while
+compiling that runtime.
 
 All arguments, return values, and return paths are checked statically. A
 non-void function must return a compatible value on every path. A void function

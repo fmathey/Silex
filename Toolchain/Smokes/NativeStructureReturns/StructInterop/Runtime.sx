@@ -1,0 +1,19 @@
+pub struct NativeScalars {
+    let integer:int
+    let signed8:int8
+    let signed16:int16
+    let signed32:int32
+    let unsigned8:uint8
+    let unsigned16:uint16
+    let unsigned32:uint32
+    let unsigned64:uint64
+    let decimal32:float
+    let decimal64:float64
+    let ready:bool
+}
+
+native func native_read(seed:int) NativeScalars
+
+pub func read(seed:int) NativeScalars {
+    return native_read(seed)
+}

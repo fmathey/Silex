@@ -1,0 +1,20 @@
+use StructInterop as Native
+
+func main() {
+    let first = Native.read(1)
+    let second = Native.read(2)
+    assert(first.integer == 1, "first native structure")
+    assert(second.integer == 2, "second native structure")
+    print(first.integer)
+    print(second.integer)
+    print(first.signed8)
+    print(first.signed16)
+    print(first.signed32)
+    print(first.unsigned8)
+    print(first.unsigned16)
+    print(first.unsigned32)
+    print(first.unsigned64)
+    print(first.decimal32)
+    print(first.decimal64)
+    print(first.ready)
+}
