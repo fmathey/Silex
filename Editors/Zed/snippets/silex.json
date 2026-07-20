@@ -91,6 +91,17 @@
     ],
     "description": "Add methods to an existing struct or class"
   },
+  "Generic extension method": {
+    "prefix": "extendgeneric",
+    "body": [
+      "extend ${1:Type} {",
+      "    pub func ${2:method}<${3:T}>(${4:value}:${3:T}) ${3:T} {",
+      "        $0",
+      "    }",
+      "}"
+    ],
+    "description": "Add a generic instance method to an existing struct or class"
+  },
   "Protocol conformance extension": {
     "prefix": "extendprotocol",
     "body": [

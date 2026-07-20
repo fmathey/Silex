@@ -1,0 +1,202 @@
+use STD.Algorithms
+use STD.Randomizer as Randomizer
+
+class Tracker {
+    pub var dropped:int = 0
+}
+
+struct Token {
+    let value:int
+    var tracker:Tracker
+
+    drop {
+        self.tracker.dropped++
+    }
+}
+
+func int_matches(actual:@int, expected:int) bool {
+    return actual > expected - 1 && actual < expected + 1
+}
+
+func check_choose() {
+    let candidates:int[] = [10, 20, 30, 40]
+    var randomizer = Randomizer.create(42)
+    var expected_randomizer = Randomizer.create(42)
+    let expected_index = expected_randomizer.get_int(0, candidates.count())
+    let expected_value = candidates[expected_index]
+    if true {
+        let view = @candidates[0:candidates.count()]
+        let selected:@int = Algorithms.choose<int>(
+            randomizer,
+            view
+        )
+        assert(int_matches(selected, expected_value), "choose follows the bounded draw")
+    }
+    assert(
+        randomizer.get_int() == expected_randomizer.get_int(),
+        "choose performs exactly one draw"
+    )
+
+    let bounded:int[] = [90, 1, 2, 3, 80]
+    var bounded_randomizer = Randomizer.create(7)
+    var bounded_expected = Randomizer.create(7)
+    let bounded_index = bounded_expected.get_int(0, 3)
+    if true {
+        let view = @bounded[1:4]
+        let selected:@int = Algorithms.choose<int>(bounded_randomizer, view)
+        let expected = bounded[1 + bounded_index]
+        assert(int_matches(selected, expected), "choose respects sub-view bounds")
+    }
+    assert(
+        bounded_randomizer.get_int() == bounded_expected.get_int(),
+        "sub-view choose performs exactly one draw"
+    )
+
+    var method_randomizer = Randomizer.create(73)
+    var method_expected = Randomizer.create(73)
+    let method_index = method_expected.get_int(0, candidates.count())
+    if true {
+        let view = @candidates[0:candidates.count()]
+        let selected:@int = method_randomizer.choose<int>(view)
+        assert(
+            int_matches(selected, candidates[method_index]),
+            "generic extension choose delegates"
+        )
+    }
+    assert(
+        method_randomizer.get_int() == method_expected.get_int(),
+        "generic extension choose advances the shared state"
+    )
+}
+
+func check_empty_and_single_shuffle() {
+    var empty:int[] = []
+    var empty_randomizer = Randomizer.create(11)
+    var empty_expected = Randomizer.create(11)
+    if true {
+        var view = &empty[0:empty.count()]
+        Algorithms.shuffle<int>(empty_randomizer, view)
+    }
+    assert(empty.is_empty(), "empty shuffle keeps the collection empty")
+    assert(
+        empty_randomizer.get_int() == empty_expected.get_int(),
+        "empty shuffle performs no draw"
+    )
+
+    var single:int[1] = [7]
+    var single_randomizer = Randomizer.create(12)
+    var single_expected = Randomizer.create(12)
+    if true {
+        var view = &single[0:single.count()]
+        Algorithms.shuffle<int>(single_randomizer, view)
+    }
+    assert(single[0] == 7, "single shuffle keeps its value")
+    assert(
+        single_randomizer.get_int() == single_expected.get_int(),
+        "single shuffle performs no draw"
+    )
+}
+
+func check_fisher_yates() {
+    var ascending:func(@int, @int) bool = func(left:@int, right:@int) bool {
+        return left < right
+    }
+    var values:int[] = [90, 1, 2, 3, 4, 80]
+    var expected:int[] = values
+    var randomizer = Randomizer.create(91)
+    var expected_randomizer = Randomizer.create(91)
+
+    var end = 3
+    while end > 0 {
+        let selected = expected_randomizer.get_int(0, end + 1)
+        expected.swap(1 + end, 1 + selected)
+        end--
+    }
+
+    if true {
+        var view = &values[1:5]
+        Algorithms.shuffle<int>(randomizer, view)
+    }
+    assert(values == expected, "shuffle follows Fisher-Yates intervals")
+    assert(values[0] == 90 && values[5] == 80, "shuffle stays inside the view")
+    assert(
+        randomizer.get_int() == expected_randomizer.get_int(),
+        "shuffle performs exactly n minus one draws"
+    )
+
+    if true {
+        var view = &values[1:5]
+        Algorithms.sort<int>(view, ascending)
+    }
+    assert(values ==[90, 1, 2, 3, 4, 80], "shuffle preserves every element")
+
+    var left:int[] = [1, 2, 3, 4, 5, 6]
+    var right:int[] = left
+    var left_randomizer = Randomizer.create(1234)
+    var right_randomizer = Randomizer.create(1234)
+    if true {
+        var left_view = &left[0:left.count()]
+        Algorithms.shuffle<int>(left_randomizer, left_view)
+    }
+    if true {
+        var right_view = &right[0:right.count()]
+        Algorithms.shuffle<int>(right_randomizer, right_view)
+    }
+    assert(left == right, "shuffle is deterministic for one version and seed")
+
+    var method_values:int[] = [1, 2, 3, 4, 5, 6]
+    var free_values:int[] = method_values
+    var method_randomizer = Randomizer.create(808)
+    var free_randomizer = Randomizer.create(808)
+    if true {
+        var view = &method_values[0:method_values.count()]
+        method_randomizer.shuffle<int>(view)
+    }
+    if true {
+        var view = &free_values[0:free_values.count()]
+        Algorithms.shuffle<int>(free_randomizer, view)
+    }
+    assert(method_values == free_values, "generic extension shuffle delegates")
+    assert(
+        method_randomizer.get_int() == free_randomizer.get_int(),
+        "generic extension shuffle advances the shared state"
+    )
+}
+
+func exercise_noncopyable(tracker:Tracker) {
+    var token_before:func(@Token, @Token) bool = func(left:@Token, right:@Token) bool {
+        return left.value < right.value
+    }
+    var tokens:Token[] = [
+        Token(value:4, tracker:tracker),
+        Token(value:1, tracker:tracker),
+        Token(value:3, tracker:tracker),
+        Token(value:2, tracker:tracker),
+    ]
+    var randomizer = Randomizer.create(5)
+    if true {
+        let view = @tokens[0:tokens.count()]
+        let selected:@Token = randomizer.choose<Token>(view)
+        assert(selected.value >= 1 && selected.value <= 4, "choose borrows a noncopyable element")
+    }
+    if true {
+        var view = &tokens[0:tokens.count()]
+        randomizer.shuffle<Token>(view)
+    }
+    if true {
+        var view = &tokens[0:tokens.count()]
+        Algorithms.sort<Token>(view, token_before)
+    }
+    assert(tokens[0].value == 1 && tokens[1].value == 2, "noncopyable values first half")
+    assert(tokens[2].value == 3 && tokens[3].value == 4, "noncopyable values second half")
+}
+
+func main() {
+    check_choose()
+    check_empty_and_single_shuffle()
+    check_fisher_yates()
+
+    var tracker = Tracker()
+    exercise_noncopyable(tracker)
+    assert(tracker.dropped == 4, "noncopyable elements are destroyed exactly once")
+}

@@ -15,9 +15,12 @@ func main() {
     var counter = Counter.start(4)
     assert(counter.bump() == 5, "used mutating extension")
     assert(Extras.advance(counter) == 6, "structure extension across module files")
+    assert(counter.keep<int>(7) == 7, "used generic structure extension")
+    assert(counter.keep<str>("ready") == "ready", "specialized generic extension twice")
 
     var box = Box(21)
     assert(box.doubled() == 42, "used class extension")
+    assert(box.keep<int>(42) == 42, "used public generic class extension")
 
     var randomizer = Randomizer.create(42)
     assert(randomizer.get_uint() > 0, "extended STD.Randomizer")

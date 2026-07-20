@@ -71,6 +71,14 @@ const FunctionSpecialization = struct {
     state: State,
 };
 
+const MethodSpecialization = struct {
+    target_name: []const u8,
+    template_position: Source.Position,
+    name: []const u8,
+    state: State,
+    method: ?Ast.Function = null,
+};
+
 pub const Specializer = struct {
     allocator: Allocator,
     program: Ast.Program,
@@ -81,6 +89,7 @@ pub const Specializer = struct {
     enum_specializations: std.ArrayList(EnumSpecialization) = .empty,
     structure_specializations: std.ArrayList(StructureSpecialization) = .empty,
     function_specializations: std.ArrayList(FunctionSpecialization) = .empty,
+    method_specializations: std.ArrayList(MethodSpecialization) = .empty,
     active_constraint_protocols: []const []const u8 = &.{},
     active_extension_visibility_file: ?usize = null,
     diagnostic: ?Source.Diagnostic = null,
@@ -115,6 +124,18 @@ pub const Specializer = struct {
             try self.functions.append(self.allocator, try self.rewriteFunction(function, &.{}));
         }
 
+        for (self.method_specializations.items) |specialization| {
+            const method = specialization.method orelse continue;
+            for (self.structures.items) |*structure| {
+                if (!std.mem.eql(u8, structure.name, specialization.target_name)) continue;
+                var methods: std.ArrayList(Ast.Function) = .empty;
+                try methods.appendSlice(self.allocator, structure.methods);
+                try methods.append(self.allocator, method);
+                structure.methods = try methods.toOwnedSlice(self.allocator);
+                break;
+            }
+        }
+
         var protocols: std.ArrayList(Ast.Protocol) = .empty;
         for (self.program.protocols) |protocol| {
             var requirements: std.ArrayList(Ast.Function) = .empty;
@@ -129,6 +150,7 @@ pub const Specializer = struct {
         return .{
             .enums = try self.enums.toOwnedSlice(self.allocator),
             .protocols = try protocols.toOwnedSlice(self.allocator),
+            .extensions = self.program.extensions,
             .structures = try self.structures.toOwnedSlice(self.allocator),
             .functions = try self.functions.toOwnedSlice(self.allocator),
         };
@@ -193,6 +215,7 @@ pub const Specializer = struct {
 
         var methods: std.ArrayList(Ast.Function) = .empty;
         for (structure.methods) |method| {
+            if (method.type_parameters.len != 0) continue;
             try methods.append(self.allocator, try self.rewriteFunction(method, bindings));
         }
 
@@ -321,7 +344,7 @@ pub const Specializer = struct {
         return switch (value) {
             .structure => |name| type_result: {
                 const rewritten = try self.rewriteType(.{ .structure = name }, bindings, position);
-                break :type_result .{ .structure = rewritten.structure };
+                break :type_result typeNameToReturnType(rewritten);
             },
             .generic_structure => |generic| type_result: {
                 const rewritten = try self.rewriteType(.{ .generic_structure = generic }, bindings, position);
@@ -627,18 +650,31 @@ pub const Specializer = struct {
                     .statements = try self.rewriteStatements(lambda.statements, bindings),
                 } };
             },
-            .method_call => |call| .{ .method_call = .{
-                .object = try self.rewriteExpression(call.object, bindings),
-                .name = call.name,
-                .name_position = call.name_position,
-                .extension_visibility_file = if (self.activeConstraintRequires(call.name))
+            .method_call => |call| method_call: {
+                const type_arguments = try self.rewriteTypes(call.type_arguments, bindings, call.name_position);
+                const visibility_file = if (self.activeConstraintRequires(call.name))
                     self.active_extension_visibility_file
                 else
-                    call.extension_visibility_file,
-                .type_arguments = try self.rewriteTypes(call.type_arguments, bindings, call.name_position),
-                .arguments = try self.rewriteExpressions(call.arguments, bindings),
-                .named_fields = if (call.named_fields) |fields| try self.rewriteFieldInitializers(fields, bindings) else null,
-            } },
+                    call.extension_visibility_file;
+                const name = if (type_arguments.len != 0)
+                    try self.instantiateMethods(call.name, type_arguments, visibility_file orelse call.name_position.file, call.name_position)
+                else no_type_arguments: {
+                    if (self.genericExtensionMethodRequiresArguments(call.name, visibility_file orelse call.name_position.file)) {
+                        const message = try std.fmt.allocPrint(self.allocator, "generic extension method '{s}' requires explicit type arguments", .{call.name});
+                        return self.fail(call.name_position, message);
+                    }
+                    break :no_type_arguments call.name;
+                };
+                break :method_call .{ .method_call = .{
+                    .object = try self.rewriteExpression(call.object, bindings),
+                    .name = name,
+                    .name_position = call.name_position,
+                    .extension_visibility_file = visibility_file,
+                    .type_arguments = type_arguments,
+                    .arguments = try self.rewriteExpressions(call.arguments, bindings),
+                    .named_fields = if (call.named_fields) |fields| try self.rewriteFieldInitializers(fields, bindings) else null,
+                } };
+            },
             .static_method_call => |call| .{ .static_method_call = .{
                 .owner = try self.rewriteType(call.owner, bindings, call.owner_position),
                 .owner_position = call.owner_position,
@@ -946,6 +982,144 @@ pub const Specializer = struct {
         concrete.type_parameters = &.{};
         try self.functions.append(self.allocator, concrete);
         self.function_specializations.items[specialization_index].state = .done;
+    }
+
+    fn instantiateMethods(
+        self: *Specializer,
+        template_name: []const u8,
+        arguments: []const Ast.TypeName,
+        visibility_file: usize,
+        position: Source.Position,
+    ) SpecializeError![]const u8 {
+        const name = try self.genericTypeName(template_name, arguments);
+        var generic_count: usize = 0;
+        var matching_arity: usize = 0;
+        var expected_arity: ?usize = null;
+        var arities_match = true;
+        var instantiated = false;
+        var constrained_candidate: ?*const Ast.Function = null;
+        for (self.program.extensions) |extension| {
+            for (extension.methods) |*method| {
+                if (method.type_parameters.len == 0 or
+                    !std.mem.eql(u8, method.name, template_name)) continue;
+                if (method.extension_visible_files) |visible_files| {
+                    if (!fileSetContains(visible_files, visibility_file)) continue;
+                }
+                generic_count += 1;
+                if (expected_arity) |expected| {
+                    if (expected != method.type_parameters.len) arities_match = false;
+                } else expected_arity = method.type_parameters.len;
+                if (method.type_parameters.len != arguments.len) continue;
+                matching_arity += 1;
+                constrained_candidate = method;
+                if (!self.typeArgumentsSatisfyConstraints(method.type_parameters, arguments, visibility_file)) continue;
+                try self.instantiateMethod(extension.target, method.*, arguments, name, position);
+                instantiated = true;
+            }
+        }
+        if (generic_count != 0 and matching_arity == 0) {
+            if (arities_match) {
+                const count = expected_arity.?;
+                const message = try std.fmt.allocPrint(
+                    self.allocator,
+                    "generic extension method '{s}' expects {d} type argument{s}, found {d}",
+                    .{ template_name, count, if (count == 1) "" else "s", arguments.len },
+                );
+                return self.fail(position, message);
+            }
+            const message = try std.fmt.allocPrint(self.allocator, "no generic extension method '{s}' accepts {d} type arguments", .{ template_name, arguments.len });
+            return self.fail(position, message);
+        }
+        if (!instantiated and constrained_candidate != null) {
+            try self.validateTypeArgumentConstraints(constrained_candidate.?.type_parameters, arguments, position);
+        }
+        return name;
+    }
+
+    fn genericExtensionMethodRequiresArguments(self: *const Specializer, name: []const u8, visibility_file: usize) bool {
+        var generic_visible = false;
+        for (self.program.structures) |structure| {
+            for (structure.methods) |method| {
+                if (method.type_parameters.len == 0 and std.mem.eql(u8, method.name, name)) return false;
+            }
+        }
+        for (self.program.extensions) |extension| {
+            for (extension.methods) |method| {
+                if (!std.mem.eql(u8, method.name, name)) continue;
+                if (method.extension_visible_files) |visible_files| {
+                    if (!fileSetContains(visible_files, visibility_file)) continue;
+                }
+                if (method.type_parameters.len == 0) return false;
+                generic_visible = true;
+            }
+        }
+        return generic_visible;
+    }
+
+    fn instantiateMethod(
+        self: *Specializer,
+        target_name: []const u8,
+        template: Ast.Function,
+        arguments: []const Ast.TypeName,
+        name: []const u8,
+        position: Source.Position,
+    ) SpecializeError!void {
+        for (self.method_specializations.items) |specialization| {
+            if (!positionsEqual(specialization.template_position, template.name_position)) continue;
+            if (std.mem.eql(u8, specialization.name, name)) return;
+            if (specialization.state == .visiting) {
+                const message = try std.fmt.allocPrint(
+                    self.allocator,
+                    "generic extension method '{s}' recursively expands with different type arguments",
+                    .{template.name},
+                );
+                return self.fail(position, message);
+            }
+        }
+
+        const specialization_index = self.method_specializations.items.len;
+        try self.method_specializations.append(self.allocator, .{
+            .target_name = target_name,
+            .template_position = template.name_position,
+            .name = name,
+            .state = .visiting,
+        });
+        const bindings = try self.allocator.alloc(Binding, arguments.len);
+        for (template.type_parameters, arguments, 0..) |parameter, argument, index| {
+            bindings[index] = .{ .name = parameter.name, .value = argument };
+        }
+
+        var constraint_protocols: std.ArrayList([]const u8) = .empty;
+        for (template.type_parameters) |parameter| {
+            if (parameter.constraint) |constraint| try constraint_protocols.append(self.allocator, constraint.name);
+        }
+        const previous_constraints = self.active_constraint_protocols;
+        const previous_visibility_file = self.active_extension_visibility_file;
+        self.active_constraint_protocols = try constraint_protocols.toOwnedSlice(self.allocator);
+        self.active_extension_visibility_file = position.file;
+        defer {
+            self.active_constraint_protocols = previous_constraints;
+            self.active_extension_visibility_file = previous_visibility_file;
+        }
+
+        var concrete = try self.rewriteFunction(template, bindings);
+        concrete.name = name;
+        concrete.type_parameters = &.{};
+        self.method_specializations.items[specialization_index].method = concrete;
+        self.method_specializations.items[specialization_index].state = .done;
+    }
+
+    fn typeArgumentsSatisfyConstraints(
+        self: *const Specializer,
+        parameters: []const Ast.TypeParameter,
+        arguments: []const Ast.TypeName,
+        source_file: usize,
+    ) bool {
+        for (parameters, arguments) |parameter, argument| {
+            const constraint = parameter.constraint orelse continue;
+            if (!self.typeConformsTo(argument, constraint.name, source_file)) return false;
+        }
+        return true;
     }
 
     fn validateTypeArgumentConstraints(
@@ -1285,4 +1459,103 @@ test "specialize a constrained generic enum" {
     var specializer = Specializer.init(allocator, try parser.parse());
     const program = try specializer.specialize();
     try std.testing.expectEqual(@as(usize, 1), program.enums.len);
+}
+
+test "specialize generic extension methods and reuse identical calls" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var parser = Parser.init(allocator,
+        \\struct Catalog {}
+        \\extend Catalog {
+        \\    func identity<T>(value:T) T { return value }
+        \\    func select<Key, Value>(key:Key, value:Value?) Value? { return value }
+        \\    func transform<T>(values:T[], callback:func(T) T) T? {
+        \\        let first:T = values[0]
+        \\        return callback(first)
+        \\    }
+        \\    func repeat<T>(value:T, count:int) T {
+        \\        if count == 0 { return value }
+        \\        return self.repeat<T>(value, count - 1)
+        \\    }
+        \\}
+        \\func main() {
+        \\    var catalog = Catalog()
+        \\    print(catalog.identity<int>(1))
+        \\    print(catalog.identity<int>(2))
+        \\    print(catalog.identity<str>("ok"))
+        \\    let selected = catalog.select<int, str>(1, "value")
+        \\    let transformed = catalog.transform<int>([1], func(value:int) int { return value })
+        \\    print(catalog.repeat<int>(3, 1))
+        \\}
+    );
+    var specializer = Specializer.init(allocator, try parser.parse());
+    const program = try specializer.specialize();
+    try std.testing.expectEqual(@as(usize, 5), program.structures[0].methods.len);
+    try std.testing.expectEqualStrings("identity<int>", program.structures[0].methods[0].name);
+    try std.testing.expectEqualStrings("identity<str>", program.structures[0].methods[1].name);
+    try std.testing.expectEqualStrings("select<int, str>", program.structures[0].methods[2].name);
+    try std.testing.expectEqualStrings("transform<int>", program.structures[0].methods[3].name);
+    try std.testing.expectEqualStrings("repeat<int>", program.structures[0].methods[4].name);
+}
+
+test "diagnose generic extension method arguments and constraints" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var missing_parser = Parser.init(allocator,
+        \\struct Box {}
+        \\extend Box { func identity<T>(value:T) T { return value } }
+        \\func main() { var box = Box(); print(box.identity(1)) }
+    );
+    var missing = Specializer.init(allocator, try missing_parser.parse());
+    try std.testing.expectError(error.InvalidSource, missing.specialize());
+    try std.testing.expectEqualStrings("generic extension method 'identity' requires explicit type arguments", missing.diagnostic.?.message);
+
+    var arity_parser = Parser.init(allocator,
+        \\struct Box {}
+        \\extend Box { func identity<T>(value:T) T { return value } }
+        \\func main() { var box = Box(); print(box.identity<int, str>(1)) }
+    );
+    var arity = Specializer.init(allocator, try arity_parser.parse());
+    try std.testing.expectError(error.InvalidSource, arity.specialize());
+    try std.testing.expectEqualStrings("generic extension method 'identity' expects 1 type argument, found 2", arity.diagnostic.?.message);
+
+    var constraint_parser = Parser.init(allocator,
+        \\protocol Named { func name() str }
+        \\struct Box {}
+        \\struct Value {}
+        \\extend Box { func label<T:Named>(value:T) str { return value.name() } }
+        \\func main() { var box = Box(); print(box.label<Value>(Value())) }
+    );
+    var constraint = Specializer.init(allocator, try constraint_parser.parse());
+    try std.testing.expectError(error.InvalidSource, constraint.specialize());
+    try std.testing.expectEqualStrings(
+        "type argument 'Value' does not conform to protocol 'Named' required by 'T'",
+        constraint.diagnostic.?.message,
+    );
+
+    var concrete_parser = Parser.init(allocator,
+        \\struct Box { func identity(value:int) int { return value } }
+        \\extend Box { func identity<T>(value:T) T { return value } }
+        \\func main() { var box = Box(); print(box.identity(1)) }
+    );
+    var concrete = Specializer.init(allocator, try concrete_parser.parse());
+    const concrete_program = try concrete.specialize();
+    try std.testing.expectEqual(@as(usize, 1), concrete_program.structures[0].methods.len);
+
+    var expansion_parser = Parser.init(allocator,
+        \\struct Box {}
+        \\extend Box {
+        \\    func expand<T>(value:T) { self.expand<T[]>([value]) }
+        \\}
+        \\func main() { var box = Box(); box.expand<int>(1) }
+    );
+    var expansion = Specializer.init(allocator, try expansion_parser.parse());
+    try std.testing.expectError(error.InvalidSource, expansion.specialize());
+    try std.testing.expectEqualStrings(
+        "generic extension method 'expand' recursively expands with different type arguments",
+        expansion.diagnostic.?.message,
+    );
 }

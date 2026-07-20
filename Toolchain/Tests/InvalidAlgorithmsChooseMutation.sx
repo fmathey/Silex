@@ -1,0 +1,11 @@
+use STD.Algorithms
+use STD.Randomizer as Randomizer
+
+func main() {
+    var values:int[] = [1, 2, 3]
+    var randomizer = Randomizer.create(1)
+    let view = @values[0:values.count()]
+    let selected:@int = randomizer.choose<int>(view)
+    values[0] = 4
+    print(selected)
+}

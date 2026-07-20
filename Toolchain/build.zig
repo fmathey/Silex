@@ -708,14 +708,21 @@ pub fn build(b: *std.Build) void {
     extension_visibility_command.addArgs(&.{ "compile", "Tests/ExtensionVisibility/silex.json" });
     extension_visibility_command.expectExitCode(1);
     extension_visibility_command.expectStdErrEqual(
-        "Tests/ExtensionVisibility/Main.sx:7:13: error: struct 'ExtensionVisibility.Core.Counter' has no method 'bump'\n",
+        "Tests/ExtensionVisibility/Main.sx:7:13: error: struct 'ExtensionVisibility.Core.Counter' has no method 'keep<int>'\n",
+    );
+
+    const generic_extension_private_command = b.addRunArtifact(executable);
+    generic_extension_private_command.addArgs(&.{ "compile", "Tests/GenericExtensionPrivate/silex.json" });
+    generic_extension_private_command.expectExitCode(1);
+    generic_extension_private_command.expectStdErrEqual(
+        "Tests/GenericExtensionPrivate/Main.sx:7:15: error: class 'GenericExtensionPrivate.Core.Box' has no method 'keep<int>'\n",
     );
 
     const extension_conflict_command = b.addRunArtifact(executable);
     extension_conflict_command.addArgs(&.{ "compile", "Tests/ExtensionConflict/silex.json" });
     extension_conflict_command.expectExitCode(1);
     extension_conflict_command.expectStdErrEqual(
-        "Tests/ExtensionConflict/Second.sx:5:14: error: extension method 'read' from module 'ExtensionConflict.Second' conflicts with module 'ExtensionConflict.First' on type 'ExtensionConflict.Core.Value'\n",
+        "Tests/ExtensionConflict/Second.sx:5:14: error: extension method 'read<int>' from module 'ExtensionConflict.Second' conflicts with module 'ExtensionConflict.First' on type 'ExtensionConflict.Core.Value'\n",
     );
 
     const extension_conformance_visibility_command = b.addRunArtifact(executable);
@@ -1616,6 +1623,14 @@ pub fn build(b: *std.Build) void {
         "Tests/InvalidIterationMutation.sx:4:16: error: cannot mutate borrowed variable 'values'\n",
     );
 
+    const invalid_algorithms_choose_mutation_command = b.addRunArtifact(executable);
+    invalid_algorithms_choose_mutation_command.step.dependOn(b.getInstallStep());
+    invalid_algorithms_choose_mutation_command.addArgs(&.{ "compile", "Tests/InvalidAlgorithmsChooseMutation.sx" });
+    invalid_algorithms_choose_mutation_command.expectExitCode(1);
+    invalid_algorithms_choose_mutation_command.expectStdErrEqual(
+        "Tests/InvalidAlgorithmsChooseMutation.sx:9:5: error: cannot mutate borrowed variable 'values'\n",
+    );
+
     const invalid_mutable_iteration_access_command = b.addRunArtifact(executable);
     invalid_mutable_iteration_access_command.addArgs(&.{ "compile", "Tests/InvalidMutableIterationAccess.sx" });
     invalid_mutable_iteration_access_command.expectExitCode(1);
@@ -2098,6 +2113,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&unique_resource_field_visibility_command.step);
     test_step.dependOn(&unique_resource_extension_visibility_command.step);
     test_step.dependOn(&extension_visibility_command.step);
+    test_step.dependOn(&generic_extension_private_command.step);
     test_step.dependOn(&extension_conflict_command.step);
     test_step.dependOn(&extension_conformance_visibility_command.step);
     test_step.dependOn(&extension_conformance_conflict_command.step);
@@ -2228,6 +2244,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&invalid_immutable_iteration_alias_command.step);
     test_step.dependOn(&invalid_mutable_iteration_source_command.step);
     test_step.dependOn(&invalid_iteration_mutation_command.step);
+    test_step.dependOn(&invalid_algorithms_choose_mutation_command.step);
     test_step.dependOn(&invalid_mutable_iteration_access_command.step);
     test_step.dependOn(&invalid_iteration_method_mutation_command.step);
     test_step.dependOn(&invalid_iteration_alias_scope_command.step);
@@ -3259,8 +3276,24 @@ pub fn build(b: *std.Build) void {
     algorithms_smoke_command.step.dependOn(&native_contiguous_views_smoke_command.step);
     algorithms_smoke_command.addArgs(&.{ "run", "Smokes/Algorithms.sx" });
 
+    const random_algorithms_smoke_command = b.addRunArtifact(executable);
+    random_algorithms_smoke_command.step.dependOn(&algorithms_smoke_command.step);
+    random_algorithms_smoke_command.addArgs(&.{ "run", "Smokes/RandomAlgorithms.sx" });
+    random_algorithms_smoke_command.expectStdOutEqual(hostText(b, ""));
+
+    const random_algorithms_source = b.getInstallPath(.prefix, "lib/silex/STD/Algorithms/Random.sx");
+    const algorithms_choose_empty_command = b.addRunArtifact(executable);
+    algorithms_choose_empty_command.step.dependOn(&random_algorithms_smoke_command.step);
+    algorithms_choose_empty_command.addArgs(&.{ "run", "Smokes/AlgorithmsChooseEmpty.sx" });
+    algorithms_choose_empty_command.expectExitCode(1);
+    algorithms_choose_empty_command.expectStdOutEqual(hostText(b, ""));
+    algorithms_choose_empty_command.expectStdErrEqual(hostText(
+        b,
+        b.fmt("{s}:5:9: runtime error: Algorithms.choose requires a non-empty collection\n", .{random_algorithms_source}),
+    ));
+
     const algorithms_comparator_panic_command = b.addRunArtifact(executable);
-    algorithms_comparator_panic_command.step.dependOn(&algorithms_smoke_command.step);
+    algorithms_comparator_panic_command.step.dependOn(&algorithms_choose_empty_command.step);
     algorithms_comparator_panic_command.addArgs(&.{ "run", "Smokes/AlgorithmsComparatorPanic.sx" });
     algorithms_comparator_panic_command.expectExitCode(1);
     algorithms_comparator_panic_command.expectStdOutEqual(hostText(b, ""));

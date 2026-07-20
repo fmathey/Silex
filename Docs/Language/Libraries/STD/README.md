@@ -19,7 +19,9 @@ func main() {
 - [Algorithms](Algorithms.md) — bounded generic in-place algorithms over
   mutable contiguous views.
 - [Randomizer](Randomizer.md) — reproducible pseudo-random values for games,
-  simulations, and tests.
+  simulations, tests, and the random collection algorithms.
+- [Algorithms](Algorithms.md) — generic in-place sorting, borrowed random
+  selection, and in-place shuffling over contiguous views.
 - [Console](Console.md) — text output and optional interactive-terminal
   display control.
 - [System](System.md) — portable structured errors for system resources and

@@ -166,7 +166,11 @@ pub const Resolver = struct {
         }
         var methods: std.ArrayList(Ast.Function) = .empty;
         for (extension.methods) |method| {
+            const previous_type_parameters = self.current_type_parameters;
+            self.current_type_parameters = method.type_parameters;
+            defer self.current_type_parameters = previous_type_parameters;
             var transformed = try self.transformFunctionBody(method, method.name);
+            transformed.type_parameters = try self.transformTypeParameters(method.type_parameters);
             if (transformed.member_visibility == null) {
                 transformed.member_visibility = if (target_is_class) .private_access else .public_access;
                 if (!target_is_class) transformed.is_public = true;
@@ -1243,11 +1247,11 @@ pub const Resolver = struct {
                 if (call.named_fields != null) {
                     return self.fail(call.name_position, "named arguments require a struct invocation");
                 }
-                if (type_arguments.len != 0) return self.fail(call.name_position, "generic methods are not supported");
                 break :method .{ .method_call = .{
                     .object = try self.transformExpression(call.object),
                     .name = call.name,
                     .name_position = call.name_position,
+                    .type_arguments = type_arguments,
                     .arguments = try self.transformExpressions(call.arguments),
                 } };
             },

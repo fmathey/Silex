@@ -4,5 +4,5 @@ use Core.Counter
 
 func main() {
     var counter = Counter(value:0)
-    counter.bump()
+    counter.keep<int>(1)
 }

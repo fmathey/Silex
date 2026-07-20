@@ -1,0 +1,14 @@
+use STD.Algorithms
+use STD.Randomizer as Randomizer
+
+func is_negative(value:@int) bool {
+    return value < 0
+}
+
+func main() {
+    let values:int[] = []
+    var randomizer = Randomizer.create(1)
+    let view = @values[0:values.count()]
+    let selected:@int = Algorithms.choose<int>(randomizer, view)
+    assert(is_negative(selected), "unreachable empty choice")
+}

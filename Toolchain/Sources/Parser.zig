@@ -132,7 +132,9 @@ pub const Parser = struct {
                 return self.fail("an extension can declare only methods");
             }
             var method = try self.parseFunction(is_public);
-            if (method.type_parameters.len != 0) return self.fail("generic extension methods are not supported");
+            if (is_static and method.type_parameters.len != 0) {
+                return self.fail("generic static extension methods are not supported");
+            }
             method.member_visibility = if (is_public) .public_access else null;
             method.is_static = is_static;
             try methods.append(self.allocator, method);
@@ -3162,6 +3164,18 @@ test "reject generic main function" {
     try std.testing.expectEqualStrings("'main' cannot be generic", parser.diagnostic.?.message);
 }
 
+test "keep generic methods limited to instance extensions" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var direct = Parser.init(arena.allocator(), "struct Box { func keep<T>(value:T) T { return value } } func main() {}");
+    try std.testing.expectError(error.InvalidSource, direct.parse());
+    try std.testing.expectEqualStrings("generic methods are not supported", direct.diagnostic.?.message);
+
+    var protocol = Parser.init(arena.allocator(), "protocol Box { func keep<T>(value:T) T } func main() {}");
+    try std.testing.expectError(error.InvalidSource, protocol.parse());
+    try std.testing.expectEqualStrings("generic protocol methods are not supported", protocol.diagnostic.?.message);
+}
+
 test "parse transparent type aliases with use" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -3431,6 +3445,22 @@ test "parse type extensions and reject stateful members" {
     try std.testing.expectEqual(Ast.MemberVisibility.public_access, program.extensions[0].methods[0].member_visibility.?);
     try std.testing.expect(program.extensions[0].methods[1].is_static);
     try std.testing.expect(program.extensions[0].methods[1].member_visibility == null);
+
+    var generic_method = Parser.init(arena.allocator(),
+        \\extend Randomizer {
+        \\    pub func choose<T>(values:@T[..]) @values:T { return @values[0] }
+        \\    func select<Key, Value:Comparable>(key:Key, fallback:Value?) Value? { return fallback }
+        \\}
+        \\func main() {}
+    );
+    const generic_program = try generic_method.parse();
+    try std.testing.expectEqual(@as(usize, 1), generic_program.extensions[0].methods[0].type_parameters.len);
+    try std.testing.expectEqual(@as(usize, 2), generic_program.extensions[0].methods[1].type_parameters.len);
+    try std.testing.expectEqualStrings("Comparable", generic_program.extensions[0].methods[1].type_parameters[1].constraint.?.name);
+
+    var generic_static = Parser.init(arena.allocator(), "extend Randomizer { static func create<T>() Randomizer {} } func main() {}");
+    try std.testing.expectError(error.InvalidSource, generic_static.parse());
+    try std.testing.expectEqualStrings("generic static extension methods are not supported", generic_static.diagnostic.?.message);
 
     var field = Parser.init(arena.allocator(), "extend Randomizer { var state:int } func main() {}");
     try std.testing.expectError(error.InvalidSource, field.parse());

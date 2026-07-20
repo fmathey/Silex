@@ -1,0 +1,8 @@
+use GenericExtensionPrivate.Core as Core
+use GenericExtensionPrivate.Extras as Extras
+use Core.Box
+
+func main() {
+    var box = Box()
+    print(box.keep<int>(1))
+}

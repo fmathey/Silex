@@ -61,8 +61,9 @@ One protocol can constrain each parameter with `T : Protocol`. The constraint
 permits the protocol's required methods in the generic body and rejects a
 concrete argument that did not declare conformance. See
 [Protocols](Protocols.md). Type-argument inference is not currently provided.
-`main`, `native func`, methods with their own type parameters, and classes
-remain non-generic.
+`main`, `native func`, methods declared directly in a structure or class, and
+classes remain non-generic. An instance method declared in `extend` may have
+its own explicit parameters; see [Type extensions](Extensions.md#generic-extension-methods).
 
 ## Overloads
 

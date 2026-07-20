@@ -785,6 +785,7 @@ const MethodSymbol = struct {
     is_static: bool,
     extension_visible_files: ?[]const usize,
     extension_module_name: ?[]const u8,
+    return_borrow_parameter: ?usize = null,
     direct_mutation: bool = false,
     dependencies: []const MethodId = &.{},
     is_mutating: bool = false,
@@ -1301,6 +1302,32 @@ pub const Analyzer = struct {
                     }
                 }
                 const return_type = try typeFromReturn(self, ast_method.return_type, ast_method.position);
+                var return_borrow_parameter: ?usize = null;
+                if (return_type == .reference) {
+                    if (ast_method.return_type.reference.provenance) |provenance| {
+                        if (!std.mem.eql(u8, provenance, "self")) {
+                            for (ast_method.parameters, parameter_modes.items, 0..) |parameter, mode, parameter_index| {
+                                const compatible_mode = if (return_type.reference.mutable) mode == .mutable_reference else mode != .value;
+                                if (!compatible_mode) continue;
+                                if (std.mem.eql(u8, provenance, parameter.name)) return_borrow_parameter = parameter_index;
+                            }
+                            if (return_borrow_parameter == null) {
+                                return self.fail(ast_method.position, "borrowed method return provenance must name 'self' or a compatible borrowed parameter");
+                            }
+                        }
+                    } else {
+                        var compatible_count: usize = 0;
+                        for (parameter_modes.items, 0..) |mode, parameter_index| {
+                            const compatible_mode = if (return_type.reference.mutable) mode == .mutable_reference else mode != .value;
+                            if (!compatible_mode) continue;
+                            compatible_count += 1;
+                            return_borrow_parameter = parameter_index;
+                        }
+                        if (compatible_count > 1) {
+                            return self.fail(ast_method.position, "borrowed method return provenance is ambiguous; qualify it with 'self' or a borrowed parameter name");
+                        }
+                    }
+                }
                 try self.rejectUniqueOwnerComposition(return_type, true, ast_method.position);
                 try methods.append(self.allocator, .{
                     .source_name = ast_method.name,
@@ -1318,6 +1345,7 @@ pub const Analyzer = struct {
                     .is_static = ast_method.is_static,
                     .extension_visible_files = ast_method.extension_visible_files,
                     .extension_module_name = ast_method.extension_module_name,
+                    .return_borrow_parameter = return_borrow_parameter,
                 });
             }
             self.structures.items[structure_index].methods = try methods.toOwnedSlice(self.allocator);
@@ -1987,7 +2015,10 @@ pub const Analyzer = struct {
         }
 
         self.current_return_type = symbol.return_type;
-        self.current_return_borrow_root = if (symbol.return_type == .reference) &self.current_self_state else null;
+        self.current_return_borrow_root = if (symbol.return_type == .reference)
+            if (symbol.return_borrow_parameter) |index| scope.symbols.items[index].state else &self.current_self_state
+        else
+            null;
         if (symbol.return_type == .reference and symbol.return_type.reference.mutable) self.current_method_direct_mutation = true;
         defer self.current_return_borrow_root = null;
         const method_statements = try self.statements(ast.statements, &scope);
@@ -4317,7 +4348,12 @@ pub const Analyzer = struct {
         }
         var returned_borrow: ?Borrow = null;
         if (method_symbol.return_type == .reference) {
-            const root = if (object.borrow) |borrow| borrow.root else object.owner_state;
+            const root = if (method_symbol.return_borrow_parameter) |parameter_index|
+                if (arguments.items[parameter_index].borrow) |borrow| borrow.root else arguments.items[parameter_index].owner_state
+            else if (object.borrow) |borrow|
+                borrow.root
+            else
+                object.owner_state;
             const mutable = method_symbol.return_type.reference.mutable;
             returned_borrow = .{ .root = root, .mutable = mutable };
             if (root) |state| {
@@ -6677,6 +6713,15 @@ pub const Analyzer = struct {
         }
         if (argument.value == .unary and argument.value.unary.operator == .borrow) {
             return self.fail(argument.position, "reference arguments are selected by the parameter signature; pass the place without '&'");
+        }
+        if (argument.value == .identifier) {
+            if (findSymbol(scope, argument.value.identifier)) |symbol| {
+                if (symbol.state.borrowed_parameter and symbol.type == .view and
+                    mode == .borrow and typeEqual(symbol.type, expected_type))
+                {
+                    return self.variableExpression(argument.position, argument.value.identifier, scope);
+                }
+            }
         }
         if (argument.value == .identifier and findSymbol(scope, argument.value.identifier) != null and
             findSymbol(scope, argument.value.identifier).?.type == .reference)
@@ -9478,6 +9523,7 @@ test "borrowed returns preserve provenance through functions methods and local a
         \\struct Owner {
         \\    var state:State
         \\    func inspect() @State { return @self.state }
+        \\    func inspect_other(owner:@Owner) @State { return @owner.state }
         \\    func edit() &State { return &self.state }
         \\}
         \\func inspect(owner:@Owner) @State { return @owner.state }
@@ -9487,9 +9533,17 @@ test "borrowed returns preserve provenance through functions methods and local a
         \\    var owner = Owner(state:State(value:1))
         \\    let first = inspect(owner)
         \\    let second:@State = wrapped(owner)
-        \\    print(first.value + second.value)
+        \\    let other = owner.inspect_other(owner)
+        \\    print(first.value + second.value + other.value)
         \\}
     );
+    try expectResolvedSemanticError(
+        \\struct State { var value:int }
+        \\struct Owner {
+        \\    func choose(first:@State, second:@State) @State { return first }
+        \\}
+        \\func main() {}
+    , "borrowed method return provenance is ambiguous; qualify it with 'self' or a borrowed parameter name");
     try expectResolvedSemanticError(
         \\struct State { var value:int }
         \\func choose(first:@State, second:@State) @State { return @first }

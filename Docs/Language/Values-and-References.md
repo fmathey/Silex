@@ -206,6 +206,13 @@ Views provide `count()`, `is_empty()`, positive and negative indexing, and
 iteration. A mutable view additionally permits indexed writes and `for var`.
 Operations that resize, reorder, remove, or transfer elements are unavailable.
 
+Standard algorithms can retain or consume these borrow boundaries directly.
+`Algorithms.choose<T>` returns an `@T` whose provenance remains the input
+`@T[..]`, while `Algorithms.shuffle<T>` reorders only an input `&T[..]` through
+`swap`. Their `Randomizer.choose<T>` and `Randomizer.shuffle<T>` extension
+façades preserve the same roots. See the
+[STD algorithms](Libraries/STD/Algorithms.md) reference.
+
 The ordinary expression `values[start:end]` remains different: it copies into
 an independent `T[]`. A borrowed view instead keeps the source collection,
 array, or native resource borrowed until the view's lexical scope ends.

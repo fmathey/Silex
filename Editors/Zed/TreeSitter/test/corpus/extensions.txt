@@ -10,6 +10,10 @@ extend STD.Randomizer : Drawable, Named {
     static func seeded() Randomizer {
         return STD.Randomizer.create(42)
     }
+
+    pub func choose<T>(values:@T[..]) @T {
+        return @values[0]
+    }
 }
 
 ---
@@ -58,4 +62,30 @@ extend STD.Randomizer : Drawable, Named {
                     (identifier))
                   (identifier))
                 (expression
-                  (integer_literal))))))))))
+                  (integer_literal))))))))
+    (function_definition
+      (identifier)
+      (type_parameter_list
+        (type_parameter
+          (identifier)))
+      (parameter_list
+        (parameter
+          (identifier)
+          (type
+            (view_type
+              (named_type
+                (type_identifier))))))
+      (borrowed_return_type
+        (type
+          (named_type
+            (type_identifier))))
+      (block
+        (statement
+          (return_statement
+            (expression
+              (read_reference_expression
+                (expression
+                  (index_expression
+                    (identifier)
+                    (expression
+                      (integer_literal))))))))))))

@@ -1,0 +1,8 @@
+{
+  "target": "GenericExtensionPrivate.App",
+  "modules": [
+    { "name": "GenericExtensionPrivate.Core", "sources": ["Core.sx"] },
+    { "name": "GenericExtensionPrivate.Extras", "sources": ["Extras.sx"] },
+    { "name": "GenericExtensionPrivate.App", "sources": ["Main.sx"] }
+  ]
+}

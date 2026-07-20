@@ -4,6 +4,10 @@ use Core.Counter
 use Core.Box
 
 extend Counter {
+    func keep<T>(value:T) T {
+        return value
+    }
+
     func step() int {
         self.value += 1
         return self.value
@@ -19,6 +23,10 @@ extend Counter {
 }
 
 extend Box {
+    pub func keep<T>(value:T) T {
+        return value
+    }
+
     pub func doubled() int {
         return self.value * 2
     }

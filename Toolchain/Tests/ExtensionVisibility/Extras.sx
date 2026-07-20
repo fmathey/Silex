@@ -2,6 +2,10 @@ use ExtensionVisibility.Core as Core
 use Core.Counter
 
 extend Counter {
+    func keep<T>(value:T) T {
+        return value
+    }
+
     func bump() int {
         self.value += 1
         return self.value

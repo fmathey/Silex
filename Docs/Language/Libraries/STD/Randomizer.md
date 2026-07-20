@@ -45,4 +45,16 @@ The deterministic transition is implemented in Silex. Only the seed used by
 `create()` comes from the private native runtime configured by
 `STD/@Module.json`.
 
+## Collections
+
+Random selection and in-place shuffling belong to `STD.Algorithms`, while this
+class remains responsible for generator state and primitive draws. Select the
+aggregated algorithms module with `use STD.Algorithms`, then call
+`Algorithms.choose<T>` or `Algorithms.shuffle<T>` with a `Randomizer` instance.
+The same `use` activates the equivalent façades
+`randomizer.choose<T>(view)` and `randomizer.shuffle<T>(view)`; both delegate to
+the free functions and advance that instance's shared state.
+See [Algorithms](Algorithms.md#random-collection-algorithms) for view bounds,
+borrowing, costs, and empty-input behavior.
+
 [Back to STD](README.md)

@@ -1,0 +1,8 @@
+use GenericExtensionPrivate.Core as Core
+use Core.Box
+
+extend Box {
+    func keep<T>(value:T) T {
+        return value
+    }
+}

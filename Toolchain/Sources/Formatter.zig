@@ -755,6 +755,19 @@ test "generic use aliases keep canonical angle spacing" {
     try std.testing.expectEqualStrings("use Result<int, str> as IntResult\n", result.text);
 }
 
+test "generic extension methods keep canonical type parameters and calls" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try formatSource(
+        arena.allocator(),
+        "extend Box { pub func choose < T : Named > (value : T) T { return value } } func main(){var box=Box();print(box.choose < int > (1))}",
+    );
+    try std.testing.expectEqualStrings(
+        "extend Box {\n    pub func choose<T:Named>(value:T) T {\n        return value\n    }\n}\n\nfunc main() {\n    var box = Box()\n    print(box.choose<int>(1))\n}\n",
+        result.text,
+    );
+}
+
 test "project validation precedes every write and check preserves files" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
