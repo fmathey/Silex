@@ -19,7 +19,13 @@ module.exports = grammar({
   extras: ($) => [/\s/, $.comment],
   word: ($) => $.identifier,
   externals: ($) => [$._automatic_semicolon],
-  conflicts: ($) => [[$.array_type, $.type], [$.optional_type, $.type]],
+  conflicts: ($) => [
+    [$.array_type, $.type],
+    [$.optional_type, $.type],
+    [$.generic_type, $.expression],
+    [$.generic_type, $.named_type],
+    [$.generic_type, $._cascade_assignment_value],
+  ],
 
   rules: {
     source_file: ($) =>
@@ -251,12 +257,27 @@ module.exports = grammar({
         ">",
       ),
     generic_type: ($) =>
-      prec(
-        PREC.member,
+      prec.dynamic(
+        1,
         seq(
           field("name", alias(choice($.identifier, $.qualified_name), $.type_identifier)),
           field("arguments", $.type_argument_list),
         ),
+      ),
+    _expression_generic_type: ($) =>
+      prec(
+        PREC.member + 1,
+        seq(
+          field("name", alias(choice($.identifier, $.qualified_name), $.type_identifier)),
+          field("arguments", alias($._expression_type_argument_list, $.type_argument_list)),
+        ),
+      ),
+    _expression_type_argument_list: ($) =>
+      seq(
+        token.immediate("<"),
+        choice($.type, $.void_type),
+        repeat(seq(",", choice($.type, $.void_type))),
+        ">",
       ),
     named_type: ($) =>
       choice(alias(choice($.identifier, $.qualified_name), $.type_identifier), $.generic_type),
@@ -744,33 +765,43 @@ module.exports = grammar({
       seq("[", optional(seq($.expression, repeat(seq(",", $.expression)), optional(","))), "]"),
 
     field_initializer: ($) =>
-      seq(field("name", $.identifier), ":", field("value", $.expression)),
+      prec.dynamic(2, seq(field("name", $.identifier), ":", field("value", $.expression))),
 
     member_expression: ($) =>
-      prec.left(
-        PREC.member,
-        seq(
-          field(
-            "object",
-            choice(
-              $.identifier,
-              $.generic_type,
-              $.self_expression,
-              $.invocation_expression,
-              $.member_expression,
-              $.safe_member_expression,
-              $.index_expression,
-              $.slice_expression,
-              $.sequence_literal,
-              $.string_literal,
-              $.float_literal,
-              $.integer_literal,
-              $.boolean_literal,
-              $.parenthesized_expression,
-            ),
+      choice(
+        prec(
+          PREC.member + 1,
+          seq(
+            field("object", alias($._expression_generic_type, $.generic_type)),
+            ".",
+            field("field", $.identifier),
           ),
-          ".",
-          field("field", $.identifier),
+        ),
+        prec.left(
+          PREC.member,
+          seq(
+            field(
+              "object",
+              choice(
+                $.identifier,
+                $.generic_type,
+                $.self_expression,
+                $.invocation_expression,
+                $.member_expression,
+                $.safe_member_expression,
+                $.index_expression,
+                $.slice_expression,
+                $.sequence_literal,
+                $.string_literal,
+                $.float_literal,
+                $.integer_literal,
+                $.boolean_literal,
+                $.parenthesized_expression,
+              ),
+            ),
+            ".",
+            field("field", $.identifier),
+          ),
         ),
       ),
 
@@ -803,28 +834,40 @@ module.exports = grammar({
       ),
 
     invocation_expression: ($) =>
-      seq(
-        field(
-          "target",
-          choice(
-            $.identifier,
-            $.qualified_name,
-            $.generic_type,
-            $.parenthesized_expression,
-            $.lambda_expression,
-            $.member_expression,
-            $.safe_member_expression,
-            $.index_expression,
+      choice(
+        prec(
+          PREC.member + 1,
+          seq(
+            field("target", alias($._expression_generic_type, $.generic_type)),
+            "(",
+            optional($._invocation_arguments),
+            ")",
           ),
         ),
-        "(",
-        optional(
-          choice(
-            seq($.expression, repeat(seq(",", $.expression))),
-            seq($.field_initializer, repeat(seq(",", $.field_initializer)), optional(",")),
+        seq(
+          field(
+            "target",
+            choice(
+              $.identifier,
+              $.qualified_name,
+              $.generic_type,
+              $.parenthesized_expression,
+              $.lambda_expression,
+              $.member_expression,
+              $.safe_member_expression,
+              $.index_expression,
+            ),
           ),
+          "(",
+          optional($._invocation_arguments),
+          ")",
         ),
-        ")",
+      ),
+
+    _invocation_arguments: ($) =>
+      choice(
+        seq($.expression, repeat(seq(",", $.expression))),
+        prec.dynamic(1, seq($.field_initializer, repeat(seq(",", $.field_initializer)), optional(","))),
       ),
 
     index_expression: ($) =>
