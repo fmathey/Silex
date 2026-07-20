@@ -1,0 +1,88 @@
+==================
+Borrowed returns
+==================
+
+func inspect(owner:@Owner) @State {
+    return @owner.state
+}
+
+func edit(owner:&Owner) &State {
+    return &owner.state
+}
+
+func choose(first:@Owner, second:@Owner) @first:State {
+    return @first.state
+}
+
+---
+
+(source_file
+  (function_definition
+    name: (identifier)
+    (parameter_list
+      (parameter
+        name: (identifier)
+        type: (type
+          (named_type
+            (type_identifier)))))
+    return_type: (borrowed_return_type
+      target: (type
+        (named_type
+          (type_identifier))))
+    body: (block
+      (statement
+        (return_statement
+          value: (expression
+            (read_reference_expression
+              operand: (expression
+                (member_expression
+                  object: (identifier)
+                  field: (identifier)))))))))
+  (function_definition
+    name: (identifier)
+    (parameter_list
+      (parameter
+        name: (identifier)
+        type: (type
+          (named_type
+            (type_identifier)))))
+    return_type: (borrowed_return_type
+      target: (type
+        (named_type
+          (type_identifier))))
+    body: (block
+      (statement
+        (return_statement
+          value: (expression
+            (mutable_reference_expression
+              operand: (expression
+                (member_expression
+                  object: (identifier)
+                  field: (identifier)))))))))
+  (function_definition
+    name: (identifier)
+    (parameter_list
+      (parameter
+        name: (identifier)
+        type: (type
+          (named_type
+            (type_identifier))))
+      (parameter
+        name: (identifier)
+        type: (type
+          (named_type
+            (type_identifier)))))
+    return_type: (borrowed_return_type
+      provenance: (identifier)
+      target: (type
+        (named_type
+          (type_identifier))))
+    body: (block
+      (statement
+        (return_statement
+          value: (expression
+            (read_reference_expression
+              operand: (expression
+                (member_expression
+                  object: (identifier)
+                  field: (identifier))))))))))

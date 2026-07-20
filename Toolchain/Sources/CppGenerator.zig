@@ -36,6 +36,7 @@ pub fn generateWithSources(
         \\#include <limits>
         \\#include <memory>
         \\#include <optional>
+        \\#include <stdexcept>
         \\#include <string>
         \\#include <tuple>
         \\#include <type_traits>
@@ -85,6 +86,10 @@ pub fn generateWithSources(
                 );
             }
         }
+    }
+    for (program.structures) |structure| {
+        if (!structure.is_native_resource) continue;
+        try generateNativeTransportIfNew(allocator, &output, &emitted_native_transports, structure.native_module_name.?, structure, false);
     }
     for (program.functions) |function| {
         if (!function.is_native) continue;
@@ -342,6 +347,39 @@ pub fn generateWithSources(
         \\inline bool silexCollectingCycles = false;
         \\inline std::size_t silexLiveObjects = 0;
         \\
+        \\struct SilexNativeResourceState {
+        \\    void* handle;
+        \\    void (*drop)(void*);
+        \\    std::vector<std::shared_ptr<SilexNativeResourceState>> priorAcquisitions;
+        \\    SilexNativeResourceState(void* value, void (*destroy)(void*), std::vector<std::shared_ptr<SilexNativeResourceState>> prior)
+        \\        : handle(value), drop(destroy), priorAcquisitions(std::move(prior)) {}
+        \\    ~SilexNativeResourceState() { if (handle != nullptr) drop(handle); }
+        \\    void* release() { return std::exchange(handle, nullptr); }
+        \\};
+        \\
+        \\inline thread_local std::vector<std::weak_ptr<SilexNativeResourceState>> silexNativeAcquisitions;
+        \\
+        \\std::shared_ptr<SilexNativeResourceState> silexAdoptNativeResource(void* handle, void (*drop)(void*)) {
+        \\    std::vector<std::shared_ptr<SilexNativeResourceState>> prior;
+        \\    auto output = silexNativeAcquisitions.begin();
+        \\    for (auto current = silexNativeAcquisitions.begin(); current != silexNativeAcquisitions.end(); ++current) {
+        \\        if (auto acquisition = current->lock()) {
+        \\            prior.push_back(acquisition);
+        \\            *output++ = *current;
+        \\        }
+        \\    }
+        \\    silexNativeAcquisitions.erase(output, silexNativeAcquisitions.end());
+        \\    auto state = std::make_shared<SilexNativeResourceState>(handle, drop, std::move(prior));
+        \\    silexNativeAcquisitions.push_back(state);
+        \\    return state;
+        \\}
+        \\
+        \\template <typename T> struct SilexNativeTransfer {
+        \\    T* handle;
+        \\    std::shared_ptr<SilexNativeResourceState> state;
+        \\    operator T*() const { return handle; }
+        \\};
+        \\
         \\struct SilexObject {
         \\    std::size_t references = 1;
         \\    bool collecting = false;
@@ -534,6 +572,23 @@ pub fn generateWithSources(
         \\}
         \\
         \\template <typename T>
+        \\class SilexView {
+        \\public:
+        \\    using value_type = std::remove_const_t<T>;
+        \\    SilexView() = default;
+        \\    SilexView(T* values, std::size_t count) : values_(values), count_(count) {}
+        \\    std::size_t size() const { return count_; }
+        \\    bool empty() const { return count_ == 0; }
+        \\    T& operator[](std::size_t index) const { return values_[index]; }
+        \\    T* begin() const { return values_; }
+        \\    T* end() const { return values_ + count_; }
+        \\    T* data() const { return values_; }
+        \\private:
+        \\    T* values_ { nullptr };
+        \\    std::size_t count_ { 0 };
+        \\};
+        \\
+        \\template <typename T>
         \\class SilexList {
         \\public:
         \\    using value_type = T;
@@ -552,6 +607,7 @@ pub fn generateWithSources(
         \\    std::size_t size() const { return values_.size(); }
         \\    bool empty() const { return values_.empty(); }
         \\    const T* data() const { return values_.data(); }
+        \\    T* data() { return values_.data(); }
         \\    bool operator==(const SilexList& other) const { return values_ == other.values_; }
         \\    bool operator!=(const SilexList& other) const { return !(*this == other); }
         \\    const_iterator begin() const { return values_.begin(); }
@@ -799,6 +855,30 @@ pub fn generateWithSources(
         \\        result.push_back(values[index]);
         \\    }
         \\    return result;
+        \\}
+        \\
+        \\template <typename Collection>
+        \\SilexView<const typename Collection::value_type> silexCollectionReadView(
+        \\    const Collection& values,
+        \\    std::int64_t start,
+        \\    std::int64_t end
+        \\) {
+        \\    const std::size_t startOffset = silexCollectionSliceBound(values.size(), start);
+        \\    const std::size_t endOffset = silexCollectionSliceBound(values.size(), end);
+        \\    if (startOffset >= endOffset) return {};
+        \\    return { values.data() + startOffset, endOffset - startOffset };
+        \\}
+        \\
+        \\template <typename Collection>
+        \\SilexView<typename Collection::value_type> silexCollectionMutableView(
+        \\    Collection& values,
+        \\    std::int64_t start,
+        \\    std::int64_t end
+        \\) {
+        \\    const std::size_t startOffset = silexCollectionSliceBound(values.size(), start);
+        \\    const std::size_t endOffset = silexCollectionSliceBound(values.size(), end);
+        \\    if (startOffset >= endOffset) return {};
+        \\    return { values.data() + startOffset, endOffset - startOffset };
         \\}
         \\
         \\template <typename Collection, typename T>
@@ -1072,7 +1152,10 @@ pub fn generateWithSources(
             }
             try output.appendSlice(allocator, ";\n");
         }
-        if (is_native_return) {
+        if (structure.is_native_resource) {
+            try output.appendSlice(allocator, "    std::shared_ptr<SilexNativeResourceState> silexNativeState;\n");
+        }
+        if (is_native_return and !structure.is_native_resource) {
             try output.appendSlice(allocator, "\n    ");
             try output.appendSlice(allocator, structure.generated_name);
             try output.appendSlice(allocator, "(SilexNativeReturnTag");
@@ -1094,9 +1177,26 @@ pub fn generateWithSources(
                 try output.appendSlice(allocator, " {}\n");
             }
         }
+        if (structure.is_native_resource) {
+            try output.appendSlice(allocator, "\n    explicit ");
+            try output.appendSlice(allocator, structure.generated_name);
+            try output.appendSlice(allocator, "(SilexNativeReturnTag, ::");
+            try output.appendSlice(allocator, try NativeInterface.transportName(allocator, structure.native_module_name.?, structure.source_name));
+            try output.appendSlice(allocator, "* handle) : silexNativeState(silexAdoptNativeResource(handle, +[](void* value) { ");
+            try output.appendSlice(allocator, structure.native_drop_symbol.?);
+            try output.appendSlice(allocator, "(static_cast<::");
+            try output.appendSlice(allocator, try NativeInterface.transportName(allocator, structure.native_module_name.?, structure.source_name));
+            try output.appendSlice(allocator, "*>(value)); })) {}\n    auto* silexBorrowNativeHandle() const { return static_cast<::");
+            try output.appendSlice(allocator, try NativeInterface.transportName(allocator, structure.native_module_name.?, structure.source_name));
+            try output.appendSlice(allocator, "*>(silexNativeState->handle); }\n    auto silexReleaseNativeHandle() { if (silexNativeState.use_count() != 1) throw std::runtime_error(\"native resource still has later acquisitions\"); silexOwnsResource = false; auto state = std::move(silexNativeState); auto* handle = static_cast<::");
+            try output.appendSlice(allocator, try NativeInterface.transportName(allocator, structure.native_module_name.?, structure.source_name));
+            try output.appendSlice(allocator, "*>(state->release()); return SilexNativeTransfer<::");
+            try output.appendSlice(allocator, try NativeInterface.transportName(allocator, structure.native_module_name.?, structure.source_name));
+            try output.appendSlice(allocator, ">{handle, std::move(state)}; }\n");
+        }
         if (structure.is_owner) try output.appendSlice(allocator, "    bool silexOwnsResource = true;\n");
         if ((structure.is_class and structure.constructors.len == 0 and structure.implicit_constructor_available) or
-            structure.is_noncopyable or
+            (structure.is_noncopyable and !structure.is_native_resource) or
             (is_native_return and !structure.is_class and structure.constructors.len == 0))
         {
             try output.appendSlice(allocator, "\n    ");
@@ -1309,6 +1409,7 @@ pub fn generateWithSources(
                         try output.appendSlice(allocator, "))");
                     }
                     if (structure.fields.len != 0) try output.appendSlice(allocator, ", ");
+                    if (structure.is_native_resource) try output.appendSlice(allocator, "silexNativeState(std::move(other.silexNativeState)), ");
                     try output.appendSlice(allocator, "silexOwnsResource(std::exchange(other.silexOwnsResource, false)) {}\n\n");
 
                     try output.appendSlice(allocator, structure.generated_name);
@@ -1324,10 +1425,13 @@ pub fn generateWithSources(
                         try output.appendSlice(allocator, field.generated_name);
                         try output.appendSlice(allocator, ");\n");
                     }
+                    if (structure.is_native_resource) try output.appendSlice(allocator, "    silexNativeState = std::move(other.silexNativeState);\n");
                     try output.appendSlice(allocator, "    silexOwnsResource = std::exchange(other.silexOwnsResource, false);\n    return *this;\n}\n\nvoid ");
                     try output.appendSlice(allocator, structure.generated_name);
                     try output.appendSlice(allocator, "::silexDropResource() {\n");
-                    try generateStatements(allocator, &output, drop.statements, 1, false);
+                    if (structure.is_native_resource) {
+                        try output.appendSlice(allocator, "    silexNativeState.reset();\n");
+                    } else try generateStatements(allocator, &output, drop.statements, 1, false);
                     try output.appendSlice(allocator, "}\n\n");
 
                     try output.appendSlice(allocator, structure.generated_name);
@@ -1729,12 +1833,18 @@ fn generateNativeFunctionSignature(
     const result = nativeResultShape(program, function.return_type);
     const structure = nativeReturnStructure(program, function);
     const returned = nativeReturnValueType(function.return_type);
+    const returned_view = nativeReturnedView(returned);
     const returns_bytes = isNativeByteBufferReturnType(returned);
     const optional = function.return_type == .optional;
-    if (result != null) {
+    const resource = if (structure) |value| value.is_native_resource else false;
+    if (result != null or returned_view != null) {
         try output.appendSlice(allocator, "void");
     } else if (optional) {
         try output.appendSlice(allocator, "bool");
+    } else if (resource) {
+        if (returned == .reference and !returned.reference.mutable) try output.appendSlice(allocator, "const ");
+        try output.appendSlice(allocator, try NativeInterface.transportName(allocator, function.native_module_name.?, structure.?.source_name));
+        try output.append(allocator, '*');
     } else if (returned == .str or returns_bytes or structure != null) {
         try output.appendSlice(allocator, "void");
     } else {
@@ -1756,6 +1866,19 @@ fn generateNativeFunctionSignature(
             } else {
                 try output.appendSlice(allocator, ", std::int64_t");
             }
+        } else if (parameter.type == .view) {
+            if (parameter.mode == .borrow) try output.appendSlice(allocator, "const ");
+            try appendCppType(allocator, output, parameter.type.view.*);
+            try output.append(allocator, '*');
+            if (include_names) {
+                try output.append(allocator, ' ');
+                try output.appendSlice(allocator, parameter.generated_name);
+                try output.appendSlice(allocator, "Values, std::int64_t ");
+                try output.appendSlice(allocator, parameter.generated_name);
+                try output.appendSlice(allocator, "Count");
+            } else {
+                try output.appendSlice(allocator, ", std::int64_t");
+            }
         } else if (isNativeByteViewType(parameter.type)) {
             try output.appendSlice(allocator, "const std::uint8_t*");
             if (include_names) {
@@ -1770,12 +1893,12 @@ fn generateNativeFunctionSignature(
         } else if (isNativeCallbackType(parameter.type)) {
             try appendCppNativeCallbackParameter(allocator, output, parameter.type.function, if (include_names) parameter.generated_name else null);
         } else if (nativeStructureForType(program, parameter.type)) |parameter_structure| {
-            try output.appendSlice(allocator, "const ");
+            if (!parameter_structure.is_native_resource or parameter.mode == .borrow) try output.appendSlice(allocator, "const ");
             try output.appendSlice(allocator, try NativeInterface.inputTransportName(
                 allocator,
                 function.native_module_name.?,
                 parameter_structure.source_name,
-                structureHasString(parameter_structure),
+                structureHasString(parameter_structure) and !parameter_structure.is_native_resource,
             ));
             try output.append(allocator, '*');
             if (include_names) {
@@ -1799,6 +1922,14 @@ fn generateNativeFunctionSignature(
         ));
         try output.append(allocator, '*');
         if (include_names) try output.appendSlice(allocator, " output");
+    } else if (returned_view) |view| {
+        if (function.parameters.len != 0) try output.appendSlice(allocator, ", ");
+        if (!returned.reference.mutable) try output.appendSlice(allocator, "const ");
+        try appendCppType(allocator, output, view.*);
+        try output.appendSlice(allocator, "**");
+        if (include_names) try output.appendSlice(allocator, " output_values");
+        try output.appendSlice(allocator, ", std::int64_t*");
+        if (include_names) try output.appendSlice(allocator, " output_count");
     } else if (returned == .str) {
         if (function.parameters.len != 0) try output.appendSlice(allocator, ", ");
         try output.appendSlice(allocator, "char**");
@@ -1811,14 +1942,20 @@ fn generateNativeFunctionSignature(
         if (include_names) try output.appendSlice(allocator, " output_bytes");
         try output.appendSlice(allocator, ", std::int64_t*");
         if (include_names) try output.appendSlice(allocator, " output_length");
-    } else if (structure) |returned_structure| {
+    } else if (optional and resource) {
+        if (function.parameters.len != 0) try output.appendSlice(allocator, ", ");
+        try output.appendSlice(allocator, try NativeInterface.transportName(allocator, function.native_module_name.?, structure.?.source_name));
+        try output.appendSlice(allocator, "**");
+        if (include_names) try output.appendSlice(allocator, " output");
+    } else if (structure != null and !resource) {
+        const returned_structure = structure.?;
         if (function.parameters.len != 0) try output.appendSlice(allocator, ", ");
         try output.appendSlice(allocator, try NativeInterface.transportName(
             allocator,
             function.native_module_name.?,
             returned_structure.source_name,
         ));
-        try output.append(allocator, '*');
+        try output.appendSlice(allocator, if (returned_structure.is_native_resource) "**" else "*");
         if (include_names) try output.appendSlice(allocator, " output");
     } else if (optional) {
         if (function.parameters.len != 0) try output.appendSlice(allocator, ", ");
@@ -1861,6 +1998,12 @@ fn generateNativeTransportDefinition(
     structure: Semantic.Structure,
     input: bool,
 ) !void {
+    if (structure.is_native_resource) {
+        try output.appendSlice(allocator, "struct ");
+        try output.appendSlice(allocator, try NativeInterface.transportName(allocator, module_name, structure.source_name));
+        try output.append(allocator, ';');
+        return;
+    }
     try output.appendSlice(allocator, "struct ");
     if (input) {
         try output.appendSlice(allocator, try NativeInterface.inputTransportName(
@@ -2045,9 +2188,9 @@ fn generateNativeResultBranchFields(
     } else if (nativeStructureForType(program, value)) |structure| {
         try output.appendSlice(allocator, "    ");
         try output.appendSlice(allocator, try NativeInterface.transportName(allocator, module_name, structure.source_name));
-        try output.append(allocator, ' ');
+        try output.appendSlice(allocator, if (structure.is_native_resource) "* " else " ");
         try output.appendSlice(allocator, prefix);
-        try output.appendSlice(allocator, "Value{};\n");
+        try output.appendSlice(allocator, if (structure.is_native_resource) "Value = nullptr;\n" else "Value{};\n");
     } else {
         try output.appendSlice(allocator, "    ");
         try appendCppType(allocator, output, value);
@@ -2058,7 +2201,8 @@ fn generateNativeResultBranchFields(
 }
 
 fn nativeReturnStructure(program: Semantic.Program, function: Semantic.Function) ?Semantic.Structure {
-    return nativeStructureForType(program, nativeReturnValueType(function.return_type));
+    const returned = nativeReturnValueType(function.return_type);
+    return nativeStructureForType(program, if (returned == .reference) returned.reference.target.* else returned);
 }
 
 fn nativeStructureForType(program: Semantic.Program, value: Semantic.Type) ?Semantic.Structure {
@@ -2091,6 +2235,16 @@ fn structureIsNativeReturn(program: Semantic.Program, structure: Semantic.Struct
 
 fn nativeReturnValueType(return_type: Semantic.Type) Semantic.Type {
     return if (return_type == .optional) return_type.optional.* else return_type;
+}
+
+fn nativeReturnedView(value: Semantic.Type) ?*const Semantic.Type {
+    if (value != .reference or value.reference.target.* != .view) return null;
+    return value.reference.target.*.view;
+}
+
+fn nativeArgumentViewType(value: Semantic.Type) ?*const Semantic.Type {
+    const target = if (value == .reference) value.reference.target.* else value;
+    return if (target == .view) target.view else null;
 }
 
 fn structureHasString(structure: Semantic.Structure) bool {
@@ -2135,6 +2289,14 @@ fn generateNativeArgumentPreludes(
             try output.append(allocator, ';');
             continue;
         }
+        if (nativeArgumentViewType(argument.type) != null) {
+            try output.appendSlice(allocator, "const auto& silexNativeView");
+            try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}", .{index}));
+            try output.appendSlice(allocator, " = ");
+            try generateExpression(allocator, output, argument);
+            try output.append(allocator, ';');
+            continue;
+        }
         if (isNativeByteViewType(argument.type)) {
             try output.appendSlice(allocator, "const auto& silexNativeBytes");
             try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}", .{index}));
@@ -2152,6 +2314,7 @@ fn generateNativeArgumentPreludes(
             continue;
         }
         const structure = parameter_structure orelse continue;
+        if (structure.is_native_resource) continue;
         try output.appendSlice(allocator, "const auto& silexNativeStructure");
         try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}", .{index}));
         try output.appendSlice(allocator, " = ");
@@ -2199,6 +2362,12 @@ fn generateNativeArgument(
         try output.appendSlice(allocator, ".data(), static_cast<std::int64_t>(silexNativeString");
         try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}", .{index}));
         try output.appendSlice(allocator, ".size())");
+    } else if (nativeArgumentViewType(argument.type) != null) {
+        try output.appendSlice(allocator, "silexNativeView");
+        try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}", .{index}));
+        try output.appendSlice(allocator, ".data(), static_cast<std::int64_t>(silexNativeView");
+        try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}", .{index}));
+        try output.appendSlice(allocator, ".size())");
     } else if (isNativeByteViewType(argument.type)) {
         try output.appendSlice(allocator, "silexNativeBytes");
         try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}", .{index}));
@@ -2207,7 +2376,12 @@ fn generateNativeArgument(
         try output.appendSlice(allocator, ".size())");
     } else if (isNativeCallbackType(argument.type)) {
         try generateNativeCallbackTrampoline(allocator, output, argument.type.function, index);
-    } else if (call.native_parameter_structures[index] != null) {
+    } else if (call.native_parameter_structures[index]) |structure| {
+        if (structure.is_native_resource) {
+            try generateExpression(allocator, output, argument);
+            try output.appendSlice(allocator, if (call.native_parameter_modes[index] == .value) ".silexReleaseNativeHandle()" else ".silexBorrowNativeHandle()");
+            return;
+        }
         try output.appendSlice(allocator, "&silexNativeInput");
         try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}", .{index}));
     } else {
@@ -2255,7 +2429,7 @@ fn nativeResultBranchHasOwned(
 ) bool {
     const value = nativeBranchValueType(branch_type);
     if (value == .str or isNativeByteBufferReturnType(value)) return true;
-    return structure != null and nativeTransportHasString(structure.?);
+    return structure != null and (structure.?.is_native_resource or nativeTransportHasString(structure.?));
 }
 
 fn generateNativeResultOwnedAction(
@@ -2270,6 +2444,38 @@ fn generateNativeResultOwnedAction(
     if (value == .str or isNativeByteBufferReturnType(value)) {
         try generateNativeResultPointerAction(allocator, output, branch_name, null, isNativeByteBufferReturnType(value), action);
     } else if (structure) |transport| {
+        if (transport.is_native_resource) {
+            switch (action) {
+                .raw_free => {
+                    try output.appendSlice(allocator, "if (silexNativeOutput.");
+                    try output.appendSlice(allocator, branch_name);
+                    try output.appendSlice(allocator, "Value != nullptr) ");
+                    try output.appendSlice(allocator, transport.native_drop_symbol.?);
+                    try output.appendSlice(allocator, "(silexNativeOutput.");
+                    try output.appendSlice(allocator, branch_name);
+                    try output.appendSlice(allocator, "Value);");
+                },
+                .guard => {
+                    try output.appendSlice(allocator, "std::unique_ptr<::");
+                    try output.appendSlice(allocator, try NativeInterface.transportName(allocator, transport.native_module_name.?, transport.source_name));
+                    try output.appendSlice(allocator, ", decltype(&");
+                    try output.appendSlice(allocator, transport.native_drop_symbol.?);
+                    try output.appendSlice(allocator, ")> silexNativeGuard_");
+                    try output.appendSlice(allocator, branch_name);
+                    try output.appendSlice(allocator, "{silexNativeOutput.");
+                    try output.appendSlice(allocator, branch_name);
+                    try output.appendSlice(allocator, "Value, &");
+                    try output.appendSlice(allocator, transport.native_drop_symbol.?);
+                    try output.appendSlice(allocator, "};");
+                },
+                .reset => {
+                    try output.appendSlice(allocator, "silexNativeGuard_");
+                    try output.appendSlice(allocator, branch_name);
+                    try output.appendSlice(allocator, ".reset();");
+                },
+            }
+            return;
+        }
         for (transport.fields) |field| {
             if (field.type != .str) continue;
             try generateNativeResultPointerAction(allocator, output, branch_name, field.generated_name, false, action);
@@ -2329,6 +2535,12 @@ fn generateNativeResultOwnedCondition(
         return;
     }
     var count: usize = 0;
+    if (structure.?.is_native_resource) {
+        try output.appendSlice(allocator, "silexNativeOutput.");
+        try output.appendSlice(allocator, branch_name);
+        try output.appendSlice(allocator, "Value != nullptr");
+        return;
+    }
     for (structure.?.fields) |field| {
         if (field.type != .str) continue;
         if (count != 0) try output.appendSlice(allocator, " || ");
@@ -2518,6 +2730,14 @@ fn generateNativeResultBranchValue(
         try output.appendSlice(allocator, branch_name);
         try output.append(allocator, ')');
     } else if (structure) |transport| {
+        if (transport.is_native_resource) {
+            try output.appendSlice(allocator, transport.generated_name);
+            try output.appendSlice(allocator, "(SilexNativeReturnTag{}, silexNativeAdopted_");
+            try output.appendSlice(allocator, branch_name);
+            try output.append(allocator, ')');
+            if (branch_type == .optional) try output.append(allocator, '}');
+            return;
+        }
         try output.appendSlice(allocator, transport.generated_name);
         try output.appendSlice(allocator, "(SilexNativeReturnTag{}");
         for (transport.fields) |field| {
@@ -2574,6 +2794,13 @@ fn generateNativeResultBranchReturn(
     }
 
     const value = nativeBranchValueType(branch_type);
+    if (structure != null and structure.?.is_native_resource) {
+        try output.appendSlice(allocator, "if (silexNativeOutput.");
+        try output.appendSlice(allocator, branch_name);
+        try output.appendSlice(allocator, "Value == nullptr) {");
+        try generateNativeResultFatal(allocator, output, module_name, function_name, try std.fmt.allocPrint(allocator, "Result {s} returned a null native resource", .{branch_name}));
+        try output.appendSlice(allocator, "}");
+    }
     if (value == .str) {
         try generateNativeResultStringValidation(allocator, output, module_name, function_name, branch_name, null);
         try generateNativeResultStringConstruction(allocator, output, branch_name, null);
@@ -2585,6 +2812,13 @@ fn generateNativeResultBranchReturn(
             try generateNativeResultStringValidation(allocator, output, module_name, function_name, branch_name, field.generated_name);
             try generateNativeResultStringConstruction(allocator, output, branch_name, field.generated_name);
         };
+    }
+    if (structure != null and structure.?.is_native_resource) {
+        try output.appendSlice(allocator, "auto* silexNativeAdopted_");
+        try output.appendSlice(allocator, branch_name);
+        try output.appendSlice(allocator, " = silexNativeGuard_");
+        try output.appendSlice(allocator, branch_name);
+        try output.appendSlice(allocator, ".release();");
     }
     try output.appendSlice(allocator, "silexNativeCleanup();");
     if (value == .str) {
@@ -2675,6 +2909,73 @@ fn generateNativeFunctionCall(
     call: Semantic.Expression.Call,
     return_type: Semantic.Type,
 ) GenerateError!void {
+    if (nativeReturnedView(return_type)) |_| {
+        const module_name = call.native_module_name.?;
+        const function_name = call.native_function_name.?;
+        try output.appendSlice(allocator, "callNativeFunction(");
+        try appendCppByteStringLiteral(allocator, output, module_name);
+        try output.appendSlice(allocator, ", ");
+        try appendCppByteStringLiteral(allocator, output, function_name);
+        try output.appendSlice(allocator, ", [&]() {");
+        try generateNativeArgumentPreludes(allocator, output, call);
+        try appendCppType(allocator, output, return_type);
+        try output.appendSlice(allocator, "::value_type");
+        if (!return_type.reference.mutable) try output.appendSlice(allocator, " const");
+        try output.appendSlice(allocator, "* silexNativeValues = nullptr;std::int64_t silexNativeCount = 0;");
+        try output.appendSlice(allocator, call.generated_name);
+        try output.append(allocator, '(');
+        for (call.arguments, 0..) |_, index| {
+            if (index != 0) try output.appendSlice(allocator, ", ");
+            try generateNativeArgument(allocator, output, call, index);
+        }
+        if (call.arguments.len != 0) try output.appendSlice(allocator, ", ");
+        try output.appendSlice(allocator, "&silexNativeValues, &silexNativeCount);if (silexNativeCount < 0) nativeFunctionRuntimeError(");
+        try appendCppByteStringLiteral(allocator, output, module_name);
+        try output.appendSlice(allocator, ", ");
+        try appendCppByteStringLiteral(allocator, output, function_name);
+        try output.appendSlice(allocator, ", \"returned a negative view count\");if (silexNativeCount > 0 && silexNativeValues == nullptr) nativeFunctionRuntimeError(");
+        try appendCppByteStringLiteral(allocator, output, module_name);
+        try output.appendSlice(allocator, ", ");
+        try appendCppByteStringLiteral(allocator, output, function_name);
+        try output.appendSlice(allocator, ", \"returned a null view with a positive count\");if (static_cast<std::uint64_t>(silexNativeCount) > std::numeric_limits<std::size_t>::max()) nativeFunctionRuntimeError(");
+        try appendCppByteStringLiteral(allocator, output, module_name);
+        try output.appendSlice(allocator, ", ");
+        try appendCppByteStringLiteral(allocator, output, function_name);
+        try output.appendSlice(allocator, ", \"returned a view count that is not representable\");return ");
+        try appendCppType(allocator, output, return_type);
+        try output.appendSlice(allocator, "(silexNativeValues, static_cast<std::size_t>(silexNativeCount));})");
+        return;
+    }
+    if (return_type == .reference) {
+        const parameter_index = call.borrowed_return_parameter.?;
+        const module_name = call.native_module_name.?;
+        const function_name = call.native_function_name.?;
+        try output.appendSlice(allocator, "callNativeFunction(");
+        try appendCppByteStringLiteral(allocator, output, module_name);
+        try output.appendSlice(allocator, ", ");
+        try appendCppByteStringLiteral(allocator, output, function_name);
+        try output.appendSlice(allocator, ", [&]() {");
+        try generateNativeArgumentPreludes(allocator, output, call);
+        try output.appendSlice(allocator, "auto& silexBorrowRoot = ");
+        try generateExpression(allocator, output, call.arguments[parameter_index]);
+        try output.appendSlice(allocator, ";auto* silexNativeBorrow = ");
+        try output.appendSlice(allocator, call.generated_name);
+        try output.append(allocator, '(');
+        for (call.arguments, 0..) |_, index| {
+            if (index != 0) try output.appendSlice(allocator, ", ");
+            try generateNativeArgument(allocator, output, call, index);
+        }
+        try output.appendSlice(allocator, ");if (silexNativeBorrow == nullptr) nativeFunctionRuntimeError(");
+        try appendCppByteStringLiteral(allocator, output, module_name);
+        try output.appendSlice(allocator, ", ");
+        try appendCppByteStringLiteral(allocator, output, function_name);
+        try output.appendSlice(allocator, ", \"returned a null borrowed resource\");if (silexNativeBorrow != silexBorrowRoot.silexBorrowNativeHandle()) nativeFunctionRuntimeError(");
+        try appendCppByteStringLiteral(allocator, output, module_name);
+        try output.appendSlice(allocator, ", ");
+        try appendCppByteStringLiteral(allocator, output, function_name);
+        try output.appendSlice(allocator, ", \"returned a resource outside its declared provenance\");return &silexBorrowRoot;})");
+        return;
+    }
     if (call.native_result) |result| {
         return generateNativeResultFunctionCall(allocator, output, call, result);
     }
@@ -2688,6 +2989,30 @@ fn generateNativeFunctionCall(
     const function_name = call.native_function_name.?;
     const returns_string = return_type == .str;
     const returned_structure = call.native_return_structure;
+    if (returned_structure != null and returned_structure.?.is_native_resource) {
+        const resource = returned_structure.?;
+        try output.appendSlice(allocator, "callNativeFunction(");
+        try appendCppByteStringLiteral(allocator, output, module_name);
+        try output.appendSlice(allocator, ", ");
+        try appendCppByteStringLiteral(allocator, output, function_name);
+        try output.appendSlice(allocator, ", [&]() {");
+        try generateNativeArgumentPreludes(allocator, output, call);
+        try output.appendSlice(allocator, "auto* silexNativeHandle = ");
+        try output.appendSlice(allocator, call.generated_name);
+        try output.append(allocator, '(');
+        for (call.arguments, 0..) |_, index| {
+            if (index != 0) try output.appendSlice(allocator, ", ");
+            try generateNativeArgument(allocator, output, call, index);
+        }
+        try output.appendSlice(allocator, ");if (silexNativeHandle == nullptr) nativeFunctionRuntimeError(");
+        try appendCppByteStringLiteral(allocator, output, module_name);
+        try output.appendSlice(allocator, ", ");
+        try appendCppByteStringLiteral(allocator, output, function_name);
+        try output.appendSlice(allocator, ", \"returned a null native resource\");return ");
+        try output.appendSlice(allocator, resource.generated_name);
+        try output.appendSlice(allocator, "(SilexNativeReturnTag{}, silexNativeHandle);})");
+        return;
+    }
     try output.appendSlice(allocator, if (returns_string) "callNativeStringFunction(" else "callNativeFunction(");
     try appendCppByteStringLiteral(allocator, output, module_name);
     try output.appendSlice(allocator, ", ");
@@ -2849,6 +3174,42 @@ fn generateNativeOptionalFunctionCall(
     const function_name = call.native_function_name.?;
     const returns_string = returned_type == .str;
     const returned_structure = call.native_return_structure;
+
+    if (returned_structure != null and returned_structure.?.is_native_resource) {
+        const resource = returned_structure.?;
+        try output.appendSlice(allocator, "callNativeFunction(");
+        try appendCppByteStringLiteral(allocator, output, module_name);
+        try output.appendSlice(allocator, ", ");
+        try appendCppByteStringLiteral(allocator, output, function_name);
+        try output.appendSlice(allocator, ", [&]() -> std::optional<");
+        try output.appendSlice(allocator, resource.generated_name);
+        try output.appendSlice(allocator, "> {");
+        try generateNativeArgumentPreludes(allocator, output, call);
+        try output.appendSlice(allocator, "::");
+        try output.appendSlice(allocator, try NativeInterface.transportName(allocator, module_name, resource.source_name));
+        try output.appendSlice(allocator, "* silexNativeHandle = nullptr;const bool silexNativePresent = ");
+        try output.appendSlice(allocator, call.generated_name);
+        try output.append(allocator, '(');
+        for (call.arguments, 0..) |_, index| {
+            if (index != 0) try output.appendSlice(allocator, ", ");
+            try generateNativeArgument(allocator, output, call, index);
+        }
+        if (call.arguments.len != 0) try output.appendSlice(allocator, ", ");
+        try output.appendSlice(allocator, "&silexNativeHandle);if (!silexNativePresent) {if (silexNativeHandle != nullptr) {");
+        try output.appendSlice(allocator, resource.native_drop_symbol.?);
+        try output.appendSlice(allocator, "(silexNativeHandle);nativeFunctionRuntimeError(");
+        try appendCppByteStringLiteral(allocator, output, module_name);
+        try output.appendSlice(allocator, ", ");
+        try appendCppByteStringLiteral(allocator, output, function_name);
+        try output.appendSlice(allocator, ", \"returned a native resource while reporting absence\");}return std::nullopt;}if (silexNativeHandle == nullptr) nativeFunctionRuntimeError(");
+        try appendCppByteStringLiteral(allocator, output, module_name);
+        try output.appendSlice(allocator, ", ");
+        try appendCppByteStringLiteral(allocator, output, function_name);
+        try output.appendSlice(allocator, ", \"returned a null native resource\");return ");
+        try output.appendSlice(allocator, resource.generated_name);
+        try output.appendSlice(allocator, "(SilexNativeReturnTag{}, silexNativeHandle);})");
+        return;
+    }
 
     try output.appendSlice(allocator, "callNativeFunction(");
     try appendCppByteStringLiteral(allocator, output, module_name);
@@ -3826,13 +4187,18 @@ fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expressi
             try output.append(allocator, ')');
         },
         .slice_access => |access| {
-            try output.appendSlice(allocator, "([&]() { const auto& silexSliceValues = ");
+            try output.appendSlice(allocator, if (access.borrowed and access.mutable) "([&]() { auto& silexSliceValues = " else "([&]() { const auto& silexSliceValues = ");
             try generateExpression(allocator, output, access.object);
             try output.appendSlice(allocator, "; const std::int64_t silexSliceStart = ");
             try generateExpression(allocator, output, access.start);
             try output.appendSlice(allocator, "; const std::int64_t silexSliceEnd = ");
             try generateExpression(allocator, output, access.end);
-            try output.appendSlice(allocator, "; return silexCollectionSlice(silexSliceValues, silexSliceStart, silexSliceEnd); }())");
+            try output.appendSlice(allocator, if (!access.borrowed)
+                "; return silexCollectionSlice(silexSliceValues, silexSliceStart, silexSliceEnd); }())"
+            else if (access.mutable)
+                "; return silexCollectionMutableView(silexSliceValues, silexSliceStart, silexSliceEnd); }())"
+            else
+                "; return silexCollectionReadView(silexSliceValues, silexSliceStart, silexSliceEnd); }())");
         },
         .try_expression => |try_value| {
             if (expression.type == .void) {
@@ -3848,7 +4214,10 @@ fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expressi
             try generateExpression(allocator, output, move_value.operand);
             try output.append(allocator, ')');
         },
-        .borrow_expression => |borrow_value| try generateExpression(allocator, output, borrow_value.operand),
+        .borrow_expression => |borrow_value| {
+            if (expression.type == .reference and expression.type.reference.target.* != .view) try output.append(allocator, '&');
+            try generateExpression(allocator, output, borrow_value.operand);
+        },
         .variable => |variable| {
             try output.appendSlice(allocator, variable.generated_name);
             if (variable.capture_box.*) try output.appendSlice(allocator, "->value");
@@ -4053,7 +4422,7 @@ fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expressi
                 try output.appendSlice(allocator, "silexOwner.");
             } else if (member.object.value != .self) {
                 try generateExpression(allocator, output, member.object);
-                try output.appendSlice(allocator, if (isClassType(member.object.type)) "->" else ".");
+                try output.appendSlice(allocator, if (isClassType(member.object.type) or member.object.type == .reference) "->" else ".");
             }
             try output.appendSlice(allocator, member.generated_name);
         },
@@ -4163,6 +4532,7 @@ fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expressi
             } else if (unary.operator == .dereference) {
                 try output.appendSlice(allocator, "(*");
             } else if (unary.operator == .borrow) {
+                if (expression.type == .reference and expression.type.reference.target.* != .view) try output.append(allocator, '&');
                 try generateExpression(allocator, output, unary.operand);
                 return;
             } else {
@@ -4343,7 +4713,7 @@ fn cppType(type_name: Semantic.Type) []const u8 {
         .bool => "bool",
         .str => "std::string",
         .function => unreachable,
-        .list, .fixed_array => unreachable,
+        .list, .fixed_array, .view => unreachable,
         .structure => |structure_type| if (structure_type.is_class) unreachable else structure_type.generated_name,
         .protocol => |protocol_type| protocol_type.generated_name,
         .enumeration => |enum_type| enum_type.generated_name,
@@ -4355,6 +4725,13 @@ fn cppType(type_name: Semantic.Type) []const u8 {
 fn appendCppType(allocator: Allocator, output: *std.ArrayList(u8), type_name: Semantic.Type) Allocator.Error!void {
     switch (type_name) {
         .reference => |reference| {
+            if (reference.target.* == .view) {
+                try output.appendSlice(allocator, "SilexView<");
+                if (!reference.mutable) try output.appendSlice(allocator, "const ");
+                try appendCppType(allocator, output, reference.target.*.view.*);
+                try output.append(allocator, '>');
+                return;
+            }
             if (!reference.mutable) try output.appendSlice(allocator, "const ");
             try appendCppType(allocator, output, reference.target.*);
             try output.append(allocator, '*');
@@ -4368,6 +4745,11 @@ fn appendCppType(allocator: Allocator, output: *std.ArrayList(u8), type_name: Se
             try output.appendSlice(allocator, "std::array<");
             try appendCppType(allocator, output, array.element.*);
             try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, ", {d}>", .{array.length}));
+        },
+        .view => |element| {
+            try output.appendSlice(allocator, "SilexView<");
+            try appendCppType(allocator, output, element.*);
+            try output.append(allocator, '>');
         },
         .function => |function| {
             try output.appendSlice(allocator, "SilexFunction<");
@@ -4439,6 +4821,7 @@ fn silexTypeName(type_name: Semantic.Type) []const u8 {
         .str => "str",
         .list => "list",
         .fixed_array => "array",
+        .view => "view",
         .structure => |structure_type| structure_type.source_name,
         .protocol => |protocol_type| protocol_type.source_name,
         .enumeration => |enum_type| enum_type.source_name,

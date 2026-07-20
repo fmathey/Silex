@@ -439,6 +439,46 @@
     "fields": {}
   },
   {
+    "type": "borrowed_return_type",
+    "named": true,
+    "fields": {
+      "mode": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "&",
+            "named": false
+          },
+          {
+            "type": "@",
+            "named": false
+          }
+        ]
+      },
+      "provenance": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "target": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "builtin_type",
     "named": true,
     "fields": {}
@@ -1305,6 +1345,10 @@
         "required": false,
         "types": [
           {
+            "type": "borrowed_return_type",
+            "named": true
+          },
+          {
             "type": "type",
             "named": true
           },
@@ -2061,6 +2105,10 @@
         "required": true,
         "types": [
           {
+            "type": "borrowed_return_type",
+            "named": true
+          },
+          {
             "type": "type",
             "named": true
           },
@@ -2080,6 +2128,52 @@
           "named": true
         }
       ]
+    }
+  },
+  {
+    "type": "native_resource_declaration",
+    "named": true,
+    "fields": {
+      "destructor": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "native": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "resource": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {
@@ -2108,6 +2202,10 @@
           },
           {
             "type": "named_type",
+            "named": true
+          },
+          {
+            "type": "view_type",
             "named": true
           }
         ]
@@ -2287,6 +2385,10 @@
         "required": false,
         "types": [
           {
+            "type": "borrowed_return_type",
+            "named": true
+          },
+          {
             "type": "type",
             "named": true
           },
@@ -2326,6 +2428,10 @@
         },
         {
           "type": "native_function_declaration",
+          "named": true
+        },
+        {
+          "type": "native_resource_declaration",
           "named": true
         },
         {
@@ -2369,6 +2475,36 @@
         "types": [
           {
             "type": "expression",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "reference_type",
+    "named": true,
+    "fields": {
+      "mode": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "&",
+            "named": false
+          },
+          {
+            "type": "@",
+            "named": false
+          }
+        ]
+      },
+      "target": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type",
             "named": true
           }
         ]
@@ -2602,6 +2738,10 @@
         },
         {
           "type": "native_function_declaration",
+          "named": true
+        },
+        {
+          "type": "native_resource_declaration",
           "named": true
         },
         {
@@ -2934,6 +3074,10 @@
         {
           "type": "optional_type",
           "named": true
+        },
+        {
+          "type": "view_type",
+          "named": true
         }
       ]
     }
@@ -2946,6 +3090,10 @@
         "multiple": false,
         "required": true,
         "types": [
+          {
+            "type": "reference_type",
+            "named": true
+          },
           {
             "type": "type",
             "named": true
@@ -3259,6 +3407,34 @@
           "named": true
         }
       ]
+    }
+  },
+  {
+    "type": "view_type",
+    "named": true,
+    "fields": {
+      "element": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "builtin_type",
+            "named": true
+          },
+          {
+            "type": "function_type",
+            "named": true
+          },
+          {
+            "type": "grouped_type",
+            "named": true
+          },
+          {
+            "type": "named_type",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {

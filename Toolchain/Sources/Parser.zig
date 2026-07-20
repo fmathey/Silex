@@ -50,8 +50,15 @@ pub const Parser = struct {
                 } else if (self.current.tag == .keyword_func) {
                     try functions.append(self.allocator, try self.parseFunction(true));
                 } else if (self.current.tag == .identifier and std.mem.eql(u8, self.current.lexeme, "native")) {
-                    try functions.append(self.allocator, try self.parseNativeFunction(true));
-                } else return self.fail("expected 'enum', 'protocol', 'struct', 'class', 'func', 'native func', or 'use' after 'pub'");
+                    try self.advance();
+                    if (self.current.tag == .identifier and std.mem.eql(u8, self.current.lexeme, "resource")) {
+                        const resource = try self.parseNativeResource(true);
+                        try structures.append(self.allocator, resource);
+                        try functions.append(self.allocator, try self.nativeResourceDropFunction(resource));
+                    } else {
+                        try functions.append(self.allocator, try self.parseNativeFunctionAfterNative(true));
+                    }
+                } else return self.fail("expected 'enum', 'protocol', 'struct', 'class', 'func', 'native func', 'native resource', or 'use' after 'pub'");
             } else if (self.current.tag == .keyword_enum) {
                 try enums.append(self.allocator, try self.parseEnum(false));
             } else if (self.current.tag == .keyword_protocol) {
@@ -63,11 +70,18 @@ pub const Parser = struct {
             } else if (self.current.tag == .keyword_func) {
                 try functions.append(self.allocator, try self.parseFunction(false));
             } else if (self.current.tag == .identifier and std.mem.eql(u8, self.current.lexeme, "native")) {
-                try functions.append(self.allocator, try self.parseNativeFunction(false));
+                try self.advance();
+                if (self.current.tag == .identifier and std.mem.eql(u8, self.current.lexeme, "resource")) {
+                    const resource = try self.parseNativeResource(false);
+                    try structures.append(self.allocator, resource);
+                    try functions.append(self.allocator, try self.nativeResourceDropFunction(resource));
+                } else {
+                    try functions.append(self.allocator, try self.parseNativeFunctionAfterNative(false));
+                }
             } else if (self.current.tag == .keyword_elif) {
                 return self.fail("'elif' must directly continue an if chain");
             } else {
-                return self.fail("expected use, enum, protocol, extend, struct, class, func, or native func declaration");
+                return self.fail("expected use, enum, protocol, extend, struct, class, func, native func, or native resource declaration");
             }
         }
         return .{
@@ -508,11 +522,15 @@ pub const Parser = struct {
     }
 
     fn parseNativeFunction(self: *Parser, is_public: bool) ParseError!Ast.Function {
-        const position = self.current.position;
         if (self.current.tag != .identifier or !std.mem.eql(u8, self.current.lexeme, "native")) {
             return self.fail("expected 'native'");
         }
         try self.advance();
+        return self.parseNativeFunctionAfterNative(is_public);
+    }
+
+    fn parseNativeFunctionAfterNative(self: *Parser, is_public: bool) ParseError!Ast.Function {
+        const position = self.previous.position;
         try self.expect(.keyword_func, "expected 'func' after 'native'");
         if (self.current.tag != .identifier) return self.fail("expected function name");
         const name = self.current.lexeme;
@@ -534,13 +552,84 @@ pub const Parser = struct {
         };
     }
 
+    fn parseNativeResource(self: *Parser, is_public: bool) ParseError!Ast.Structure {
+        const position = self.previous.position;
+        if (self.current.tag != .identifier or !std.mem.eql(u8, self.current.lexeme, "resource")) {
+            return self.fail("expected 'resource' after 'native'");
+        }
+        try self.advance();
+        if (self.current.tag != .identifier) return self.fail("expected native resource name");
+        const name = self.current.lexeme;
+        const name_position = self.current.position;
+        if (std.mem.eql(u8, name, "Result")) return self.fail("type name 'Result' is reserved");
+        try self.advance();
+        if (self.current.tag == .less) return self.fail("native resources cannot be generic");
+        if (self.current.tag == .colon) return self.fail("native resources cannot inherit or conform to protocols");
+        try self.expect(.left_brace, "expected '{' after native resource name");
+        try self.expect(.keyword_drop, "a native resource must declare exactly one 'drop' member");
+        if (self.current.tag != .identifier) return self.fail("expected native destructor name after 'drop'");
+        const drop_name = self.current.lexeme;
+        try self.advance();
+        try self.expectStatementTerminator();
+        if (self.current.tag != .right_brace) return self.fail("a native resource can declare only one 'drop' member");
+        try self.advance();
+        return .{
+            .is_public = is_public,
+            .is_native_resource = true,
+            .native_drop_name = drop_name,
+            .position = position,
+            .name = name,
+            .name_position = name_position,
+            .fields = &.{},
+            .methods = &.{},
+        };
+    }
+
+    fn nativeResourceDropFunction(self: *Parser, resource: Ast.Structure) Allocator.Error!Ast.Function {
+        return .{
+            .is_public = resource.is_public,
+            .is_native = true,
+            .is_native_resource_drop = true,
+            .position = resource.position,
+            .name = resource.native_drop_name.?,
+            .name_position = resource.name_position,
+            .return_type = .void,
+            .parameters = try self.allocator.dupe(Ast.Parameter, &.{.{
+                .name = "resource",
+                .position = resource.name_position,
+                .type = .{ .structure = resource.name },
+            }}),
+            .statements = &.{},
+        };
+    }
+
     fn parseReturnType(self: *Parser) ParseError!Ast.ReturnType {
         if (self.current.tag == .keyword_void) {
             try self.advance();
             if (self.current.tag == .question) return self.fail("type 'void' cannot be optional");
             return .void;
         }
-        const type_name = try self.parseTypeNameAfter("expected function return type");
+        const reference_mode: ?bool = if (self.current.tag == .at)
+            false
+        else if (self.current.tag == .amp)
+            true
+        else
+            null;
+        if (reference_mode) |_| try self.advance();
+        var provenance: ?[]const u8 = null;
+        const type_name = if (reference_mode != null and self.current.tag == .identifier) reference: {
+            const first = try self.parseQualifiedName("expected function return type");
+            if (self.current.tag == .colon) {
+                provenance = first;
+                try self.advance();
+                break :reference try self.parseTypeNameAfter("expected function return type after provenance");
+            }
+            break :reference Ast.TypeName{ .structure = first };
+        } else try self.parseTypeNameAfter("expected function return type");
+        if (reference_mode) |mutable| {
+            const target = try self.newTypeName(type_name);
+            return .{ .reference = .{ .target = target, .mutable = mutable, .provenance = provenance } };
+        }
         return switch (type_name) {
             .void => unreachable,
             .int => .int,
@@ -563,6 +652,7 @@ pub const Parser = struct {
             .type_parameter => |name| .{ .type_parameter = name },
             .list => |element| .{ .list = element },
             .fixed_array => |array| .{ .fixed_array = array },
+            .view => |element| .{ .view = element },
             .reference => |reference| .{ .reference = reference },
             .function => |function| .{ .function = function },
             .optional => |contained| .{ .optional = contained },
@@ -709,6 +799,17 @@ pub const Parser = struct {
     }
 
     fn parseTypeName(self: *Parser) ParseError!Ast.TypeName {
+        const reference_mode: ?bool = if (self.current.tag == .at)
+            false
+        else if (self.current.tag == .amp)
+            true
+        else
+            null;
+        if (reference_mode) |mutable| {
+            try self.advance();
+            const target = try self.newTypeName(try self.parseTypeNameAfter("expected type name after reference mode"));
+            return .{ .reference = .{ .target = target, .mutable = mutable } };
+        }
         return self.parseTypeNameAfter("expected type name after ':'");
     }
 
@@ -758,6 +859,13 @@ pub const Parser = struct {
                 continue;
             }
             try self.advance();
+            if (self.current.tag == .dot_dot) {
+                try self.advance();
+                try self.expect(.right_bracket, "expected ']' after view marker '..'");
+                const element = try self.newTypeName(result);
+                result = .{ .view = element };
+                continue;
+            }
             if (self.current.tag == .right_bracket) {
                 try self.advance();
                 const element = try self.newTypeName(result);
@@ -2812,6 +2920,44 @@ test "parse public and private native functions" {
     try std.testing.expect(program.functions[1].is_native);
     try std.testing.expect(!program.functions[1].is_public);
     try std.testing.expectEqualStrings("native_seed", program.functions[1].name);
+}
+
+test "parse public and private opaque native resources" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var parser = Parser.init(arena.allocator(),
+        \\pub native resource Buffer {
+        \\    drop destroy_buffer
+        \\}
+        \\native resource Image { drop release_image }
+        \\func main() {}
+    );
+    const program = try parser.parse();
+    try std.testing.expectEqual(@as(usize, 2), program.structures.len);
+    try std.testing.expect(program.structures[0].is_native_resource);
+    try std.testing.expect(program.structures[0].is_public);
+    try std.testing.expectEqualStrings("destroy_buffer", program.structures[0].native_drop_name.?);
+    try std.testing.expect(program.structures[1].is_native_resource);
+    try std.testing.expect(!program.structures[1].is_public);
+    try std.testing.expectEqual(@as(usize, 3), program.functions.len);
+    try std.testing.expect(program.functions[0].is_native_resource_drop);
+    try std.testing.expectEqualStrings("destroy_buffer", program.functions[0].name);
+    try std.testing.expectEqualStrings("Buffer", program.functions[0].parameters[0].type.structure);
+}
+
+test "reject malformed opaque native resources" {
+    const cases = [_][]const u8{
+        "native resource Buffer {} func main() {}",
+        "native resource Buffer<T> { drop destroy } func main() {}",
+        "native resource Buffer : Other { drop destroy } func main() {}",
+        "native resource Buffer { drop destroy drop again } func main() {}",
+    };
+    for (cases) |source| {
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        var parser = Parser.init(arena.allocator(), source);
+        try std.testing.expectError(error.InvalidSource, parser.parse());
+    }
 }
 
 test "parse fixed arrays and lists" {

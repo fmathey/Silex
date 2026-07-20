@@ -50,6 +50,16 @@
     ],
     "description": "Expose a module function implemented by its native runtime"
   },
+  "Public native resource": {
+    "prefix": "pubresource",
+    "body": [
+      "pub native resource ${1:Name} {",
+      "    drop ${2:destroy_name}",
+      "}",
+      "$0"
+    ],
+    "description": "Expose a nominal opaque resource owned and destroyed by its native runtime"
+  },
   "Enum": {
     "prefix": "enum",
     "body": [
@@ -585,6 +595,31 @@
       "}"
     ],
     "description": "Declare a constructor for the class and its future descendants"
+  },
+  "Borrowed return": {
+    "prefix": "funcref",
+    "body": [
+      "func ${1:name}(${2:owner}:@${3:Owner}) @${4:State} {",
+      "    return @${2:owner}.${5:field}",
+      "}"
+    ],
+    "description": "Return a shared alias tied to one borrowed parameter"
+  },
+  "Mutable borrowed return": {
+    "prefix": "funcmutref",
+    "body": [
+      "func ${1:name}(${2:owner}:&${3:Owner}) &${4:State} {",
+      "    return &${2:owner}.${5:field}",
+      "}"
+    ],
+    "description": "Return an exclusive mutable alias tied to one parameter"
+  },
+  "Native borrowed view": {
+    "prefix": "nativeview",
+    "body": [
+      "pub native func ${1:values}(${2:resource}:@${3:Resource}) @${4:int}[..]"
+    ],
+    "description": "Declare a native contiguous view borrowed from an opaque resource"
   },
   "Default struct field": {
     "prefix": "field",

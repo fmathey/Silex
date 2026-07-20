@@ -1,0 +1,7 @@
+use NativeOpaqueResources as Native
+
+func main() {
+    let buffer = Native.create_buffer(1)
+    let view = Native.invalid_null_view(buffer)
+    print(view.count())
+}

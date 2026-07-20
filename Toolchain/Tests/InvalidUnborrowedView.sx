@@ -1,0 +1,3 @@
+func consume(values:int[..]) void {}
+
+func main() {}

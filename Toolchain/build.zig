@@ -423,11 +423,60 @@ pub fn build(b: *std.Build) void {
     inherited_native_runtime_command.addArgs(&.{ "run", "Tests/DistributedModules/NativeInherited/Main.sx" });
     inherited_native_runtime_command.expectStdOutEqual(hostText(b, "42\n"));
 
+    const premature_native_resource_root_command = b.addRunArtifact(native_module_test_executable);
+    premature_native_resource_root_command.addArgs(&.{ "compile", "Smokes/NativeOpaqueResources/InvalidPrematureRoot.sx" });
+    premature_native_resource_root_command.expectExitCode(1);
+    premature_native_resource_root_command.expectStdErrMatch(
+        "cannot destroy a native resource while acquired resources still depend on it\n",
+    );
+
+    const wrapped_premature_native_resource_root_command = b.addRunArtifact(native_module_test_executable);
+    wrapped_premature_native_resource_root_command.addArgs(&.{ "compile", "Smokes/NativeOpaqueResources/InvalidWrappedPrematureRoot.sx" });
+    wrapped_premature_native_resource_root_command.expectExitCode(1);
+    wrapped_premature_native_resource_root_command.expectStdErrMatch(
+        "cannot destroy a native resource while acquired resources still depend on it\n",
+    );
+
+    const escaping_native_resource_dependency_command = b.addRunArtifact(native_module_test_executable);
+    escaping_native_resource_dependency_command.addArgs(&.{ "compile", "Smokes/NativeOpaqueResources/InvalidEscapingDependent.sx" });
+    escaping_native_resource_dependency_command.expectExitCode(1);
+    escaping_native_resource_dependency_command.expectStdErrMatch(
+        "cannot return a native resource that depends on a local resource\n",
+    );
+
+    const replaced_native_resource_root_command = b.addRunArtifact(native_module_test_executable);
+    replaced_native_resource_root_command.addArgs(&.{ "compile", "Smokes/NativeOpaqueResources/InvalidReplaceRoot.sx" });
+    replaced_native_resource_root_command.expectExitCode(1);
+    replaced_native_resource_root_command.expectStdErrMatch(
+        "cannot replace a native resource while acquired resources still depend on it\n",
+    );
+
+    const negative_native_view_command = b.addRunArtifact(native_module_test_executable);
+    negative_native_view_command.addArgs(&.{ "run", "Smokes/NativeOpaqueResources/InvalidNegativeView.sx" });
+    negative_native_view_command.expectExitCode(1);
+    negative_native_view_command.expectStdErrEqual(
+        "runtime error: native function 'NativeOpaqueResources.invalid_negative_view' failed: returned a negative view count\n",
+    );
+
+    const null_native_view_command = b.addRunArtifact(native_module_test_executable);
+    null_native_view_command.addArgs(&.{ "run", "Smokes/NativeOpaqueResources/InvalidNullView.sx" });
+    null_native_view_command.expectExitCode(1);
+    null_native_view_command.expectStdErrEqual(
+        "runtime error: native function 'NativeOpaqueResources.invalid_null_view' failed: returned a null view with a positive count\n",
+    );
+
     const invalid_reference_type_command = b.addRunArtifact(executable);
     invalid_reference_type_command.addArgs(&.{ "compile", "Tests/InvalidReferenceType.sx" });
     invalid_reference_type_command.expectExitCode(1);
     invalid_reference_type_command.expectStdErrEqual(
         "Tests/InvalidReferenceType.sx:1:20: error: expected ')'\n",
+    );
+
+    const invalid_unborrowed_view_command = b.addRunArtifact(executable);
+    invalid_unborrowed_view_command.addArgs(&.{ "compile", "Tests/InvalidUnborrowedView.sx" });
+    invalid_unborrowed_view_command.expectExitCode(1);
+    invalid_unborrowed_view_command.expectStdErrEqual(
+        "Tests/InvalidUnborrowedView.sx:1:14: error: a view type must be borrowed as '@T[..]' or '&T[..]'\n",
     );
 
     const invalid_condition_command = b.addRunArtifact(executable);
@@ -1971,7 +2020,14 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&native_exception_command.step);
     test_step.dependOn(&duplicate_native_source_command.step);
     test_step.dependOn(&inherited_native_runtime_command.step);
+    test_step.dependOn(&premature_native_resource_root_command.step);
+    test_step.dependOn(&wrapped_premature_native_resource_root_command.step);
+    test_step.dependOn(&escaping_native_resource_dependency_command.step);
+    test_step.dependOn(&replaced_native_resource_root_command.step);
+    test_step.dependOn(&negative_native_view_command.step);
+    test_step.dependOn(&null_native_view_command.step);
     test_step.dependOn(&invalid_reference_type_command.step);
+    test_step.dependOn(&invalid_unborrowed_view_command.step);
     test_step.dependOn(&invalid_condition_command.step);
     test_step.dependOn(&isolated_elif_command.step);
     test_step.dependOn(&invalid_alternative_condition_command.step);
@@ -3149,9 +3205,21 @@ pub fn build(b: *std.Build) void {
             "close 70\n",
     ));
 
+    const borrowed_returns_smoke_command = b.addRunArtifact(executable);
+    borrowed_returns_smoke_command.step.dependOn(&unique_resources_smoke_command.step);
+    borrowed_returns_smoke_command.addArgs(&.{ "run", "Smokes/NativeOpaqueResources/BorrowedReturns.sx" });
+
+    const contiguous_views_smoke_command = b.addRunArtifact(executable);
+    contiguous_views_smoke_command.step.dependOn(&borrowed_returns_smoke_command.step);
+    contiguous_views_smoke_command.addArgs(&.{ "run", "Smokes/ContiguousViews.sx" });
+
+    const native_contiguous_views_smoke_command = b.addRunArtifact(executable);
+    native_contiguous_views_smoke_command.step.dependOn(&contiguous_views_smoke_command.step);
+    native_contiguous_views_smoke_command.addArgs(&.{ "run", "Smokes/NativeOpaqueResources/ContiguousViews.sx" });
+
     const smoke_step = b.step("smoke", "Compile and run the smoke program");
     smoke_step.dependOn(b.getInstallStep());
-    smoke_step.dependOn(&unique_resources_smoke_command.step);
+    smoke_step.dependOn(&native_contiguous_views_smoke_command.step);
 
     const benchmark_suffix = if (b.graph.host.result.os.tag == .windows) ".exe" else "";
     const silex_benchmark_path = b.fmt("zig-out/bin/IntegerLoopsSilex{s}", .{benchmark_suffix});

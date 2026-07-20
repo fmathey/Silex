@@ -228,12 +228,16 @@ fn renderHeaderForModules(
         }
     }
 
+    for (program.structures) |structure| {
+        if (!structure.is_native_resource or !containsModule(module_names, structure.native_module_name.?)) continue;
+        try appendTransportIfNew(allocator, &output, &emitted_transports, structure.native_module_name.?, structure, false);
+    }
+
     for (program.functions) |function| {
         if (!function.is_native or !containsModule(module_names, function.native_module_name.?)) continue;
         try appendFunctionSignature(allocator, &output, program, function);
         try output.appendSlice(allocator, ";\n");
     }
-
     try output.appendSlice(
         allocator,
         "\n#ifdef __cplusplus\n}\n#endif\n\n#endif\n",
@@ -264,12 +268,19 @@ fn appendFunctionSignature(
     const result = nativeResultShape(program, function.return_type);
     const structure = returnedStructure(program, function);
     const returned = nativeReturnValueType(function.return_type);
+    const returned_view = nativeReturnedView(returned);
+    const borrowed_return = returned == .reference;
     const returns_bytes = isNativeByteBufferReturnType(returned);
     const optional = function.return_type == .optional;
-    if (result != null) {
+    const resource = if (structure) |value| value.is_native_resource else false;
+    if (result != null or returned_view != null) {
         try output.appendSlice(allocator, "void");
     } else if (optional) {
         try output.appendSlice(allocator, "bool");
+    } else if (resource) {
+        if (borrowed_return and !returned.reference.mutable) try output.appendSlice(allocator, "const ");
+        try output.appendSlice(allocator, try transportName(allocator, function.native_module_name.?, structure.?.source_name));
+        try output.append(allocator, '*');
     } else if (returned == .str or returns_bytes or structure != null) {
         try output.appendSlice(allocator, "void");
     } else {
@@ -290,6 +301,18 @@ fn appendFunctionSignature(
             parameter_count += 2;
             continue;
         }
+        if (parameter.type == .view) {
+            if (parameter.mode == .borrow) try output.appendSlice(allocator, "const ");
+            try appendType(allocator, output, parameter.type.view.*);
+            try output.append(allocator, '*');
+            try output.append(allocator, ' ');
+            try output.appendSlice(allocator, parameter.generated_name);
+            try output.appendSlice(allocator, "Values, int64_t ");
+            try output.appendSlice(allocator, parameter.generated_name);
+            try output.appendSlice(allocator, "Count");
+            parameter_count += 2;
+            continue;
+        }
         if (isNativeByteViewType(parameter.type)) {
             try output.appendSlice(allocator, "const uint8_t* ");
             try output.appendSlice(allocator, parameter.generated_name);
@@ -305,12 +328,12 @@ fn appendFunctionSignature(
             continue;
         }
         if (structureForType(program, parameter.type)) |parameter_structure| {
-            try output.appendSlice(allocator, "const ");
+            if (!parameter_structure.is_native_resource or parameter.mode == .borrow) try output.appendSlice(allocator, "const ");
             try output.appendSlice(allocator, try inputTransportName(
                 allocator,
                 function.native_module_name.?,
                 parameter_structure.source_name,
-                structureHasString(parameter_structure),
+                structureHasString(parameter_structure) and !parameter_structure.is_native_resource,
             ));
             try output.appendSlice(allocator, "* ");
             try output.appendSlice(allocator, parameter.generated_name);
@@ -330,22 +353,32 @@ fn appendFunctionSignature(
             function.native_function_name.?,
         ));
         try output.appendSlice(allocator, "* output");
+    } else if (returned_view) |view| {
+        if (parameter_count != 0) try output.appendSlice(allocator, ", ");
+        if (!returned.reference.mutable) try output.appendSlice(allocator, "const ");
+        try appendType(allocator, output, view.*);
+        try output.appendSlice(allocator, "** output_values, int64_t* output_count");
     } else if (returned == .str) {
         if (parameter_count != 0) try output.appendSlice(allocator, ", ");
         try output.appendSlice(allocator, "char** output_bytes, int64_t* output_length");
     } else if (returns_bytes) {
         if (parameter_count != 0) try output.appendSlice(allocator, ", ");
         try output.appendSlice(allocator, "uint8_t** output_bytes, int64_t* output_length");
-    } else if (structure) |returned_structure| {
+    } else if (optional and resource) {
+        if (parameter_count != 0) try output.appendSlice(allocator, ", ");
+        try output.appendSlice(allocator, try transportName(allocator, function.native_module_name.?, structure.?.source_name));
+        try output.appendSlice(allocator, "** output");
+    } else if (structure != null and !resource) {
+        const returned_structure = structure.?;
         if (parameter_count != 0) try output.appendSlice(allocator, ", ");
         try output.appendSlice(allocator, try transportName(allocator, function.native_module_name.?, returned_structure.source_name));
-        try output.appendSlice(allocator, "* output");
+        try output.appendSlice(allocator, if (returned_structure.is_native_resource) "** output" else "* output");
     } else if (optional) {
         if (parameter_count != 0) try output.appendSlice(allocator, ", ");
         try appendType(allocator, output, returned);
         try output.appendSlice(allocator, "* output");
     }
-    if (parameter_count == 0 and result == null and returned != .str and !returns_bytes and structure == null and !optional) try output.appendSlice(allocator, "void");
+    if (parameter_count == 0 and result == null and returned_view == null and returned != .str and !returns_bytes and structure == null and !optional) try output.appendSlice(allocator, "void");
     try output.append(allocator, ')');
 }
 
@@ -388,6 +421,11 @@ fn isNativeByteViewType(value: Semantic.Type) bool {
         .fixed_array => |array| array.element.* == .uint8,
         else => false,
     };
+}
+
+fn nativeReturnedView(value: Semantic.Type) ?*const Semantic.Type {
+    if (value != .reference or value.reference.target.* != .view) return null;
+    return value.reference.target.*.view;
 }
 
 fn isNativeByteBufferReturnType(value: Semantic.Type) bool {
@@ -496,6 +534,7 @@ fn appendResultBranchFields(
     } else if (structureForType(program, value)) |structure| {
         try output.appendSlice(allocator, "    ");
         try output.appendSlice(allocator, try transportName(allocator, module_name, structure.source_name));
+        if (structure.is_native_resource) try output.append(allocator, '*');
         try output.append(allocator, ' ');
         try output.appendSlice(allocator, prefix);
         try output.appendSlice(allocator, "_value;\n");
@@ -539,6 +578,14 @@ fn appendTransportDefinition(
         try inputTransportName(allocator, module_name, structure.source_name, structureHasString(structure))
     else
         try transportName(allocator, module_name, structure.source_name);
+    if (structure.is_native_resource) {
+        try output.appendSlice(allocator, "typedef struct ");
+        try output.appendSlice(allocator, name);
+        try output.append(allocator, ' ');
+        try output.appendSlice(allocator, name);
+        try output.append(allocator, ';');
+        return;
+    }
     try output.appendSlice(allocator, "#define SILEX_NATIVE_TRANSPORT_");
     try appendGuardName(allocator, output, name);
     try output.appendSlice(allocator, " 1\n");
@@ -568,7 +615,8 @@ fn appendTransportDefinition(
 }
 
 fn returnedStructure(program: Semantic.Program, function: Semantic.Function) ?Semantic.Structure {
-    return structureForType(program, nativeReturnValueType(function.return_type));
+    const returned = nativeReturnValueType(function.return_type);
+    return structureForType(program, if (returned == .reference) returned.reference.target.* else returned);
 }
 
 fn structureForType(program: Semantic.Program, value: Semantic.Type) ?Semantic.Structure {

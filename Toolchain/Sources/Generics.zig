@@ -264,6 +264,7 @@ pub const Specializer = struct {
                 return self.fail(position, message);
             },
             .list => |element| .{ .list = try self.rewriteTypePointer(element.*, bindings, position) },
+            .view => |element| .{ .view = try self.rewriteTypePointer(element.*, bindings, position) },
             .fixed_array => |array| .{ .fixed_array = .{
                 .element = try self.rewriteTypePointer(array.element.*, bindings, position),
                 .length = array.length,
@@ -271,6 +272,7 @@ pub const Specializer = struct {
             .reference => |reference| .{ .reference = .{
                 .target = try self.rewriteTypePointer(reference.target.*, bindings, position),
                 .mutable = reference.mutable,
+                .provenance = reference.provenance,
             } },
             .function => |function| function_type: {
                 var parameters: std.ArrayList(Ast.TypeName) = .empty;
@@ -319,6 +321,7 @@ pub const Specializer = struct {
                 break :type_result typeNameToReturnType(rewritten);
             },
             .list => |element| .{ .list = try self.rewriteTypePointer(element.*, bindings, position) },
+            .view => |element| .{ .view = try self.rewriteTypePointer(element.*, bindings, position) },
             .fixed_array => |array| .{ .fixed_array = .{
                 .element = try self.rewriteTypePointer(array.element.*, bindings, position),
                 .length = array.length,
@@ -326,6 +329,7 @@ pub const Specializer = struct {
             .reference => |reference| .{ .reference = .{
                 .target = try self.rewriteTypePointer(reference.target.*, bindings, position),
                 .mutable = reference.mutable,
+                .provenance = reference.provenance,
             } },
             .function => |function| .{ .function = (try self.rewriteType(.{ .function = function }, bindings, position)).function },
             .optional => |contained| .{ .optional = try self.rewriteTypePointer(contained.*, bindings, position) },
@@ -1106,6 +1110,7 @@ fn typeNameToReturnType(value: Ast.TypeName) Ast.ReturnType {
         .str => .str,
         .structure => |name| .{ .structure = name },
         .list => |element| .{ .list = element },
+        .view => |element| .{ .view = element },
         .fixed_array => |array| .{ .fixed_array = array },
         .reference => |reference| .{ .reference = reference },
         .function => |function| .{ .function = function },
@@ -1156,6 +1161,10 @@ fn appendTypeName(
             try output.append(allocator, '[');
             try output.appendSlice(allocator, array.length);
             try output.append(allocator, ']');
+        },
+        .view => |element| {
+            try appendTypeName(allocator, output, element.*);
+            try output.appendSlice(allocator, "[..]");
         },
         .reference => |reference| {
             try output.append(allocator, if (reference.mutable) '&' else '@');

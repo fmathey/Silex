@@ -31,6 +31,7 @@ pub const Type = union(enum) {
     enumeration: EnumType,
     list: *const Type,
     fixed_array: FixedArrayType,
+    view: *const Type,
     reference: ReferenceType,
     function: FunctionType,
     optional: *const Type,
@@ -83,6 +84,8 @@ const BindingState = struct {
     owner_available: bool = true,
     consumed_at: ?Source.Position = null,
     borrowed_parameter: bool = false,
+    resource_dependencies: []const *BindingState = &.{},
+    resource_dependents: usize = 0,
 };
 
 const Borrow = struct {
@@ -98,6 +101,9 @@ pub const Expression = struct {
     borrow: ?Borrow = null,
     owns_borrow: bool = false,
     borrowed_parameter: bool = false,
+    owner_state: ?*BindingState = null,
+    resource_dependencies: []const *BindingState = &.{},
+    transfers_resource_dependencies: bool = false,
     value: union(enum) {
         integer: u64,
         floating: []const u8,
@@ -169,6 +175,8 @@ pub const Expression = struct {
         native_return_structure: ?NativeStructureTransport = null,
         native_result: ?NativeResultTransport = null,
         native_parameter_structures: []const ?NativeStructureTransport = &.{},
+        native_parameter_modes: []const Ast.ParameterMode = &.{},
+        borrowed_return_parameter: ?usize = null,
     };
 
     pub const ValueCall = struct {
@@ -333,6 +341,8 @@ pub const Expression = struct {
         object: *Expression,
         start: *Expression,
         end: *Expression,
+        borrowed: bool = false,
+        mutable: bool = false,
     };
 
     pub const Binary = struct {
@@ -493,6 +503,10 @@ pub const Structure = struct {
     generated_name: []const u8,
     is_class: bool,
     is_owner: bool = false,
+    is_native_resource: bool = false,
+    native_module_name: ?[]const u8 = null,
+    native_drop_name: ?[]const u8 = null,
+    native_drop_symbol: ?[]const u8 = null,
     is_noncopyable: bool,
     equality_comparable: bool,
     protocol_conformances: []const ProtocolConformance,
@@ -525,6 +539,10 @@ pub const NativeStructureTransport = struct {
     source_name: []const u8,
     generated_name: []const u8,
     fields: []const NativeTransportField,
+    is_native_resource: bool = false,
+    native_module_name: ?[]const u8 = null,
+    native_drop_name: ?[]const u8 = null,
+    native_drop_symbol: ?[]const u8 = null,
 };
 
 pub const NativeTransportField = struct {
@@ -566,8 +584,10 @@ pub const Function = struct {
     statements: []const Statement,
     is_main: bool,
     is_native: bool,
+    is_native_resource_drop: bool,
     native_module_name: ?[]const u8,
     native_function_name: ?[]const u8,
+    borrowed_return_parameter: ?usize = null,
 };
 
 pub const Method = struct {
@@ -669,8 +689,11 @@ const FunctionSymbol = struct {
     position: Source.Position,
     is_main: bool,
     is_native: bool,
+    is_native_resource_drop: bool,
     native_module_name: ?[]const u8,
     native_function_name: ?[]const u8,
+    return_dependency_parameters: []const usize = &.{},
+    return_borrow_parameter: ?usize = null,
 };
 
 const StructureSymbol = struct {
@@ -678,6 +701,10 @@ const StructureSymbol = struct {
     generated_name: []const u8,
     is_class: bool,
     is_owner: bool,
+    is_native_resource: bool,
+    native_module_name: ?[]const u8,
+    native_drop_name: ?[]const u8,
+    native_drop_symbol: ?[]const u8,
     is_generic: bool,
     module_files: []const usize,
     base_index: ?usize,
@@ -825,6 +852,7 @@ pub const Analyzer = struct {
     protocols: std.ArrayList(ProtocolSymbol) = .empty,
     structures: std.ArrayList(StructureSymbol) = .empty,
     current_return_type: Type = .void,
+    current_return_borrow_root: ?*BindingState = null,
     current_structure_index: ?usize = null,
     current_method_index: ?usize = null,
     current_constructor: bool = false,
@@ -926,6 +954,8 @@ pub const Analyzer = struct {
             }
             const drop = if (ast_structure.drop) |ast_drop|
                 try self.dropBlock(ast_drop, structure_index)
+            else if (ast_structure.is_native_resource)
+                Drop{ .statements = &.{} }
             else
                 null;
             var methods: std.ArrayList(Method) = .empty;
@@ -941,6 +971,10 @@ pub const Analyzer = struct {
                 .generated_name = symbol.generated_name,
                 .is_class = symbol.is_class,
                 .is_owner = symbol.is_owner,
+                .is_native_resource = symbol.is_native_resource,
+                .native_module_name = symbol.native_module_name,
+                .native_drop_name = symbol.native_drop_name,
+                .native_drop_symbol = symbol.native_drop_symbol,
                 .is_noncopyable = !symbol.is_class and try self.isNonCopyableType(.{ .structure = self.structureType(structure_index) }),
                 .equality_comparable = self.isEqualityComparable(.{ .structure = self.structureType(structure_index) }),
                 .protocol_conformances = try self.protocolConformances(structure_index),
@@ -1267,7 +1301,6 @@ pub const Analyzer = struct {
                     }
                 }
                 const return_type = try typeFromReturn(self, ast_method.return_type, ast_method.position);
-                if (return_type == .reference) return self.fail(ast_method.position, "a method cannot return a reference");
                 try self.rejectUniqueOwnerComposition(return_type, true, ast_method.position);
                 try methods.append(self.allocator, .{
                     .source_name = ast_method.name,
@@ -1299,6 +1332,25 @@ pub const Analyzer = struct {
                 const message = try std.fmt.allocPrint(self.allocator, "type '{s}' is already declared", .{ast_structure.name});
                 return self.fail(ast_structure.name_position, message);
             }
+            const native_module_name = if (ast_structure.is_native_resource) moduleName(ast_structure.name) else null;
+            if (ast_structure.is_native_resource) {
+                const module_name = native_module_name orelse return self.fail(
+                    ast_structure.position,
+                    "native resources are only available in a named module with @Module.json native configuration",
+                );
+                if (!self.isNativeModule(module_name)) {
+                    const message = try std.fmt.allocPrint(
+                        self.allocator,
+                        "native resources require module '{s}' or one of its parents to declare @Module.json native configuration",
+                        .{module_name},
+                    );
+                    return self.fail(ast_structure.position, message);
+                }
+            }
+            const drop_qualified_name = if (ast_structure.is_native_resource)
+                try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ native_module_name.?, ast_structure.native_drop_name.? })
+            else
+                null;
             try self.structures.append(self.allocator, .{
                 .source_name = ast_structure.name,
                 .generated_name = if (ast_structure.is_class)
@@ -1306,7 +1358,11 @@ pub const Analyzer = struct {
                 else
                     try std.fmt.allocPrint(self.allocator, "SilexStruct{d}", .{structure_index}),
                 .is_class = ast_structure.is_class,
-                .is_owner = !ast_structure.is_class and ast_structure.drop != null,
+                .is_owner = !ast_structure.is_class and (ast_structure.drop != null or ast_structure.is_native_resource),
+                .is_native_resource = ast_structure.is_native_resource,
+                .native_module_name = native_module_name,
+                .native_drop_name = ast_structure.native_drop_name,
+                .native_drop_symbol = if (drop_qualified_name) |name| try nativeSymbol(self.allocator, name) else null,
                 .is_generic = ast_structure.type_parameters.len != 0 or
                     std.mem.indexOfScalar(u8, ast_structure.name, '<') != null,
                 .module_files = ast_structure.module_files,
@@ -1354,7 +1410,6 @@ pub const Analyzer = struct {
                     }
                 }
                 const return_type = try typeFromReturn(self, requirement.return_type, requirement.position);
-                if (return_type == .reference) return self.fail(requirement.position, "a protocol method cannot return a reference");
                 try self.rejectUniqueOwnerComposition(return_type, true, requirement.position);
                 try requirements.append(self.allocator, .{
                     .source_name = requirement.name,
@@ -1630,7 +1685,29 @@ pub const Analyzer = struct {
                 return self.fail(ast_function.name_position, message);
             }
             const return_type = try typeFromReturn(self, ast_function.return_type, ast_function.position);
-            if (return_type == .reference) return self.fail(ast_function.position, "a function cannot return a reference");
+            if (return_type == .view) return self.fail(ast_function.position, "a view type must be borrowed as '@T[..]' or '&T[..]'");
+            var return_borrow_parameter: ?usize = null;
+            if (return_type == .reference) {
+                const reference = ast_function.return_type.reference;
+                var compatible_count: usize = 0;
+                for (ast_function.parameters, parameter_types.items, parameter_modes.items, 0..) |parameter, parameter_type, mode, parameter_index| {
+                    const compatible_mode = if (reference.mutable) mode == .mutable_reference else mode != .value;
+                    _ = parameter_type;
+                    if (!compatible_mode) continue;
+                    if (reference.provenance) |provenance| {
+                        if (std.mem.eql(u8, provenance, parameter.name)) return_borrow_parameter = parameter_index;
+                    } else {
+                        compatible_count += 1;
+                        return_borrow_parameter = parameter_index;
+                    }
+                }
+                if (reference.provenance != null and return_borrow_parameter == null) {
+                    return self.fail(ast_function.position, "borrowed return provenance must name a compatible borrowed parameter");
+                }
+                if (reference.provenance == null and compatible_count != 1) {
+                    return self.fail(ast_function.position, "borrowed return provenance is ambiguous; qualify it with the parameter name");
+                }
+            }
             try self.rejectUniqueOwnerComposition(return_type, true, ast_function.position);
             if (ast_function.is_native) {
                 if (!try self.isNativeReturnType(return_type)) {
@@ -1643,7 +1720,9 @@ pub const Analyzer = struct {
                     return self.fail(ast_function.position, message);
                 }
                 for (ast_function.parameters, parameter_types.items, parameter_modes.items) |parameter, parameter_type, mode| {
-                    if (!try self.isNativeParameterType(parameter_type) or mode != .value) {
+                    if (!try self.isNativeParameterType(parameter_type) or
+                        (mode != .value and !self.isNativeResourceType(parameter_type) and parameter_type != .view))
+                    {
                         const parameter_name = try allocatedTypeName(self.allocator, parameter_type);
                         const message = try std.fmt.allocPrint(
                             self.allocator,
@@ -1651,6 +1730,16 @@ pub const Analyzer = struct {
                             .{ parameter.name, parameter_name },
                         );
                         return self.fail(parameter.position, message);
+                    }
+                }
+                if (return_type == .reference) {
+                    const parameter_index = return_borrow_parameter.?;
+                    const root_type = parameter_types.items[parameter_index];
+                    const returned_target = return_type.reference.target.*;
+                    if (!self.isNativeResourceType(root_type) or
+                        (returned_target != .view and !typeEqual(root_type, returned_target)))
+                    {
+                        return self.fail(ast_function.position, "a native borrowed return must alias its native resource parameter directly");
                     }
                 }
             }
@@ -1669,8 +1758,10 @@ pub const Analyzer = struct {
                 .position = ast_function.name_position,
                 .is_main = is_main,
                 .is_native = ast_function.is_native,
+                .is_native_resource_drop = ast_function.is_native_resource_drop,
                 .native_module_name = native_module_name,
                 .native_function_name = native_function_name,
+                .return_borrow_parameter = return_borrow_parameter,
             });
         }
         if (main_count == 0) return self.fail(.{ .line = 1, .column = 1 }, "missing 'main' function");
@@ -1727,7 +1818,7 @@ pub const Analyzer = struct {
             .bool => ast.value == .boolean,
             .str => ast.value == .string,
             .list => ast.value == .sequence_literal and ast.value.sequence_literal.len == 0,
-            .fixed_array, .protocol => false,
+            .fixed_array, .view, .protocol => false,
             .reference => false,
             .function => false,
             .enumeration => |enum_type| enum_default: {
@@ -1801,7 +1892,35 @@ pub const Analyzer = struct {
             });
         }
         self.current_return_type = symbol.return_type;
+        self.current_return_borrow_root = if (symbol.return_borrow_parameter) |index| scope.symbols.items[index].state else null;
+        defer self.current_return_borrow_root = null;
         const function_statements = try self.statements(ast.statements, &scope);
+        if (!ast.is_native and try self.isNonCopyableType(symbol.return_type)) {
+            var returned_dependencies: std.ArrayList(*BindingState) = .empty;
+            try collectReturnedResourceDependencies(self.allocator, function_statements, &returned_dependencies);
+            var parameter_dependencies: std.ArrayList(usize) = .empty;
+            for (returned_dependencies.items) |dependency| {
+                var is_parameter = false;
+                for (scope.symbols.items[0..ast.parameters.len]) |parameter_symbol| {
+                    if (dependency == parameter_symbol.state) is_parameter = true;
+                }
+                if (!is_parameter) {
+                    return self.fail(ast.name_position, "cannot return a native resource that depends on a local resource");
+                }
+            }
+            for (scope.symbols.items[0..ast.parameters.len], 0..) |parameter_symbol, parameter_index| {
+                for (returned_dependencies.items) |dependency| {
+                    if (dependency != parameter_symbol.state) continue;
+                    try parameter_dependencies.append(self.allocator, parameter_index);
+                    break;
+                }
+            }
+            for (self.functions.items) |*candidate| {
+                if (!std.mem.eql(u8, candidate.generated_name, symbol.generated_name)) continue;
+                candidate.return_dependency_parameters = try parameter_dependencies.toOwnedSlice(self.allocator);
+                break;
+            }
+        }
         self.releaseScopeBorrows(&scope);
         if (!ast.is_native and !typeEqual(symbol.return_type, .void) and !blockAlwaysReturns(function_statements)) {
             const message = try std.fmt.allocPrint(self.allocator, "function '{s}' must return '{s}' on every path", .{ ast.name, typeName(symbol.return_type) });
@@ -1814,8 +1933,10 @@ pub const Analyzer = struct {
             .statements = function_statements,
             .is_main = symbol.is_main,
             .is_native = symbol.is_native,
+            .is_native_resource_drop = symbol.is_native_resource_drop,
             .native_module_name = symbol.native_module_name,
             .native_function_name = symbol.native_function_name,
+            .borrowed_return_parameter = symbol.return_borrow_parameter,
         };
     }
 
@@ -1866,6 +1987,9 @@ pub const Analyzer = struct {
         }
 
         self.current_return_type = symbol.return_type;
+        self.current_return_borrow_root = if (symbol.return_type == .reference) &self.current_self_state else null;
+        if (symbol.return_type == .reference and symbol.return_type.reference.mutable) self.current_method_direct_mutation = true;
+        defer self.current_return_borrow_root = null;
         const method_statements = try self.statements(ast.statements, &scope);
         self.releaseScopeBorrows(&scope);
         if (!typeEqual(symbol.return_type, .void) and !blockAlwaysReturns(method_statements)) {
@@ -2386,6 +2510,9 @@ pub const Analyzer = struct {
             try typeFromAnnotation(self, annotation, declaration.name_position)
         else
             null;
+        if (declared_annotation_type != null and declared_annotation_type.? == .view) {
+            return self.fail(declaration.name_position, "a view type must be borrowed as '@T[..]' or '&T[..]'");
+        }
         if (declaration.initializer == null and declared_annotation_type != null and isUniqueOwnerType(declared_annotation_type.?)) {
             const structure = self.findStructureByGeneratedName(declared_annotation_type.?.structure.generated_name).?;
             if (!self.uniqueOwnerStorageVisible(structure, declaration.name_position.file)) {
@@ -2421,15 +2548,21 @@ pub const Analyzer = struct {
             return self.fail(if (declaration.initializer) |value| value.position else declaration.name_position, message);
         }
 
-        if (declaration.mutability == .immutable and declared_type != .list and declared_type != .fixed_array) {
+        if (declaration.mutability == .immutable and declared_type != .list and declared_type != .fixed_array and declared_type != .reference) {
             try self.requireIndependentLetType(declared_type, declaration.name_position);
         }
-        if (declared_type == .reference and declaration.mutability == .mutable) {
-            return self.fail(declaration.name_position, "a reference must be declared with 'let'");
+        if (declared_type == .reference and declared_type.reference.mutable and declaration.mutability != .mutable) {
+            return self.fail(declaration.name_position, "a mutable reference must be declared with 'var'");
         }
         const generated_name = try std.fmt.allocPrint(self.allocator, "silexValue{d}", .{self.next_symbol_id});
         self.next_symbol_id += 1;
         const state = try self.newBindingState(declared_type);
+        if (try self.isNonCopyableType(declared_type)) {
+            state.resource_dependencies = initializer.resource_dependencies;
+            if (!initializer.transfers_resource_dependencies) {
+                for (state.resource_dependencies) |dependency| dependency.resource_dependents += 1;
+            }
+        }
         if (scope.depth < initializer.lifetime_depth) {
             return self.fail(declaration.name_position, "capturing function value cannot outlive one of its captures");
         }
@@ -2667,6 +2800,14 @@ pub const Analyzer = struct {
             .position = ast.target.position,
             .value = .{ .variable = .{ .generated_name = symbol.generated_name, .capture_box = &symbol.state.capture_box } },
         });
+        if (symbol.state.resource_dependents != 0) {
+            return self.fail(ast.position, "cannot replace a native resource while acquired resources still depend on it");
+        }
+        for (symbol.state.resource_dependencies) |dependency| dependency.resource_dependents -= 1;
+        symbol.state.resource_dependencies = value.resource_dependencies;
+        if (!value.transfers_resource_dependencies) {
+            for (symbol.state.resource_dependencies) |dependency| dependency.resource_dependents += 1;
+        }
         symbol.state.owner_available = true;
         symbol.state.consumed_at = null;
         return .{ .assignment = .{
@@ -3031,9 +3172,11 @@ pub const Analyzer = struct {
         const source: Statement.For.IterationSource = switch (ast.source) {
             .collection => |ast_collection| source: {
                 const collection = try self.expression(ast_collection, parent_scope);
-                element_type = switch (collection.type) {
+                const collection_type = if (collection.type == .reference) collection.type.reference.target.* else collection.type;
+                element_type = switch (collection_type) {
                     .list => |element| element.*,
                     .fixed_array => |array| array.element.*,
+                    .view => |element| element.*,
                     else => return self.fail(ast_collection.position, "for source must be an array or list"),
                 };
 
@@ -3172,7 +3315,16 @@ pub const Analyzer = struct {
                 const message = try typeMismatchMessage(self.allocator, self.current_return_type, value.type);
                 return self.fail(ast_value.position, message);
             }
-            if (value.borrowed_parameter) {
+            if (self.current_return_type == .reference) {
+                const borrow = value.borrow orelse return self.fail(ast.position, "a borrowed return must return an explicit '@' or '&' borrow");
+                if (borrow.root != self.current_return_borrow_root) {
+                    return self.fail(ast.position, "borrowed return does not originate from its declared root");
+                }
+                if (self.current_return_type.reference.mutable and !borrow.mutable) {
+                    return self.fail(ast.position, "a shared borrow cannot satisfy a mutable borrowed return");
+                }
+            }
+            if (value.borrowed_parameter and self.current_return_type != .reference) {
                 return self.fail(ast.position, "a read-reference parameter cannot be returned from its call");
             }
             if (value.lifetime_depth != 0) {
@@ -3204,8 +3356,14 @@ pub const Analyzer = struct {
         ast: *const Ast.Expression,
         scope: *const Scope,
     ) AnalyzeError!*Expression {
+        if (ast.value == .unary and ast.value.unary.operator == .borrow and ast.value.unary.operand.value == .slice_access) {
+            return self.borrowExpression(ast.value.unary, scope, true);
+        }
         if (ast.value == .unary and ast.value.unary.operator == .borrow) {
             return self.fail(ast.value.unary.operator_position, "'&' is only valid in parameter declarations; calls use plain arguments");
+        }
+        if (ast.value == .borrow_expression and ast.value.borrow_expression.operand.value == .slice_access) {
+            return self.readBorrowValue(ast.value.borrow_expression, scope, null);
         }
         if (ast.value == .borrow_expression) {
             return self.fail(ast.value.borrow_expression.operator_position, "'@' is only valid for read bindings; calls use plain arguments");
@@ -3236,7 +3394,7 @@ pub const Analyzer = struct {
             .member_access => |member| self.memberAccessExpression(member, scope),
             .safe_member_access => |member| self.safeMemberAccessExpression(member, scope),
             .index_access => |access| self.indexAccessExpression(access, scope),
-            .slice_access => |access| self.sliceAccessExpression(access, scope),
+            .slice_access => |access| self.sliceAccessExpression(access, scope, false),
             .try_expression => |try_value| self.tryExpression(try_value, scope),
             .move_expression => |move_value| self.moveExpression(move_value, scope),
             .borrow_expression => unreachable,
@@ -3253,6 +3411,17 @@ pub const Analyzer = struct {
         scope: *const Scope,
         expected_type: ?Type,
     ) AnalyzeError!*Expression {
+        if (expected_type != null and expected_type.? == .reference) {
+            const reference = expected_type.?.reference;
+            if (ast.value == .borrow_expression and !reference.mutable) {
+                const value = try self.readBorrowValue(ast.value.borrow_expression, scope, reference.target.*);
+                value.type = expected_type.?;
+                return value;
+            }
+            if (ast.value == .unary and ast.value.unary.operator == .borrow) {
+                return self.borrowExpression(ast.value.unary, scope, reference.mutable);
+            }
+        }
         if (ast.value == .null) {
             const optional_type = expected_type orelse return self.fail(ast.position, "'null' requires an expected optional type");
             if (optional_type != .optional) return self.fail(ast.position, "'null' requires an expected optional type");
@@ -3417,7 +3586,7 @@ pub const Analyzer = struct {
             .bool => self.newExpression(.{ .type = .bool, .position = position, .value = .{ .boolean = false } }),
             .str => self.newExpression(.{ .type = .str, .position = position, .value = .{ .string = "" } }),
             .list, .fixed_array => self.newExpression(.{ .type = type_value, .position = position, .value = .{ .sequence_literal = &.{} } }),
-            .reference => self.fail(position, "a reference requires an initializer"),
+            .reference, .view => self.fail(position, "a borrowed view or reference requires an initializer"),
             .function => self.fail(position, "a function value requires an initializer"),
             .protocol => |protocol_type| default_protocol: {
                 const message = try std.fmt.allocPrint(self.allocator, "protocol value '{s}' requires an initializer", .{protocol_type.source_name});
@@ -3469,7 +3638,7 @@ pub const Analyzer = struct {
 
     fn hasIntrinsicDefault(self: *const Analyzer, type_value: Type) bool {
         return switch (type_value) {
-            .void, .reference, .function, .protocol, .enumeration, .null => false,
+            .void, .reference, .view, .function, .protocol, .enumeration, .null => false,
             .int, .int8, .int16, .int32, .uint8, .uint16, .uint32, .uint64, .float, .float64, .bool, .str, .list, .fixed_array, .optional => true,
             .structure => |structure_type| intrinsic: {
                 if (structure_type.is_class) break :intrinsic false;
@@ -3513,6 +3682,8 @@ pub const Analyzer = struct {
             .borrow = symbol.state.reference,
             .lifetime_depth = symbol.state.lifetime_depth,
             .borrowed_parameter = symbol.state.borrowed_parameter,
+            .owner_state = symbol.state,
+            .resource_dependencies = symbol.state.resource_dependencies,
             .value = if (narrowed)
                 .{ .optional_unwrap = .{ .generated_name = symbol.generated_name, .capture_box = &symbol.state.capture_box } }
             else
@@ -3780,22 +3951,41 @@ pub const Analyzer = struct {
         var transient_borrows: std.ArrayList(Borrow) = .empty;
         defer for (transient_borrows.items) |borrow| releaseBorrow(borrow);
         for (call.arguments, function_symbol.parameter_types, function_symbol.parameter_modes, function_symbol.parameter_stored, 0..) |argument, expected_type, mode, is_stored, index| {
-            var value = try self.argumentForMode(argument, scope, expected_type, mode);
+            var value = if (function_symbol.is_native_resource_drop)
+                try self.nativeResourceDropArgument(argument, scope, expected_type)
+            else
+                try self.argumentForMode(argument, scope, expected_type, mode);
             value = try self.coerce(value, expected_type);
             if (!typeEqual(value.type, expected_type)) {
                 const message = try std.fmt.allocPrint(self.allocator, "argument {d} of '{s}' expects '{s}', found '{s}'", .{ index + 1, call.name, typeName(expected_type), typeName(value.type) });
                 return self.fail(argument.position, message);
             }
-            if (mode == .value) try self.rejectUniqueOwnerArgument(value, argument.position);
+            if (mode == .value and !function_symbol.is_native_resource_drop) try self.rejectUniqueOwnerArgument(value, argument.position);
             if (is_stored and value.lifetime_depth != 0) {
                 return self.fail(argument.position, "capturing callback cannot be passed to a parameter whose value escapes the call");
             }
             try arguments.append(self.allocator, value);
             try self.retainTransientBorrow(&transient_borrows, value);
         }
+        const resource_dependencies = if (try self.isNonCopyableType(function_symbol.return_type))
+            try self.functionCallResourceDependencies(function_symbol, arguments.items)
+        else
+            &.{};
+        var returned_borrow: ?Borrow = null;
+        if (function_symbol.return_borrow_parameter) |parameter_index| {
+            const root = if (arguments.items[parameter_index].borrow) |borrow| borrow.root else arguments.items[parameter_index].owner_state;
+            const mutable = function_symbol.return_type.reference.mutable;
+            returned_borrow = .{ .root = root, .mutable = mutable };
+            if (root) |state| {
+                if (mutable) state.mutable_borrow = true else state.immutable_borrows += 1;
+            }
+        }
         return self.newExpression(.{
             .type = function_symbol.return_type,
             .position = call.name_position,
+            .borrow = returned_borrow,
+            .owns_borrow = returned_borrow != null,
+            .resource_dependencies = resource_dependencies,
             .value = .{ .call = .{
                 .generated_name = function_symbol.generated_name,
                 .arguments = try arguments.toOwnedSlice(self.allocator),
@@ -3814,6 +4004,8 @@ pub const Analyzer = struct {
                     try self.nativeParameterStructures(function_symbol.parameter_types)
                 else
                     &.{},
+                .native_parameter_modes = if (function_symbol.is_native) function_symbol.parameter_modes else &.{},
+                .borrowed_return_parameter = function_symbol.return_borrow_parameter,
             } },
         });
     }
@@ -3825,6 +4017,29 @@ pub const Analyzer = struct {
     ) AnalyzeError!*Expression {
         const callee = try self.expression(call.callee, scope);
         return self.checkedValueCall(callee, call.arguments, call.parenthesis_position, scope, null);
+    }
+
+    fn functionCallResourceDependencies(
+        self: *Analyzer,
+        function_symbol: FunctionSymbol,
+        arguments: []const *Expression,
+    ) Allocator.Error![]const *BindingState {
+        var dependencies: std.ArrayList(*BindingState) = .empty;
+        for (arguments, function_symbol.parameter_modes, 0..) |argument, mode, index| {
+            const depends = if (function_symbol.is_native)
+                mode != .value
+            else
+                containsIndex(function_symbol.return_dependency_parameters, index);
+            if (!depends) continue;
+            const root = if (argument.borrow) |borrow| borrow.root else argument.owner_state;
+            const dependency = root orelse continue;
+            var found = false;
+            for (dependencies.items) |existing| {
+                if (existing == dependency) found = true;
+            }
+            if (!found) try dependencies.append(self.allocator, dependency);
+        }
+        return dependencies.toOwnedSlice(self.allocator);
     }
 
     fn checkedValueCall(
@@ -4019,8 +4234,12 @@ pub const Analyzer = struct {
         receiver: Receiver,
         allow_temporary_collection_mutation: bool,
     ) AnalyzeError!*Expression {
-        switch (object.type) {
-            .list, .fixed_array, .str => return self.collectionMethodCallExpression(
+        const receiver_type = if (object.type == .reference and object.type.reference.target.* == .view)
+            object.type.reference.target.*
+        else
+            object.type;
+        switch (receiver_type) {
+            .list, .fixed_array, .view, .str => return self.collectionMethodCallExpression(
                 call,
                 object,
                 scope,
@@ -4096,9 +4315,20 @@ pub const Analyzer = struct {
         if (receiver == .self and self.current_method_index != null) {
             try self.current_method_dependencies.append(self.allocator, method_id);
         }
+        var returned_borrow: ?Borrow = null;
+        if (method_symbol.return_type == .reference) {
+            const root = if (object.borrow) |borrow| borrow.root else object.owner_state;
+            const mutable = method_symbol.return_type.reference.mutable;
+            returned_borrow = .{ .root = root, .mutable = mutable };
+            if (root) |state| {
+                if (mutable) state.mutable_borrow = true else state.immutable_borrows += 1;
+            }
+        }
         return self.newExpression(.{
             .type = method_symbol.return_type,
             .position = call.name_position,
+            .borrow = returned_borrow,
+            .owns_borrow = returned_borrow != null,
             .value = .{ .method_call = .{
                 .object = object,
                 .source_name = method_symbol.source_name,
@@ -4179,9 +4409,20 @@ pub const Analyzer = struct {
             try arguments.append(self.allocator, value);
             try self.retainTransientBorrow(&transient_borrows, value);
         }
+        var returned_borrow: ?Borrow = null;
+        if (requirement.return_type == .reference) {
+            const root = if (object.borrow) |borrow| borrow.root else object.owner_state;
+            const mutable = requirement.return_type.reference.mutable;
+            returned_borrow = .{ .root = root, .mutable = mutable };
+            if (root) |state| {
+                if (mutable) state.mutable_borrow = true else state.immutable_borrows += 1;
+            }
+        }
         return self.newExpression(.{
             .type = requirement.return_type,
             .position = call.name_position,
+            .borrow = returned_borrow,
+            .owns_borrow = returned_borrow != null,
             .value = .{ .protocol_method_call = .{
                 .object = object,
                 .source_name = requirement.source_name,
@@ -4773,17 +5014,22 @@ pub const Analyzer = struct {
             const message = try std.fmt.allocPrint(self.allocator, "type '{s}' has no method '{s}'", .{ typeName(object.type), call.name });
             return self.fail(call.name_position, message);
         };
-        const element_type: ?Type = switch (object.type) {
+        const collection_type = if (object.type == .reference and object.type.reference.target.* == .view)
+            object.type.reference.target.*
+        else
+            object.type;
+        const element_type: ?Type = switch (collection_type) {
             .list => |element| element.*,
             .fixed_array => |array| array.element.*,
+            .view => |element| element.*,
             .str => null,
             else => unreachable,
         };
         const allows = switch (operation) {
-            .count => object.type == .str or element_type != null,
+            .count => collection_type == .str or element_type != null,
             .is_empty => element_type != null,
-            .replace, .swap, .reverse => element_type != null,
-            .append, .append_range, .prepend, .insert, .take, .take_first, .take_last, .clear => object.type == .list,
+            .replace, .swap, .reverse => element_type != null and collection_type != .view,
+            .append, .append_range, .prepend, .insert, .take, .take_first, .take_last, .clear => collection_type == .list,
         };
         if (!allows) {
             const message = try std.fmt.allocPrint(self.allocator, "method '{s}' is not available on '{s}'", .{ call.name, typeName(object.type) });
@@ -5089,7 +5335,12 @@ pub const Analyzer = struct {
                 })
             else
                 try self.expressionForExpected(argument, scope, null);
-            const score = self.implicitConversionScore(argument_value.type, parameter_type, argument_value.position.file) orelse literalOverloadScore(argument_value, parameter_type) orelse return null;
+            const effective_argument_type = if (argument_value.type == .reference and parameter_mode != .value)
+                argument_value.type.reference.target.*
+            else
+                argument_value.type;
+            if (argument_value.type == .reference and parameter_mode == .mutable_reference and !argument_value.type.reference.mutable) return null;
+            const score = self.implicitConversionScore(effective_argument_type, parameter_type, argument_value.position.file) orelse literalOverloadScore(argument_value, parameter_type) orelse return null;
             try scores.append(self.allocator, score);
         }
         return @as(?[]const u8, try scores.toOwnedSlice(self.allocator));
@@ -5415,6 +5666,10 @@ pub const Analyzer = struct {
             return self.fail(initializer.name_position, message);
         };
         const structure_index = self.findStructureIndexByGeneratedName(structure.generated_name).?;
+        if (structure.is_native_resource) {
+            const message = try std.fmt.allocPrint(self.allocator, "native resource '{s}' cannot be constructed in Silex", .{structure.source_name});
+            return self.fail(initializer.name_position, message);
+        }
         if (structure.is_owner and !self.uniqueOwnerStorageVisible(structure, initializer.name_position.file)) {
             const message = try std.fmt.allocPrint(
                 self.allocator,
@@ -5621,7 +5876,8 @@ pub const Analyzer = struct {
                 .value = .{ .enum_raw_value = object },
             });
         }
-        const generated_structure_name = switch (object.type) {
+        const object_target_type = if (object.type == .reference) object.type.reference.target.* else object.type;
+        const generated_structure_name = switch (object_target_type) {
             .structure => |structure_type| structure_type.generated_name,
             else => return self.fail(member.name_position, "member access requires a struct or class value"),
         };
@@ -5709,9 +5965,11 @@ pub const Analyzer = struct {
         scope: *const Scope,
     ) AnalyzeError!*Expression {
         const object = try self.expression(access.object, scope);
-        const element_type: Type = switch (object.type) {
+        const indexed_type = if (object.type == .reference) object.type.reference.target.* else object.type;
+        const element_type: Type = switch (indexed_type) {
             .list => |element| element.*,
             .fixed_array => |array| array.element.*,
+            .view => |element| element.*,
             else => return self.fail(access.bracket_position, "indexed access requires an array or list value"),
         };
         var index = try self.expressionForExpected(access.index, scope, .int);
@@ -5736,11 +5994,14 @@ pub const Analyzer = struct {
         self: *Analyzer,
         access: Ast.Expression.SliceAccess,
         scope: *const Scope,
+        borrowed: bool,
     ) AnalyzeError!*Expression {
         const object = try self.expression(access.object, scope);
-        const element_type: Type = switch (object.type) {
+        const sliced_type = if (object.type == .reference) object.type.reference.target.* else object.type;
+        const element_type: Type = switch (sliced_type) {
             .list => |element| element.*,
             .fixed_array => |array| array.element.*,
+            .view => |element| element.*,
             else => return self.fail(access.bracket_position, "collection slice requires an array or list value"),
         };
         var start = try self.expressionForExpected(access.start, scope, .int);
@@ -5758,12 +6019,13 @@ pub const Analyzer = struct {
         const element = try self.allocator.create(Type);
         element.* = element_type;
         return self.newExpression(.{
-            .type = .{ .list = element },
+            .type = if (borrowed) .{ .view = element } else .{ .list = element },
             .position = access.bracket_position,
             .value = .{ .slice_access = .{
                 .object = object,
                 .start = start,
                 .end = end,
+                .borrowed = borrowed,
             } },
         });
     }
@@ -5783,8 +6045,11 @@ pub const Analyzer = struct {
         is_native: bool,
     ) AnalyzeError!void {
         try self.rejectUniqueOwnerComposition(type_value, true, position);
-        if (mode == .value) return;
-        if (is_native and mode == .borrow) return self.fail(position, "a native function cannot declare an '@T' parameter");
+        if (mode == .value) {
+            if (type_value == .view) return self.fail(position, "a view type must be borrowed as '@T[..]' or '&T[..]'");
+            return;
+        }
+        if (is_native and mode == .borrow and !self.isNativeResourceType(type_value) and type_value != .view) return self.fail(position, "a native function cannot declare an '@T' parameter");
         if (type_value == .structure and type_value.structure.is_class) {
             if (mode == .mutable_reference) {
                 const message = try std.fmt.allocPrint(
@@ -5803,14 +6068,6 @@ pub const Analyzer = struct {
         }
         if (type_value == .protocol and mode == .borrow) {
             return self.fail(position, "a dynamic protocol value cannot use parameter mode '@'");
-        }
-        if (try self.isNonCopyableType(type_value) and mode == .mutable_reference) {
-            const message = try std.fmt.allocPrint(
-                self.allocator,
-                "noncopyable value '{s}' cannot use parameter mode '&'; use '@' for read-only access",
-                .{typeName(type_value)},
-            );
-            return self.fail(position, message);
         }
     }
 
@@ -6318,9 +6575,14 @@ pub const Analyzer = struct {
             symbol.state.owner_available = false;
             symbol.state.consumed_at = move_value.operator_position;
         }
+        const resource_dependencies = symbol.state.resource_dependencies;
+        symbol.state.resource_dependencies = &.{};
         return self.newExpression(.{
             .type = symbol.type,
             .position = move_value.operator_position,
+            .owner_state = symbol.state,
+            .resource_dependencies = resource_dependencies,
+            .transfers_resource_dependencies = true,
             .value = .{ .move_expression = .{ .operand = operand } },
         });
     }
@@ -6415,11 +6677,69 @@ pub const Analyzer = struct {
         if (argument.value == .unary and argument.value.unary.operator == .borrow) {
             return self.fail(argument.position, "reference arguments are selected by the parameter signature; pass the place without '&'");
         }
+        if (argument.value == .identifier and findSymbol(scope, argument.value.identifier) != null and
+            findSymbol(scope, argument.value.identifier).?.type == .reference)
+        {
+            const existing_reference = try self.expressionForExpected(argument, scope, null);
+            const reference = existing_reference.type.reference;
+            if (mode == .value or !typeEqual(reference.target.*, expected_type)) return existing_reference;
+            if (mode == .mutable_reference and !reference.mutable) {
+                return self.fail(argument.position, "a shared alias cannot be passed to a mutable reference parameter");
+            }
+            if (reference.target.* == .view) {
+                return self.newExpression(.{
+                    .type = reference.target.*,
+                    .position = argument.position,
+                    .borrow = existing_reference.borrow,
+                    .borrowed_parameter = existing_reference.borrowed_parameter,
+                    .value = existing_reference.value,
+                });
+            }
+            return self.newExpression(.{
+                .type = reference.target.*,
+                .position = argument.position,
+                .borrow = existing_reference.borrow,
+                .value = .{ .unary = .{ .operator = .dereference, .operand = existing_reference } },
+            });
+        }
         return switch (mode) {
             .value => self.expressionForExpected(argument, scope, expected_type),
             .mutable_reference => self.mutableReferenceArgument(argument, scope, expected_type),
             .borrow => self.readBorrowArgument(argument, scope, expected_type),
         };
+    }
+
+    fn nativeResourceDropArgument(
+        self: *Analyzer,
+        argument: *const Ast.Expression,
+        scope: *const Scope,
+        expected_type: Type,
+    ) AnalyzeError!*Expression {
+        if (argument.value != .identifier) {
+            const value = try self.expressionForExpected(argument, scope, expected_type);
+            if (!self.isNonCopyableTemporary(value)) {
+                return self.fail(argument.position, "a native resource destructor requires a complete owner or temporary");
+            }
+            return value;
+        }
+        const symbol = findSymbol(scope, argument.value.identifier) orelse return self.expressionForExpected(argument, scope, expected_type);
+        if (symbol.state.borrowed_parameter) return self.fail(argument.position, "a read-reference parameter cannot be destroyed");
+        const operand = try self.variableExpression(argument.position, argument.value.identifier, scope);
+        if (symbol.state.immutable_borrows != 0 or symbol.state.mutable_borrow or symbol.state.transient_mutable_borrows != 0) {
+            return self.fail(argument.position, "cannot destroy a borrowed native resource");
+        }
+        if (symbol.state.resource_dependents != 0) {
+            return self.fail(argument.position, "cannot destroy a native resource while acquired resources still depend on it");
+        }
+        for (symbol.state.resource_dependencies) |dependency| dependency.resource_dependents -= 1;
+        symbol.state.resource_dependencies = &.{};
+        symbol.state.owner_available = false;
+        symbol.state.consumed_at = argument.position;
+        return self.newExpression(.{
+            .type = symbol.type,
+            .position = argument.position,
+            .value = .{ .move_expression = .{ .operand = operand } },
+        });
     }
 
     fn readBorrowArgument(
@@ -6457,15 +6777,23 @@ pub const Analyzer = struct {
                 return self.fail(borrow_value.operator_position, "cannot read-borrow a value while it is mutably borrowed");
             }
         }
-        var operand = try self.expressionForExpected(borrow_value.operand, scope, expected_type);
+        var operand = if (borrow_value.operand.value == .slice_access)
+            try self.sliceAccessExpression(borrow_value.operand.value.slice_access, scope, true)
+        else
+            try self.expressionForExpected(borrow_value.operand, scope, expected_type);
         if (expected_type) |expected| {
             operand = try self.coerce(operand, expected);
             if (!typeEqual(operand.type, expected)) return operand;
         }
         const borrow = Borrow{ .root = root, .mutable = false };
         if (root) |state| state.immutable_borrows += 1;
+        const result_type = if (operand.type == .view) reference_type: {
+            const target = try self.allocator.create(Type);
+            target.* = operand.type;
+            break :reference_type Type{ .reference = .{ .target = target, .mutable = false } };
+        } else operand.type;
         return self.newExpression(.{
-            .type = operand.type,
+            .type = result_type,
             .position = borrow_value.operator_position,
             .borrow = borrow,
             .owns_borrow = true,
@@ -6547,31 +6875,34 @@ pub const Analyzer = struct {
         mutable: bool,
     ) AnalyzeError!*Expression {
         const symbol = try self.placeRootSymbol(unary.operand, scope, unary.operator_position);
+        const state = if (symbol) |value| value.state else &self.current_self_state;
         if (mutable) {
-            if (symbol.mutability != .mutable) {
-                const message = if (symbol.control_binding)
-                    try std.fmt.allocPrint(self.allocator, "cannot mutate immutable control binding '{s}'; use 'var' in the header", .{symbol.source_name})
+            if (symbol != null and symbol.?.mutability != .mutable) {
+                const message = if (symbol.?.control_binding)
+                    try std.fmt.allocPrint(self.allocator, "cannot mutate immutable control binding '{s}'; use 'var' in the header", .{symbol.?.source_name})
                 else
-                    try std.fmt.allocPrint(self.allocator, "cannot mutably borrow immutable variable '{s}'", .{symbol.source_name});
+                    try std.fmt.allocPrint(self.allocator, "cannot mutably borrow immutable variable '{s}'", .{symbol.?.source_name});
                 return self.fail(unary.operator_position, message);
             }
-            if (symbol.state.mutable_borrow or symbol.state.immutable_borrows != 0) {
-                const message = try std.fmt.allocPrint(self.allocator, "cannot mutably borrow '{s}' because it is already borrowed", .{symbol.source_name});
-                return self.fail(unary.operator_position, message);
+            if (state.mutable_borrow or state.immutable_borrows != 0) {
+                return self.fail(unary.operator_position, "cannot mutably borrow a value because it is already borrowed");
             }
-        } else if (symbol.state.mutable_borrow) {
-            const message = try std.fmt.allocPrint(self.allocator, "cannot immutably borrow '{s}' while it is mutably borrowed", .{symbol.source_name});
-            return self.fail(unary.operator_position, message);
+        } else if (state.mutable_borrow) {
+            return self.fail(unary.operator_position, "cannot immutably borrow a value while it is mutably borrowed");
         }
-        const operand = try self.expression(unary.operand, scope);
+        const operand = if (unary.operand.value == .slice_access)
+            try self.sliceAccessExpression(unary.operand.value.slice_access, scope, true)
+        else
+            try self.expression(unary.operand, scope);
+        if (operand.value == .slice_access) operand.value.slice_access.mutable = mutable;
         if (mutable) if (self.immutableFieldInPlace(operand)) |field_candidate| {
             const message = try std.fmt.allocPrint(self.allocator, "cannot mutably borrow let field '{s}'", .{field_candidate.symbol.source_name});
             return self.fail(unary.operator_position, message);
         };
         const target = try self.allocator.create(Type);
         target.* = operand.type;
-        const borrow = Borrow{ .root = symbol.state, .mutable = mutable };
-        if (mutable) symbol.state.mutable_borrow = true else symbol.state.immutable_borrows += 1;
+        const borrow = Borrow{ .root = state, .mutable = mutable };
+        if (mutable) state.mutable_borrow = true else state.immutable_borrows += 1;
         return self.newExpression(.{
             .type = .{ .reference = .{ .target = target, .mutable = mutable } },
             .position = unary.operator_position,
@@ -6894,11 +7225,13 @@ pub const Analyzer = struct {
         ast_expression: *const Ast.Expression,
         scope: *const Scope,
         position: Source.Position,
-    ) AnalyzeError!*const Symbol {
+    ) AnalyzeError!?*const Symbol {
         const name = switch (ast_expression.value) {
             .identifier => |value| value,
+            .self => return null,
             .member_access => |member| return self.placeRootSymbol(member.object, scope, position),
             .index_access => |access| return self.placeRootSymbol(access.object, scope, position),
+            .slice_access => |access| return self.placeRootSymbol(access.object, scope, position),
             else => return self.fail(position, "a reference must borrow a variable, field, or collection element"),
         };
         const symbol = findSymbol(scope, name) orelse {
@@ -6923,12 +7256,17 @@ pub const Analyzer = struct {
     }
 
     fn isNativeLegacyReturnType(self: *const Analyzer, value: Type) Allocator.Error!bool {
+        if (value == .reference) {
+            const target = value.reference.target.*;
+            return self.isNativeResourceType(target) or isNativeScalarViewType(target);
+        }
         if (value == .optional) return self.isNativeLegacyReturnType(value.optional.*);
         if (isNativeScalarReturnType(value)) return true;
         const structure_type = switch (value) {
             .structure => |type_value| type_value,
             else => return false,
         };
+        if (self.isNativeResourceType(value)) return true;
         if (structure_type.is_class or structure_type.is_owner) return false;
         const structure = self.findStructureByGeneratedName(structure_type.generated_name) orelse return false;
         if (structure.is_generic or try self.isNonCopyableType(value)) return false;
@@ -6948,7 +7286,8 @@ pub const Analyzer = struct {
     }
 
     fn nativeStructureTransport(self: *const Analyzer, value: Type) Allocator.Error!?NativeStructureTransport {
-        const returned = if (value == .optional) value.optional.* else value;
+        const optional_returned = if (value == .optional) value.optional.* else value;
+        const returned = if (optional_returned == .reference) optional_returned.reference.target.* else optional_returned;
         const structure_type = switch (returned) {
             .structure => |type_value| type_value,
             else => return null,
@@ -6964,6 +7303,10 @@ pub const Analyzer = struct {
             .source_name = structure.source_name,
             .generated_name = structure.generated_name,
             .fields = try fields.toOwnedSlice(self.allocator),
+            .is_native_resource = structure.is_native_resource,
+            .native_module_name = structure.native_module_name,
+            .native_drop_name = structure.native_drop_name,
+            .native_drop_symbol = structure.native_drop_symbol,
         };
     }
 
@@ -6980,17 +7323,28 @@ pub const Analyzer = struct {
 
     fn isNativeParameterType(self: *const Analyzer, value: Type) Allocator.Error!bool {
         if (isNativeCallbackType(value)) return true;
+        if (isNativeScalarViewType(value)) return true;
         if (isNativeByteViewType(value)) return true;
         if (isNativeScalarParameterType(value)) return true;
         const structure_type = switch (value) {
             .structure => |type_value| type_value,
             else => return false,
         };
+        if (self.isNativeResourceType(value)) return true;
         if (structure_type.is_class or structure_type.is_owner) return false;
         const structure = self.findStructureByGeneratedName(structure_type.generated_name) orelse return false;
         if (structure.is_generic or try self.isNonCopyableType(value)) return false;
         for (structure.fields) |field| if (!isNativeStructureFieldType(field.type)) return false;
         return true;
+    }
+
+    fn isNativeResourceType(self: *const Analyzer, value: Type) bool {
+        const structure_type = switch (value) {
+            .structure => |type_value| type_value,
+            else => return false,
+        };
+        const structure = self.findStructureByGeneratedName(structure_type.generated_name) orelse return false;
+        return structure.is_native_resource;
     }
 
     fn fail(self: *Analyzer, position: Source.Position, message: []const u8) Source.Error {
@@ -7002,6 +7356,38 @@ pub const Analyzer = struct {
 fn allFieldsInitialized(initialized: []const FieldInitialization) bool {
     for (initialized) |field_initialized| if (field_initialized != .initialized) return false;
     return true;
+}
+
+fn containsIndex(values: []const usize, candidate: usize) bool {
+    for (values) |value| if (value == candidate) return true;
+    return false;
+}
+
+fn collectReturnedResourceDependencies(
+    allocator: Allocator,
+    statements_value: []const Statement,
+    output: *std.ArrayList(*BindingState),
+) Allocator.Error!void {
+    for (statements_value) |statement| switch (statement) {
+        .return_statement => |returned| if (returned) |value| {
+            for (value.resource_dependencies) |dependency| {
+                var found = false;
+                for (output.items) |existing| if (existing == dependency) {
+                    found = true;
+                    break;
+                };
+                if (!found) try output.append(allocator, dependency);
+            }
+        },
+        .if_statement => |conditional| {
+            try collectReturnedResourceDependencies(allocator, conditional.body, output);
+            for (conditional.alternatives) |alternative| try collectReturnedResourceDependencies(allocator, alternative.body, output);
+            if (conditional.else_body) |body| try collectReturnedResourceDependencies(allocator, body, output);
+        },
+        .while_statement => |loop| try collectReturnedResourceDependencies(allocator, loop.body, output),
+        .for_statement => |loop| try collectReturnedResourceDependencies(allocator, loop.body, output),
+        else => {},
+    };
 }
 
 fn generatedFieldIndex(structure: *const StructureSymbol, generated_name: []const u8) ?usize {
@@ -7077,6 +7463,14 @@ fn typeFromAnnotation(
             const length = try parseFixedArrayLength(self, array_annotation.length, position);
             break :fixed_array_type .{ .fixed_array = .{ .element = element, .length = length } };
         },
+        .view => |element_annotation| view_type: {
+            const element = try self.allocator.create(Type);
+            element.* = try typeFromAnnotation(self, element_annotation.*, position);
+            if (element.* == .void or element.* == .reference or element.* == .view) {
+                return self.fail(position, "a contiguous view requires a concrete element type");
+            }
+            break :view_type .{ .view = element };
+        },
         .reference => |reference| try typeFromReference(self, reference, position),
         .function => |function| try typeFromFunction(self, function, position),
         .optional => |contained_annotation| optional_type: {
@@ -7138,6 +7532,7 @@ fn typeFromReturn(
         .str => .str,
         .list => |element| typeFromAnnotation(self, .{ .list = element }, position),
         .fixed_array => |array| typeFromAnnotation(self, .{ .fixed_array = array }, position),
+        .view => |element| typeFromAnnotation(self, .{ .view = element }, position),
         .structure => |name| typeFromAnnotation(self, .{ .structure = name }, position),
         .generic_structure => |generic| typeFromAnnotation(self, .{ .generic_structure = generic }, position),
         .type_parameter => |name| typeFromAnnotation(self, .{ .type_parameter = name }, position),
@@ -7448,6 +7843,10 @@ fn typeEqual(left: Type, right: Type) bool {
             .fixed_array => |right_array| left_array.length == right_array.length and typeEqual(left_array.element.*, right_array.element.*),
             else => false,
         },
+        .view => |left_element| switch (right) {
+            .view => |right_element| typeEqual(left_element.*, right_element.*),
+            else => false,
+        },
         .reference => |left_reference| switch (right) {
             .reference => |right_reference| left_reference.mutable == right_reference.mutable and typeEqual(left_reference.target.*, right_reference.target.*),
             else => false,
@@ -7621,7 +8020,7 @@ fn constructorSignatures(
 fn isNativeScalarReturnType(value: Type) bool {
     return switch (value) {
         .void, .int, .int8, .int16, .int32, .uint8, .uint16, .uint32, .uint64, .float, .float64, .bool, .str => true,
-        .structure, .protocol, .enumeration, .list, .fixed_array, .reference, .function, .optional, .null => false,
+        .structure, .protocol, .enumeration, .list, .fixed_array, .view, .reference, .function, .optional, .null => false,
     };
 }
 
@@ -7634,6 +8033,17 @@ fn isNativeStructureFieldType(value: Type) bool {
 
 fn isNativeScalarParameterType(value: Type) bool {
     return value == .str or isNativeScalarReturnType(value);
+}
+
+fn isNativeScalarViewType(value: Type) bool {
+    const element = switch (value) {
+        .view => |element| element.*,
+        else => return false,
+    };
+    return switch (element) {
+        .int, .int8, .int16, .int32, .uint8, .uint16, .uint32, .uint64, .float, .float64 => true,
+        else => false,
+    };
 }
 
 fn isNativeCallbackScalarType(value: Type) bool {
@@ -7704,6 +8114,7 @@ fn typeName(value: Type) []const u8 {
         .str => "str",
         .list => "list",
         .fixed_array => "array",
+        .view => "view",
         .reference => |reference| if (reference.mutable) "reference&" else "reference@",
         .function => "func",
         .optional => "optional",
@@ -7719,6 +8130,7 @@ fn allocatedTypeName(allocator: Allocator, value: Type) Allocator.Error![]const 
         .optional => |contained| std.fmt.allocPrint(allocator, "{s}?", .{try allocatedTypeName(allocator, contained.*)}),
         .list => |element| std.fmt.allocPrint(allocator, "{s}[]", .{try allocatedTypeName(allocator, element.*)}),
         .fixed_array => |array| std.fmt.allocPrint(allocator, "{s}[{d}]", .{ try allocatedTypeName(allocator, array.element.*), array.length }),
+        .view => |element| std.fmt.allocPrint(allocator, "{s}[..]", .{try allocatedTypeName(allocator, element.*)}),
         else => typeName(value),
     };
 }
@@ -7866,6 +8278,7 @@ fn assignmentRoot(expression: *const Ast.Expression) ?AssignmentRoot {
         .identifier => |name| .{ .variable = name },
         .member_access => |member| assignmentRoot(member.object),
         .index_access => |access| assignmentRoot(access.object),
+        .slice_access => |access| assignmentRoot(access.object),
         else => null,
     };
 }
@@ -9043,10 +9456,7 @@ test "noncopyable values compose through fields enums optionals collections clas
         declaration ++ "struct Registry { static var current:Resource } func main() {}",
         "a static field cannot own a noncopyable value",
     );
-    try expectResolvedSemanticError(
-        declaration ++ "func mutate(resource:&Resource) {} func main() {}",
-        "noncopyable value 'Resource' cannot use parameter mode '&'; use '@' for read-only access",
-    );
+    try expectSemanticSuccess(declaration ++ "func mutate(resource:&Resource) {} func main() {}");
     try expectResolvedSemanticError(
         declaration ++ "func main() { let resource = Resource.open(1); let callback = func() { print(resource.handle) } }",
         "noncopyable value 'Resource' cannot be captured by a lambda",
@@ -9059,6 +9469,56 @@ test "noncopyable values compose through fields enums optionals collections clas
         declaration ++ "struct Holder { var resource:Resource } func main() { let first = Holder(resource:Resource.open(1)); let second = Holder(resource:Resource.open(2)); print(first == second) }",
         "type 'Holder' does not support equality",
     );
+}
+
+test "borrowed returns preserve provenance through functions methods and local aliases" {
+    try expectSemanticSuccess(
+        \\struct State { var value:int }
+        \\struct Owner {
+        \\    var state:State
+        \\    func inspect() @State { return @self.state }
+        \\    func edit() &State { return &self.state }
+        \\}
+        \\func inspect(owner:@Owner) @State { return @owner.state }
+        \\func wrapped(owner:@Owner) @State { return inspect(owner) }
+        \\func choose(first:@Owner, second:@Owner) @first:State { return @first.state }
+        \\func main() {
+        \\    var owner = Owner(state:State(value:1))
+        \\    let first = inspect(owner)
+        \\    let second:@State = wrapped(owner)
+        \\    print(first.value + second.value)
+        \\}
+    );
+    try expectResolvedSemanticError(
+        \\struct State { var value:int }
+        \\func choose(first:@State, second:@State) @State { return @first }
+        \\func main() {}
+    , "borrowed return provenance is ambiguous; qualify it with the parameter name");
+    try expectResolvedSemanticError(
+        \\struct State { var value:int }
+        \\func inspect(owner:@State) @missing:State { return @owner }
+        \\func main() {}
+    , "borrowed return provenance must name a compatible borrowed parameter");
+    try expectResolvedSemanticError(
+        \\struct State { var value:int }
+        \\func inspect(owner:@State) @State { return owner }
+        \\func main() {}
+    , "expected 'reference@', found 'State'");
+    try expectResolvedSemanticError(
+        \\struct State { var value:int }
+        \\func edit(owner:@State) &State { return &owner }
+        \\func main() {}
+    , "borrowed return provenance is ambiguous; qualify it with the parameter name");
+    try expectResolvedSemanticError(
+        \\struct State { var value:int }
+        \\func edit(owner:&State) &State { return &owner }
+        \\func main() { var state = State(value:1); var first = edit(state); var second = first }
+    , "cannot copy a mutable reference");
+    try expectResolvedSemanticError(
+        \\struct State { var value:int }
+        \\struct Holder { let view:@State }
+        \\func main() {}
+    , "a struct field cannot have a reference type");
 }
 
 test "noncopyable containers require explicit whole-value transfer" {

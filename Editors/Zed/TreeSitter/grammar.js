@@ -21,6 +21,7 @@ module.exports = grammar({
   externals: ($) => [$._automatic_semicolon],
   conflicts: ($) => [
     [$.array_type, $.type],
+    [$.array_type, $.view_type, $.type],
     [$.optional_type, $.type],
     [$.generic_type, $.expression],
     [$.generic_type, $.named_type],
@@ -38,6 +39,7 @@ module.exports = grammar({
           $.structure_definition,
           $.function_definition,
           $.native_function_declaration,
+          $.native_resource_declaration,
           $.public_declaration,
         ),
       ),
@@ -69,6 +71,7 @@ module.exports = grammar({
           $.structure_definition,
           $.function_definition,
           $.native_function_declaration,
+          $.native_resource_declaration,
         ),
       ),
 
@@ -86,7 +89,7 @@ module.exports = grammar({
         "func",
         field("name", $.identifier),
         $.parameter_list,
-        optional(field("return_type", choice($.void_type, $.type))),
+        optional(field("return_type", choice($.void_type, $.borrowed_return_type, $.type))),
         choice(";", $._automatic_semicolon),
       ),
 
@@ -204,7 +207,7 @@ module.exports = grammar({
         field("name", $.identifier),
         optional(field("type_parameters", $.type_parameter_list)),
         $.parameter_list,
-        optional(field("return_type", choice($.void_type, $.type))),
+        optional(field("return_type", choice($.void_type, $.borrowed_return_type, $.type))),
         field("body", $.block),
       ),
 
@@ -214,8 +217,20 @@ module.exports = grammar({
         "func",
         field("name", $.identifier),
         $.parameter_list,
-        field("return_type", choice($.void_type, $.type)),
+        field("return_type", choice($.void_type, $.borrowed_return_type, $.type)),
         choice(";", $._automatic_semicolon),
+      ),
+
+    native_resource_declaration: ($) =>
+      seq(
+        field("native", alias("native", $.identifier)),
+        field("resource", alias("resource", $.identifier)),
+        field("name", $.identifier),
+        "{",
+        "drop",
+        field("destructor", $.identifier),
+        choice(";", $._automatic_semicolon),
+        "}",
       ),
 
     void_type: (_) => "void",
@@ -294,13 +309,21 @@ module.exports = grammar({
         optional(choice(field("read_reference", "@"), field("mutable_reference", "&"))),
         field("type", $.type),
       ),
+    borrowed_return_type: ($) =>
+      seq(
+        field("mode", choice("@", "&")),
+        optional(seq(field("provenance", $.identifier), ":")),
+        field("target", $.type),
+      ),
+    reference_type: ($) =>
+      seq(field("mode", choice("@", "&")), field("target", $.type)),
     grouped_type: ($) => seq("(", field("type", $.type), ")"),
     optional_type: ($) =>
       prec.left(
         seq(
           field(
             "contained",
-            choice($.builtin_type, $.named_type, $.function_type, $.grouped_type, $.array_type),
+            choice($.builtin_type, $.named_type, $.function_type, $.grouped_type, $.array_type, $.view_type),
           ),
           "?",
         ),
@@ -312,7 +335,16 @@ module.exports = grammar({
           repeat1(choice(seq("[", "]"), seq("[", field("length", $.integer_literal), "]"))),
         ),
       ),
-    type: ($) => choice($.optional_type, $.array_type, $.grouped_type, $.function_type, $.builtin_type, $.named_type),
+    view_type: ($) =>
+      prec.left(
+        seq(
+          field("element", choice($.builtin_type, $.named_type, $.function_type, $.grouped_type)),
+          "[",
+          "..",
+          "]",
+        ),
+      ),
+    type: ($) => choice($.optional_type, $.array_type, $.view_type, $.grouped_type, $.function_type, $.builtin_type, $.named_type),
     parameter_list: ($) =>
       seq("(", optional(seq($.parameter, repeat(seq(",", $.parameter)))), ")"),
 
@@ -362,7 +394,7 @@ module.exports = grammar({
         ),
       ),
 
-    type_annotation: ($) => seq(":", field("type", $.type)),
+    type_annotation: ($) => seq(":", field("type", choice($.reference_type, $.type))),
 
     assignment_statement: ($) =>
       seq(

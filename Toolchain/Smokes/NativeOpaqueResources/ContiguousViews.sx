@@ -1,0 +1,29 @@
+use NativeOpaqueResources as Native
+
+func inspect(buffer:@Native.Buffer) {
+    let first = Native.buffer_values(buffer)
+    assert(first.count() == 4, "native view count")
+    assert(first[0] == 10 && first[-1] == 13, "native view aliases resource storage")
+    assert(Native.sum_values(first) == 46, "shared native view parameter")
+}
+
+func mutate(buffer:&Native.Buffer) {
+    var editable = Native.buffer_values_mut(buffer)
+    editable[1] = 30
+    Native.increment_values(editable)
+    assert(editable[0] == 11 && editable[1] == 31, "mutable native view parameter")
+}
+
+func exercise() {
+    var buffer = Native.create_buffer(10)
+    inspect(buffer)
+    mutate(buffer)
+    assert(Native.inspect_buffer(buffer) == 10, "view does not replace resource ownership")
+    assert(Native.live_buffers() == 1, "view does not free its resource")
+}
+
+func main() {
+    assert(Native.live_buffers() == 0, "clean start")
+    exercise()
+    assert(Native.live_buffers() == 0, "resource destroyed exactly once after views")
+}

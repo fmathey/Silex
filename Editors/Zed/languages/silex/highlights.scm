@@ -58,6 +58,10 @@
 (constructor_definition "init" @function.definition)
 (drop_definition "drop" @function.definition)
 
+(native_resource_declaration
+  "drop" @keyword
+  destructor: (identifier) @function)
+
 (super_method_expression
   method: (identifier) @function.method.call)
 
@@ -65,6 +69,10 @@
 (function_type "func" @type.builtin)
 (function_type_parameter mutable_reference: "&" @type)
 (function_type_parameter read_reference: "@" @type)
+(borrowed_return_type mode: ["@" "&"] @type)
+(borrowed_return_type provenance: (identifier) @variable.parameter)
+(reference_type mode: ["@" "&"] @type)
+(view_type) @type
 
 (native_function_declaration
   name: (identifier) @function.definition)

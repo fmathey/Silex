@@ -1,0 +1,47 @@
+func middle(values:@int[]) @int[..] {
+    return @values[1:4]
+}
+
+func wrapped(values:@int[]) @int[..] {
+    return middle(values)
+}
+
+func middle_mut(values:&int[]) &int[..] {
+    return &values[1:4]
+}
+
+func check(values:@int[]) {
+    let view = middle(values)
+    let second = wrapped(values)
+    assert(view.count() == 3, "borrowed view count")
+    assert(!view.is_empty(), "borrowed view is not empty")
+    assert(view[0] == 20, "positive borrowed view index")
+    assert(view[-1] == 40, "negative borrowed view index")
+    var total = 0
+    for value in second {
+        total += value
+    }
+    assert(total == 90, "borrowed view iteration")
+    let subview = @view[1:3]
+    assert(subview.count() == 2, "borrowed subview")
+}
+
+func mutate(values:&int[]) {
+    var view = middle_mut(values)
+    view[0] = 21
+    view[-1] = 41
+    for var value in view {
+        value += 1
+    }
+}
+
+func main() {
+    var values:int[] = [10, 20, 30, 40, 50]
+    check(values)
+    mutate(values)
+    assert(values[1] == 22, "mutable borrowed view first")
+    assert(values[3] == 42, "mutable borrowed view last")
+    let copy = values[1:4]
+    values[1] = 99
+    assert(copy[0] == 22, "ordinary slice remains owned")
+}

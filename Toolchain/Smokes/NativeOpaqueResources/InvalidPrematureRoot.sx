@@ -1,0 +1,8 @@
+use NativeOpaqueResources as Native
+
+func main() {
+    let window = Native.create_window(1)
+    let renderer = Native.create_renderer(window)
+    Native.destroy_window(window)
+    Native.destroy_renderer(renderer)
+}

@@ -1,0 +1,24 @@
+==================
+Opaque native resources
+==================
+
+pub native resource Buffer {
+    drop destroy_buffer
+}
+
+native resource Image { drop release_image }
+
+---
+
+(source_file
+  (public_declaration
+    (native_resource_declaration
+      native: (identifier)
+      resource: (identifier)
+      name: (identifier)
+      destructor: (identifier)))
+  (native_resource_declaration
+    native: (identifier)
+    resource: (identifier)
+    name: (identifier)
+    destructor: (identifier)))

@@ -767,6 +767,7 @@ pub const Resolver = struct {
             },
             .type_parameter => value,
             .list => |element| .{ .list = try self.transformTypePointer(element.*, position) },
+            .view => |element| .{ .view = try self.transformTypePointer(element.*, position) },
             .fixed_array => |array| .{ .fixed_array = .{
                 .element = try self.transformTypePointer(array.element.*, position),
                 .length = array.length,
@@ -774,6 +775,7 @@ pub const Resolver = struct {
             .reference => |reference| .{ .reference = .{
                 .target = try self.transformTypePointer(reference.target.*, position),
                 .mutable = reference.mutable,
+                .provenance = reference.provenance,
             } },
             .function => |function| function_type: {
                 var parameters: std.ArrayList(Ast.TypeName) = .empty;
@@ -814,6 +816,11 @@ pub const Resolver = struct {
             .generic_structure => |generic| .{ .generic_structure = (try self.transformType(.{ .generic_structure = generic }, position)).generic_structure },
             .type_parameter => value,
             .function => |function| .{ .function = (try self.transformType(.{ .function = function }, position)).function },
+            .reference => |reference| .{ .reference = .{
+                .target = try self.transformTypePointer(reference.target.*, position),
+                .mutable = reference.mutable,
+                .provenance = reference.provenance,
+            } },
             .optional => |contained| .{ .optional = try self.transformTypePointer(contained.*, position) },
             else => value,
         };
@@ -1890,6 +1897,7 @@ fn typeNameToReturnType(value: Ast.TypeName) Ast.ReturnType {
         .generic_structure => |generic| .{ .generic_structure = generic },
         .type_parameter => |name| .{ .type_parameter = name },
         .list => |contained| .{ .list = contained },
+        .view => |contained| .{ .view = contained },
         .fixed_array => |array| .{ .fixed_array = array },
         .reference => |reference| .{ .reference = reference },
         .function => |function| .{ .function = function },

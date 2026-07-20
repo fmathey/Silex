@@ -1,0 +1,10 @@
+use NativeOpaqueResources as Native
+
+struct Holder {
+    var buffer:Native.Buffer
+}
+
+func main() {
+    var holder = Holder(buffer:Native.create_buffer(1))
+    Native.destroy_buffer(holder.buffer)
+}

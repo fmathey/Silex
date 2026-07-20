@@ -1,0 +1,11 @@
+use NativeOpaqueResources as Native
+
+func escaped_renderer() Native.Renderer {
+    let window = Native.create_window(1)
+    return Native.create_renderer(window)
+}
+
+func main() {
+    let renderer = escaped_renderer()
+    Native.destroy_renderer(renderer)
+}

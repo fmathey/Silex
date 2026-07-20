@@ -1,0 +1,91 @@
+use NativeOpaqueResources as Native
+
+struct ComposedWindow {
+    var renderer:Native.Renderer
+    var handle:Native.WindowHandle
+
+    drop {
+        assert(Native.lifetime_log_count() == 0, "custom drop runs before native fields")
+    }
+}
+
+struct BufferPair {
+    var first:Native.Buffer
+    var second:Native.Buffer
+}
+
+func branch_pair(reverse:bool) {
+    if reverse {
+        let second = Native.create_buffer(2)
+        let first = Native.create_buffer(1)
+        let pair = BufferPair(first:move first, second:move second)
+        return
+    }
+    let first = Native.create_buffer(1)
+    let second = Native.create_buffer(2)
+    let pair = BufferPair(first:move first, second:move second)
+}
+
+func composed_window() {
+    let handle = Native.create_window(80)
+    let renderer = Native.create_renderer(handle)
+    let window = ComposedWindow(
+        handle:move handle,
+        renderer:move renderer,
+    )
+}
+
+func automatic_drop() {
+    let buffer = Native.create_buffer(10)
+    assert(Native.inspect_buffer(buffer) == 10, "opaque read borrow")
+}
+
+func main() {
+    automatic_drop()
+    assert(Native.live_buffers() == 0, "automatic opaque destruction")
+
+    var changed = Native.create_buffer(20)
+    Native.update_buffer(changed, 21)
+    assert(Native.inspect_buffer(changed) == 21, "opaque mutable borrow")
+    Native.destroy_buffer(changed)
+    assert(Native.live_buffers() == 0, "explicit terminal destruction")
+
+    var absent = Native.maybe_buffer(false, 30)
+    assert(absent == null, "opaque optional absence")
+
+    let consumed = Native.create_buffer(40)
+    Native.consume_buffer(move consumed)
+    assert(Native.live_buffers() == 0, "opaque ownership transfer")
+
+    match Native.try_buffer(true, 50) {
+        success(buffer) => { assert(Native.inspect_buffer(buffer) == 50, "opaque Result success") }
+        failure(error) => { panic(error) }
+    }
+    assert(Native.live_buffers() == 0, "opaque Result adoption")
+    match Native.try_buffer(false, 60) {
+        success(buffer) => { Native.destroy_buffer(buffer) }
+        failure(error) => { assert(error == "unavailable", "opaque Result failure") }
+    }
+    assert(Native.live_buffers() == 0, "opaque Result failure cleanup")
+
+    var replaced = Native.create_buffer(70)
+    replaced = Native.create_buffer(71)
+    assert(Native.live_buffers() == 2, "opaque replacement preserves reverse acquisition order")
+    Native.destroy_buffer(replaced)
+    assert(Native.live_buffers() == 0, "opaque replacement destroys both owners in reverse order")
+
+    Native.reset_lifetime_log()
+    composed_window()
+    assert(Native.lifetime_log_count() == 2, "composed native resources destroyed")
+    assert(Native.lifetime_log_at(0) == 2, "dependent renderer destroyed first")
+    assert(Native.lifetime_log_at(1) == 1, "window root destroyed last")
+
+    Native.reset_lifetime_log()
+    branch_pair(false)
+    assert(Native.lifetime_log_at(0) == 102, "later branch acquisition destroyed first")
+    assert(Native.lifetime_log_at(1) == 101, "earlier branch acquisition destroyed last")
+    Native.reset_lifetime_log()
+    branch_pair(true)
+    assert(Native.lifetime_log_at(0) == 101, "reversed branch order travels with value")
+    assert(Native.lifetime_log_at(1) == 102, "field order does not replace acquisition order")
+}

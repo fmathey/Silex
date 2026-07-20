@@ -44,6 +44,98 @@ and require an explicit return type, including `void`. They also require a
 named module whose own `@Module.json` or an ancestor manifest has a `native`
 section. A standalone main source cannot declare one.
 
+## Opaque native resources
+
+A module associates a nominal opaque type with its sole native destructor:
+
+```sx
+pub native resource Buffer {
+    drop destroy_buffer
+}
+```
+
+The declaration may be private by omitting `pub`. It is top-level,
+non-generic, has no fields, initializer, inheritance or extension form, and is
+available only in a named module backed by native sources. Silex cannot inspect
+the pointer, convert it to an integer, or construct a `Buffer`; only a non-null
+native return creates its unique owner.
+
+The generated C header exposes an incomplete nominal type and the attached
+operation:
+
+```c
+typedef struct SilexNative_Buffers_Buffer SilexNative_Buffers_Buffer;
+void silexNative_Buffers_destroy_buffer(
+    SilexNative_Buffers_Buffer* resource
+);
+```
+
+Distinct declarations produce distinct incomplete C types. The native module
+defines their contents privately. A `Buffer` return transfers ownership to
+Silex; `@Buffer` passes a constant borrowed pointer, `&Buffer` a mutable
+borrowed pointer, and a value parameter consumes ownership and requires
+`move`. The attached destructor is the sole exception:
+`destroy_buffer(buffer)` consumes a complete owner implicitly and makes every
+later use invalid.
+
+`Buffer?` uses `false` plus a null output pointer for absence.
+`Result<Buffer,E>` stores a resource pointer in the corresponding branch. A
+null active resource, a resource in an inactive or absent branch, or an unknown
+tag is a fatal contract violation. Before reporting it, and when an exception
+crosses the C symbol, the bridge invokes the attached destructor for every
+non-null resource not adopted by a live Silex value. Ordinary scope,
+replacement, early return and `move` then provide exactly-once destruction.
+
+### Composition and acquisition order
+
+When several unique native resources remain in one value, their destruction is
+defined by the order in which the program actually acquired them, never by the
+declaration order of structure fields. Each adopted handle carries its runtime
+acquisition record through `move`, named structure initialization, returns and
+noncopyable containers. Remaining resources are released in reverse acquisition
+order; a branch may therefore give two values of the same structure type a
+different destruction order.
+
+A native function returning a unique resource conservatively makes that result
+depend on every unique resource root passed through `@` or `&`. The dependency
+is propagated through Silex wrappers and transfers. A dependent cannot outlive,
+consume, replace or explicitly destroy its root. Destroying the dependent first
+ends the relation and then permits terminal destruction of the root. Returning
+a dependent whose root is local is rejected.
+
+The generated C++ retains prior live acquisition records behind the opaque
+handles. Consequently, reordering fields cannot make a root disappear before a
+later acquisition, including for independent resources. An aggregate `drop`
+block runs first while all fields remain alive; automatic native cleanup follows
+it. No annotation on fields and no manual `clear` call participates in this
+order.
+
+### Borrowed returns
+
+Silex signatures can return a controlled shared alias as `@T` or an exclusive
+mutable alias as `&T`. The return is tied to the unique compatible borrowed
+parameter, or to a named parameter in an ambiguous signature such as
+`@owner:State`. Successive Silex wrappers preserve the actual root.
+
+The alias may live in a local binding and uses direct member access. It cannot
+be stored in an aggregate or outlive its root; while it is alive, incompatible
+access, mutation, replacement, `move`, and destruction of the root are refused.
+The generated C++ uses a typed pointer internally without exposing pointers or
+a dereference operation to Silex.
+
+### Contiguous borrowed views
+
+A native function may return contiguous storage owned by an opaque resource as
+`@T[..]` or `&T[..]`. The result follows the borrowed-return provenance of that
+resource and therefore prevents incompatible mutation, `move`, or destruction
+while the view lives. No pointer is observable in Silex.
+
+The C symbol returns through `const T**`/`T**` and `int64_t* output_count`.
+The bridge accepts a null pointer only for an empty view, rejects negative or
+unrepresentable counts, and never copies, adopts, or frees the native memory.
+Conversely, native parameters `@T[..]` and `&T[..]` become a borrowed pointer
+plus signed element count valid only during the call.
+
 ## Admitted signatures
 
 The native boundary is deliberately narrower than the Silex type system. The
@@ -58,6 +150,9 @@ following table is exhaustive for the current language:
 | `float`/`float32`, `float64` | yes | yes | C `float`, C `double` |
 | `str` | yes | yes | borrowed UTF-8 bytes for input; owned bytes for output |
 | admitted flat `struct` | yes | yes | generated C transport passed through a pointer |
+| opaque `native resource` | yes, by value/`@`/`&` | yes | distinct incomplete C type pointer |
+| `@Resource` / `&Resource` | no | yes | borrowed `const`/mutable native resource pointer tied to the matching parameter |
+| `@T[..]` / `&T[..]` | yes | yes | borrowed `const T*`/`T*` plus `int64_t` element count; returns use output parameters |
 | `uint8[]` | yes | yes | borrowed byte view for input; owned byte buffer for output |
 | `uint8[N]` | yes | no | borrowed byte view and length |
 | scalar callback | yes | no | function pointer plus opaque context |
@@ -72,8 +167,9 @@ same transferable return types in both branches, additionally permits an owned
 `uint8[]` branch, and permits `void` only for `T`.
 
 The following types are not native signature types: arbitrary lists and fixed
-arrays, nested structures, enums, classes, protocols, references (`@T` and
-`&T`), pointers, optional parameters, `Result` parameters, nested optionals or
+arrays, nested structures, enums, classes, protocols, references other than
+admitted opaque resources and numeric contiguous views, pointers, optional parameters,
+`Result` parameters, nested optionals or
 Results, generic structures, structures with `drop`, and deferred callbacks.
 The compiler rejects these declarations before compiling the native sources.
 
@@ -146,6 +242,12 @@ Only a dynamic `uint8[]` can be returned. The C symbol receives
 with `malloc`, then Silex copies and frees the bytes exactly once. No UTF-8
 validation or terminator is involved. Fixed-array returns, adoption without a
 copy, and native mutation of caller-owned bytes are not supported.
+
+Native contiguous views admit numeric scalar elements (`int`, the fixed-width
+signed and unsigned integers, `float`, and `float64`). They exclude `bool`,
+`str`, resources, structures, enums, classes, protocols, and collections.
+Unlike the owned `uint8[]` return above, a borrowed view has no allocation or
+`free` protocol and must be tied to a borrowed opaque resource parameter.
 
 ## Synchronous callbacks
 

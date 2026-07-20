@@ -98,7 +98,8 @@ moved, or passed to an `&T` parameter.
 `@` works with copyable and noncopyable value types, including unique
 resources. It is invalid for a class, whose ordinary value already carries a
 shared identity, and for a dynamic protocol value that may hide such an
-identity. Native functions do not declare `@T` parameters.
+identity. At the native boundary, `@` is restricted to opaque resources and
+contiguous views.
 
 The mode remains part of function types, but it is not an overload selector at
 the call site. Declarations with the same name and parameter types cannot differ
@@ -146,12 +147,37 @@ the duration of that call, and writes follow the function body's
 normal execution order. An `&T` parameter cannot overlap an `@T` parameter on
 the same root in that call.
 
-`@T` and `&T` exist only in a function or method parameter or function type.
-Silex has no general reference type: references cannot be declared locally,
-stored, returned, or dereferenced. Ordinary assignment is the value-copy
-operation for ordinary values. The distinct `move name` expression transfers a
-complete unique-resource local or parameter; it is not a general replacement
-for copying.
+`@T` and `&T` can also describe a controlled return and a local alias. A
+function writes the mode before its return type and returns an explicit borrow:
+
+```sx
+func inspect(owner:@Owner) @State {
+    return @owner.state
+}
+
+func edit(owner:&Owner) &State {
+    return &owner.state
+}
+```
+
+The provenance is elided when exactly one compatible borrowed parameter exists.
+With several possible roots it is qualified symbolically, for example
+`@first:State`. A shared result may originate from `@` or `&`; a mutable result
+requires `&`. Calls propagate the actual root through successive wrappers.
+
+The result can be inferred or annotated locally as `let view:@State` or
+`var edit:&State`. Shared aliases can coexist and be copied; mutable aliases are
+exclusive and cannot be copied. Member access stays direct (`view.field`) with
+no visible dereference operator. The alias keeps its root borrowed until the end
+of its lexical scope, preventing incompatible access, mutation, replacement,
+`move`, or destruction.
+
+Reference types remain forbidden in fields, collections, optionals, enums,
+static storage, lambda captures and deferred callbacks. They are controlled
+aliases, not pointers or independently storable values. Ordinary assignment is
+the value-copy operation for ordinary values. The distinct `move name`
+expression transfers a complete unique-resource local or parameter; it is not
+a general replacement for copying.
 
 A class reference already has shared identity and cannot be declared as an
 `&ClassName` parameter. `&ClassName?` remains valid because it aliases the
@@ -161,3 +187,25 @@ a second reference layer around the class instance. See [Classes](Classes.md).
 The lexical borrows held by a lambda are distinct from an `&T` parameter
 binding: they are detected automatically, may last for several calls
 inside their valid scope, and can never escape that scope.
+
+## Contiguous borrowed views
+
+`T[..]` is the non-owning target for contiguous storage. It never appears by
+itself: `@T[..]` is a bounded read view and `&T[..]` is a bounded exclusive
+mutable view. Neither form exposes an address, owns storage, changes capacity,
+or has a destructor.
+
+```sx
+let middle = @values[1:4]
+var editable = &values[1:4]
+```
+
+Both bounds are required and use the ordinary slice normalization. A subview
+uses the same syntax on an existing view and retains the original borrow root.
+Views provide `count()`, `is_empty()`, positive and negative indexing, and
+iteration. A mutable view additionally permits indexed writes and `for var`.
+Operations that resize, reorder, remove, or transfer elements are unavailable.
+
+The ordinary expression `values[start:end]` remains different: it copies into
+an independent `T[]`. A borrowed view instead keeps the source collection,
+array, or native resource borrowed until the view's lexical scope ends.

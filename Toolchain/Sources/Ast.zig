@@ -55,6 +55,7 @@ pub const TypeName = union(enum) {
     type_parameter: []const u8,
     list: *TypeName,
     fixed_array: FixedArray,
+    view: *TypeName,
     reference: Reference,
     function: FunctionType,
     optional: *TypeName,
@@ -72,6 +73,7 @@ pub const TypeName = union(enum) {
     pub const Reference = struct {
         target: *TypeName,
         mutable: bool,
+        provenance: ?[]const u8 = null,
     };
 
     pub const FunctionType = struct {
@@ -103,6 +105,7 @@ pub const ReturnType = union(enum) {
     type_parameter: []const u8,
     list: *TypeName,
     fixed_array: TypeName.FixedArray,
+    view: *TypeName,
     reference: TypeName.Reference,
     function: TypeName.FunctionType,
     optional: *TypeName,
@@ -520,6 +523,8 @@ pub const Use = struct {
 pub const Structure = struct {
     is_public: bool = false,
     is_class: bool = false,
+    is_native_resource: bool = false,
+    native_drop_name: ?[]const u8 = null,
     position: Source.Position,
     name: []const u8,
     name_position: Source.Position,
@@ -585,6 +590,7 @@ pub const Parameter = struct {
 pub const Function = struct {
     is_public: bool = false,
     is_native: bool = false,
+    is_native_resource_drop: bool = false,
     member_visibility: ?MemberVisibility = null,
     is_override: bool = false,
     is_static: bool = false,

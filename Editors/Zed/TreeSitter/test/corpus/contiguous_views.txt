@@ -1,0 +1,63 @@
+==================
+Borrowed contiguous views
+==================
+
+native func values(resource:@Buffer) @int[..]
+native func values_mut(resource:&Buffer) &int[..]
+func middle(values:@int[]) @int[..] {
+    return @values[1:3]
+}
+
+---
+
+(source_file
+  (native_function_declaration
+    native: (identifier)
+    name: (identifier)
+    (parameter_list
+      (parameter
+        name: (identifier)
+        type: (type
+          (named_type
+            (type_identifier)))))
+    return_type: (borrowed_return_type
+      target: (type
+        (view_type
+          element: (builtin_type)))))
+  (native_function_declaration
+    native: (identifier)
+    name: (identifier)
+    (parameter_list
+      (parameter
+        name: (identifier)
+        type: (type
+          (named_type
+            (type_identifier)))))
+    return_type: (borrowed_return_type
+      target: (type
+        (view_type
+          element: (builtin_type)))))
+  (function_definition
+    name: (identifier)
+    (parameter_list
+      (parameter
+        name: (identifier)
+        type: (type
+          (array_type
+            element: (builtin_type)))))
+    return_type: (borrowed_return_type
+      target: (type
+        (view_type
+          element: (builtin_type))))
+    body: (block
+      (statement
+        (return_statement
+          value: (expression
+            (read_reference_expression
+              operand: (expression
+                (slice_expression
+                  object: (identifier)
+                  start: (expression
+                    (integer_literal))
+                  end: (expression
+                    (integer_literal)))))))))))

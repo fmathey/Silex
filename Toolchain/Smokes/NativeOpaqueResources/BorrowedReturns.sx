@@ -1,0 +1,82 @@
+use NativeOpaqueResources as Native
+
+struct State {
+    var value:int
+}
+
+struct Owner {
+    let resource:Native.Buffer
+    var state:State
+
+    func inspect() @State {
+        return @self.state
+    }
+
+    func edit() &State {
+        return &self.state
+    }
+}
+
+func inspect(owner:@Owner) @State {
+    return @owner.state
+}
+
+func inspect_again(owner:@Owner) @State {
+    return inspect(owner)
+}
+
+func edit(owner:&Owner) &State {
+    return &owner.state
+}
+
+func choose(first:@Owner, second:@Owner, use_first:bool) @first:State {
+    if use_first {
+        return @first.state
+    }
+    return @first.state
+}
+
+func check_shared(owner:@Owner, other:@Owner) {
+    let first = inspect(owner)
+    let second = inspect_again(owner)
+    let qualified = choose(owner, other, true)
+    let by_self = owner.inspect()
+    assert(first.value == 41, "first shared borrowed return")
+    assert(second.value == 41, "second shared borrowed return")
+    assert(qualified.value == 41, "qualified borrowed return")
+    assert(by_self.value == 41, "self borrowed return")
+}
+
+func mutate(owner:&Owner) {
+    var editable = edit(owner)
+    editable.value = 42
+}
+
+func mutate_by_self(owner:&Owner) {
+    var editable = owner.edit()
+    editable.value = 43
+}
+
+func check_final(owner:@Owner) {
+    let final = inspect(owner)
+    assert(final.value == 42, "mutable borrowed return")
+}
+
+func exercise() {
+    var owner = Owner(resource:Native.create_buffer(1), state:State(value:41))
+    var other = Owner(resource:Native.create_buffer(2), state:State(value:7))
+    check_shared(owner, other)
+    mutate(owner)
+    mutate_by_self(owner)
+    let final = inspect(owner)
+    assert(final.value == 43, "mutable self borrowed return")
+    assert(Native.live_buffers() == 2, "owners remain alive while aliases are scoped")
+    let native_alias = Native.borrow_buffer(owner.resource)
+    assert(Native.inspect_buffer(native_alias) == 1, "native borrowed return")
+}
+
+func main() {
+    assert(Native.live_buffers() == 0, "clean start")
+    exercise()
+    assert(Native.live_buffers() == 0, "resources destroyed exactly once")
+}

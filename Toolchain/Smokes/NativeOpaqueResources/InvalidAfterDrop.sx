@@ -1,0 +1,7 @@
+use NativeOpaqueResources as Native
+
+func main() {
+    let buffer = Native.create_buffer(1)
+    Native.destroy_buffer(buffer)
+    Native.inspect_buffer(buffer)
+}

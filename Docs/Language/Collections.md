@@ -55,6 +55,11 @@ result is an independent dynamic list; it is not a view into the source.
 Because slicing copies, it is unavailable when the element type is
 noncopyable.
 
+Prefixing the same slice with `@` or `&` creates a non-owning contiguous view
+instead of a list copy: `@values[1:3]` reads through `@T[..]`, while
+`&values[1:3]` writes through `&T[..]`. See
+[Values and mutation](Values-and-References.md#contiguous-borrowed-views).
+
 Dynamic lists also provide `append`, `prepend`, `insert`, `take`,
 `take_first`, `take_last`, and `clear`. `append` accepts one compatible element
 or a compatible sequence. Assigning a list, passing it to an ordinary

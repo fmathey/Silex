@@ -768,6 +768,10 @@ fn appendAstTypeName(allocator: Allocator, output: *std.ArrayList(u8), type_name
             try output.appendSlice(allocator, array.length);
             try output.append(allocator, ']');
         },
+        .view => |element| {
+            try appendAstTypeName(allocator, output, element.*);
+            try output.appendSlice(allocator, "[..]");
+        },
         .reference => |reference| {
             try output.append(allocator, if (reference.mutable) '&' else '@');
             try appendAstTypeName(allocator, output, reference.target.*);
@@ -2417,6 +2421,7 @@ fn astTypeName(type_name: Ast.TypeName) []const u8 {
         .type_parameter => |name| name,
         .list => |element| astTypeName(element.*),
         .fixed_array => |array| astTypeName(array.element.*),
+        .view => |element| astTypeName(element.*),
         .reference => |reference| astTypeName(reference.target.*),
         .function => "func",
         .optional => |contained| astTypeName(contained.*),
@@ -2427,6 +2432,7 @@ fn astCollectionKind(type_name: Ast.TypeName) ?CollectionKind {
     return switch (type_name) {
         .list => .list,
         .fixed_array => .fixed_array,
+        .view => .list,
         .reference => |reference| astCollectionKind(reference.target.*),
         else => null,
     };
