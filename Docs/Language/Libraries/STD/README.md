@@ -20,6 +20,8 @@ func main() {
   simulations, and tests.
 - [Console](Console.md) — text output and optional interactive-terminal
   display control.
+- [System](System.md) — portable structured errors for system resources and
+  I/O.
 - [Time](Time/README.md) — monotonic elapsed-time and logical-loop utilities.
   - [Stopwatch](Time/Stopwatch.md) measures bounded real durations.
   - [Clock](Time/Clock.md) drives scaled and pausable logical time.

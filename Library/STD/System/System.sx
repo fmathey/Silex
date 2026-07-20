@@ -1,0 +1,40 @@
+pub enum ErrorKind {
+    not_found
+    already_exists
+    permission_denied
+    invalid_input
+    invalid_data
+    name_too_long
+    unexpected_end
+    limit_exceeded
+    not_directory
+    is_directory
+    directory_not_empty
+    resource_busy
+    resource_exhausted
+    too_many_open_files
+    read_only_file_system
+    cross_device
+    interrupted
+    would_block
+    timed_out
+    broken_pipe
+    message_too_large
+    address_in_use
+    address_unavailable
+    network_unreachable
+    host_unreachable
+    connection_refused
+    connection_aborted
+    connection_reset
+    not_connected
+    unsupported
+    other
+}
+
+pub struct Error {
+    let kind:ErrorKind
+    let operation:str
+    let subject:str?
+    let detail:str
+}

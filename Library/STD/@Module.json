@@ -5,6 +5,7 @@
         "@Native/Console.cpp",
         "@Native/Session.cpp",
         "@Native/Randomizer.cpp",
+        "@Native/System.cpp",
         "@Native/Time.cpp"
       ]
     }

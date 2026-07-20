@@ -98,6 +98,23 @@ pub fn build(b: *std.Build) void {
         .name = "silex-console-session-integration",
         .root_module = console_session_test_module,
     });
+    const system_error_test_module = b.createModule(.{
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .link_libcpp = true,
+    });
+    system_error_test_module.addCSourceFiles(.{
+        .files = &.{
+            "Tests/SystemErrorIntegration.cpp",
+            "../Library/STD/@Native/System.cpp",
+        },
+        .flags = &.{ "-std=c++23", "-Wall", "-Wextra", "-Werror" },
+    });
+    const system_error_integration = b.addExecutable(.{
+        .name = "silex-system-error-integration",
+        .root_module = system_error_test_module,
+    });
     const clean_library_install = b.addExecutable(.{
         .name = "silex-clean-library-install",
         .root_module = b.createModule(.{
@@ -2229,6 +2246,8 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&private_public_define_conflict_command.step);
     test_step.dependOn(&transitive_native_interface_command.step);
     test_step.dependOn(&invalid_public_include_path_command.step);
+    const system_error_test_command = b.addRunArtifact(system_error_integration);
+    test_step.dependOn(&system_error_test_command.step);
 
     const smoke_command = b.addRunArtifact(executable);
     smoke_command.step.dependOn(b.getInstallStep());
@@ -3217,9 +3236,14 @@ pub fn build(b: *std.Build) void {
     native_contiguous_views_smoke_command.step.dependOn(&contiguous_views_smoke_command.step);
     native_contiguous_views_smoke_command.addArgs(&.{ "run", "Smokes/NativeOpaqueResources/ContiguousViews.sx" });
 
+    const system_error_smoke_command = b.addRunArtifact(executable);
+    system_error_smoke_command.step.dependOn(&native_contiguous_views_smoke_command.step);
+    system_error_smoke_command.addArgs(&.{ "run", "Smokes/SystemErrors.sx" });
+    system_error_smoke_command.expectStdOutEqual(hostText(b, "system errors ok\n"));
+
     const smoke_step = b.step("smoke", "Compile and run the smoke program");
     smoke_step.dependOn(b.getInstallStep());
-    smoke_step.dependOn(&native_contiguous_views_smoke_command.step);
+    smoke_step.dependOn(&system_error_smoke_command.step);
 
     const benchmark_suffix = if (b.graph.host.result.os.tag == .windows) ".exe" else "";
     const silex_benchmark_path = b.fmt("zig-out/bin/IntegerLoopsSilex{s}", .{benchmark_suffix});
@@ -3567,8 +3591,22 @@ pub fn build(b: *std.Build) void {
         "-o",      ".silex/cross-native-smoke/IsolatedSTD-x86_64-windows.exe",
     });
 
+    const cross_system_error_linux_smoke_command = b.addRunArtifact(executable);
+    cross_system_error_linux_smoke_command.step.dependOn(&cross_isolated_std_windows_smoke_command.step);
+    cross_system_error_linux_smoke_command.addArgs(&.{
+        "compile", "Smokes/SystemErrors.sx",                         "--target", "x86_64-linux-musl",
+        "-o",      ".silex/cross-native-smoke/SystemErrors-x86_64-linux",
+    });
+
+    const cross_system_error_windows_smoke_command = b.addRunArtifact(executable);
+    cross_system_error_windows_smoke_command.step.dependOn(&cross_system_error_linux_smoke_command.step);
+    cross_system_error_windows_smoke_command.addArgs(&.{
+        "compile", "Smokes/SystemErrors.sx",                               "--target", "x86_64-windows-gnu",
+        "-o",      ".silex/cross-native-smoke/SystemErrors-x86_64-windows.exe",
+    });
+
     const cross_isolated_time_linux_smoke_command = b.addRunArtifact(executable);
-    cross_isolated_time_linux_smoke_command.step.dependOn(&cross_isolated_std_windows_smoke_command.step);
+    cross_isolated_time_linux_smoke_command.step.dependOn(&cross_system_error_windows_smoke_command.step);
     cross_isolated_time_linux_smoke_command.addArgs(&.{
         "compile", "Smokes/IsolatedTime/Main.sx",                         "--target", "x86_64-linux-musl",
         "-o",      ".silex/cross-native-smoke/IsolatedTime-x86_64-linux",
