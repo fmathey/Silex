@@ -16,6 +16,8 @@ func main() {
 
 ## APIs
 
+- [Algorithms](Algorithms.md) — bounded generic in-place algorithms over
+  mutable contiguous views.
 - [Randomizer](Randomizer.md) — reproducible pseudo-random values for games,
   simulations, and tests.
 - [Console](Console.md) — text output and optional interactive-terminal

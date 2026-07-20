@@ -1,0 +1,27 @@
+use STD.Algorithms.sort
+
+struct Token {
+    let value:int
+
+    drop {
+        print(self.value)
+    }
+}
+
+func main() {
+    var tokens:Token[] = [
+        Token(value:1),
+        Token(value:2),
+        Token(value:3),
+        Token(value:4),
+    ]
+    var comparisons = 0
+    var view = &tokens[0:tokens.count()]
+    sort<Token>(view, func(left:@Token, right:@Token) bool {
+        comparisons++
+                if comparisons == 3 {
+                    panic("comparator panic")
+                }
+        return left.value < right.value
+    })
+}

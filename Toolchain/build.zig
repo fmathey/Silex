@@ -3255,8 +3255,22 @@ pub fn build(b: *std.Build) void {
     native_contiguous_views_smoke_command.step.dependOn(&contiguous_views_smoke_command.step);
     native_contiguous_views_smoke_command.addArgs(&.{ "run", "Smokes/NativeOpaqueResources/ContiguousViews.sx" });
 
+    const algorithms_smoke_command = b.addRunArtifact(executable);
+    algorithms_smoke_command.step.dependOn(&native_contiguous_views_smoke_command.step);
+    algorithms_smoke_command.addArgs(&.{ "run", "Smokes/Algorithms.sx" });
+
+    const algorithms_comparator_panic_command = b.addRunArtifact(executable);
+    algorithms_comparator_panic_command.step.dependOn(&algorithms_smoke_command.step);
+    algorithms_comparator_panic_command.addArgs(&.{ "run", "Smokes/AlgorithmsComparatorPanic.sx" });
+    algorithms_comparator_panic_command.expectExitCode(1);
+    algorithms_comparator_panic_command.expectStdOutEqual(hostText(b, ""));
+    algorithms_comparator_panic_command.expectStdErrEqual(hostText(
+        b,
+        b.fmt("{s}:23:21: runtime error: comparator panic\n", .{b.pathFromRoot("Smokes/AlgorithmsComparatorPanic.sx")}),
+    ));
+
     const system_error_smoke_command = b.addRunArtifact(executable);
-    system_error_smoke_command.step.dependOn(&native_contiguous_views_smoke_command.step);
+    system_error_smoke_command.step.dependOn(&algorithms_comparator_panic_command.step);
     system_error_smoke_command.addArgs(&.{ "run", "Smokes/SystemErrors.sx" });
     system_error_smoke_command.expectStdOutEqual(hostText(b, "system errors ok\n"));
 

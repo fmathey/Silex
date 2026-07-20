@@ -5028,7 +5028,8 @@ pub const Analyzer = struct {
         const allows = switch (operation) {
             .count => collection_type == .str or element_type != null,
             .is_empty => element_type != null,
-            .replace, .swap, .reverse => element_type != null and collection_type != .view,
+            .swap => element_type != null,
+            .replace, .reverse => element_type != null and collection_type != .view,
             .append, .append_range, .prepend, .insert, .take, .take_first, .take_last, .clear => collection_type == .list,
         };
         if (!allows) {
@@ -9560,6 +9561,22 @@ test "noncopyable containers require explicit whole-value transfer" {
     try expectResolvedSemanticError(
         "protocol Stored {} struct Resource { let handle:int; drop {} } struct Holder : Stored { var resource:Resource } func erase(value:Stored) {} func main() { let holder = Holder(resource:Resource(handle:1)); erase(move holder) }",
         "noncopyable value 'Holder' cannot be converted to dynamic protocol value 'Stored'",
+    );
+}
+
+test "mutable contiguous views can swap noncopyable elements" {
+    try expectSemanticSuccess(
+        \\struct Resource { let handle:int; drop {} }
+        \\func exchange(values:&Resource[..]) { values.swap(0, 1) }
+        \\func main() {
+        \\    var values:Resource[] = [Resource(handle:1), Resource(handle:2)]
+        \\    var view = &values[0:2]
+        \\    exchange(view)
+        \\}
+    );
+    try expectResolvedSemanticError(
+        "func exchange(values:@int[..]) { values.swap(0, 1) } func main() {}",
+        "cannot call mutating method 'swap' on immutable value 'values'",
     );
 }
 

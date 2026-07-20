@@ -1,0 +1,149 @@
+use STD.Algorithms.sort
+
+struct Token {
+    let value:int
+
+    drop {}
+}
+
+func main() {
+    var ascending:func(@int, @int) bool = func(left:@int, right:@int) bool {
+        return left < right
+    }
+    var descending:func(@int, @int) bool = func(left:@int, right:@int) bool {
+        return left > right
+    }
+    var token_before:func(@Token, @Token) bool = func(left:@Token, right:@Token) bool {
+        return left.value < right.value
+    }
+    var always_true:func(@int, @int) bool = func(left:@int, right:@int) bool {
+        return true
+    }
+
+    var empty:int[] = []
+    var empty_calls = 0
+    if true {
+        var empty_view = &empty[0:empty.count()]
+        sort<int>(empty_view, func(left:@int, right:@int) bool {
+            empty_calls++
+                    return left < right
+                })
+    }
+    assert(empty_calls == 0, "empty view does not compare")
+
+    var single:int[1] = [7]
+    var single_calls = 0
+    if true {
+        var single_view = &single[0:single.count()]
+        sort<int>(single_view, func(left:@int, right:@int) bool {
+            single_calls++
+                    return left < right
+                })
+    }
+    assert(single_calls == 0 && single[0] == 7, "single element does not compare")
+
+    var ordered:int[] = [1, 2, 3, 4, 5, 6]
+    if true {
+        var ordered_view = &ordered[0:ordered.count()]
+        sort<int>(ordered_view, ascending)
+    }
+    assert(ordered ==[1, 2, 3, 4, 5, 6], "already ordered")
+
+    var reversed:int[] = [6, 5, 4, 3, 2, 1]
+    if true {
+        var reversed_view = &reversed[0:reversed.count()]
+        sort<int>(reversed_view, ascending)
+    }
+    assert(reversed ==[1, 2, 3, 4, 5, 6], "reversed")
+
+    var duplicates:int[] = [3, 1, 2, 3, 2, 1, 3]
+    if true {
+        var duplicates_view = &duplicates[0:duplicates.count()]
+        sort<int>(duplicates_view, ascending)
+    }
+    assert(duplicates ==[1, 1, 2, 2, 3, 3, 3], "duplicates")
+
+    if true {
+        var duplicates_view = &duplicates[0:duplicates.count()]
+        sort<int>(duplicates_view, descending)
+    }
+    assert(duplicates ==[3, 3, 3, 2, 2, 1, 1], "descending")
+
+    var partial:int[7] = [90, 5, 4, 3, 2, 1, 80]
+    if true {
+        var partial_view = &partial[1:6]
+        sort<int>(partial_view, ascending)
+    }
+    assert(partial[0] == 90 && partial[1] == 1 && partial[2] == 2, "fixed-array sub-view first")
+    assert(
+        partial[3] == 3 && partial[4] == 4 && partial[5] == 5 && partial[6] == 80,
+        "fixed-array sub-view last"
+    )
+
+    var tokens:Token[] = [
+        Token(value:4),
+        Token(value:1),
+        Token(value:3),
+        Token(value:2),
+    ]
+    if true {
+        var tokens_view = &tokens[0:tokens.count()]
+        sort<Token>(tokens_view, token_before)
+    }
+    assert(tokens[0].value == 1 && tokens[1].value == 2, "noncopyable first half")
+    assert(tokens[2].value == 3 && tokens[3].value == 4, "noncopyable second half")
+
+    var adversarial:int[] = [4, 1, 4, 2, 3, 2]
+    if true {
+        var adversarial_view = &adversarial[0:adversarial.count()]
+        sort<int>(adversarial_view, always_true)
+        sort<int>(adversarial_view, ascending)
+    }
+    assert(adversarial ==[1, 2, 2, 3, 4, 4], "invalid comparator preserves elements")
+
+    var size = 2
+    while size <= 256 {
+        var values:int[] = []
+        var index = 0
+        while index < size {
+            values.append(index)
+            index++
+        }
+        var comparisons = 0
+        var values_view = &values[0:values.count()]
+        sort<int>(values_view, func(left:@int, right:@int) bool {
+            comparisons++
+                    return left < right
+                })
+        assert(comparisons <= size * 20, "bounded ordered comparisons")
+
+        var reversed_values:int[] = []
+        index = 0
+        while index < size {
+            reversed_values.append(size - index)
+            index++
+        }
+        var reversed_comparisons = 0
+        var reversed_values_view = &reversed_values[0:reversed_values.count()]
+        sort<int>(reversed_values_view, func(left:@int, right:@int) bool {
+            reversed_comparisons++
+                    return left < right
+                })
+        assert(reversed_comparisons <= size * 20, "bounded reversed comparisons")
+
+        var invalid_values:int[] = []
+        index = 0
+        while index < size {
+            invalid_values.append(index)
+            index++
+        }
+        var invalid_comparisons = 0
+        var invalid_values_view = &invalid_values[0:invalid_values.count()]
+        sort<int>(invalid_values_view, func(left:@int, right:@int) bool {
+            invalid_comparisons++
+                    return true
+                })
+        assert(invalid_comparisons <= size * 20, "bounded invalid comparisons")
+        size *= 2
+    }
+}

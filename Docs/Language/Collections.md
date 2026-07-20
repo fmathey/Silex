@@ -57,7 +57,9 @@ noncopyable.
 
 Prefixing the same slice with `@` or `&` creates a non-owning contiguous view
 instead of a list copy: `@values[1:3]` reads through `@T[..]`, while
-`&values[1:3]` writes through `&T[..]`. See
+`&values[1:3]` writes through `&T[..]`. A mutable view also supports `swap`,
+which exchanges two elements without copying them or changing the view's
+length. See
 [Values and mutation](Values-and-References.md#contiguous-borrowed-views).
 
 Dynamic lists also provide `append`, `prepend`, `insert`, `take`,

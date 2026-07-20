@@ -1,0 +1,39 @@
+func sift_down<T>(values:&T[..], start:int, end:int, before:func(@T, @T) bool) {
+    var root = start
+    while root * 2 + 1 < end {
+        let left = root * 2 + 1
+        var selected = root
+        if before(values[selected], values[left]) {
+            selected = left
+        }
+        let right = left + 1
+        if right < end && before(values[selected], values[right]) {
+            selected = right
+        }
+        if selected == root {
+            return
+        }
+        values.swap(root, selected)
+        root = selected
+    }
+}
+
+pub func sort<T>(values:&T[..], before:func(@T, @T) bool) {
+    let count = values.count()
+    if count < 2 {
+        return
+    }
+
+    var start = (count - 2) / 2
+    while start >= 0 {
+        sift_down<T>(values, start, count, before)
+        start--
+    }
+
+    var end = count - 1
+    while end > 0 {
+        values.swap(0, end)
+        sift_down<T>(values, 0, end, before)
+        end--
+    }
+}
