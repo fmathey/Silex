@@ -507,6 +507,7 @@ pub const EnumVariant = struct {
 pub const Use = struct {
     target: Target,
     alias: ?[]const u8,
+    alias_position: ?Source.Position,
     is_public: bool,
     position: Source.Position,
 

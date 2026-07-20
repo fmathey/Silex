@@ -66,6 +66,14 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
+    const lint_artifact_check = b.addExecutable(.{
+        .name = "silex-lint-artifact-check",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("Tests/LintArtifactCheck.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
     const console_session_test_module = b.createModule(.{
         .target = target,
         .optimize = optimize,
@@ -160,6 +168,15 @@ pub fn build(b: *std.Build) void {
     });
     const semantic_test_command = b.addRunArtifact(semantic_tests);
 
+    const lint_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("Sources/Lint.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const lint_test_command = b.addRunArtifact(lint_tests);
+
     const lsp_test_module = b.createModule(.{
         .root_source_file = b.path("Sources/Lsp.zig"),
         .target = target,
@@ -171,6 +188,106 @@ pub fn build(b: *std.Build) void {
     });
     const lsp_test_command = b.addRunArtifact(lsp_tests);
     lsp_test_command.step.dependOn(b.getInstallStep());
+
+    const lsp_protocol_command = b.addRunArtifact(executable);
+    lsp_protocol_command.addArg("lsp");
+    lsp_protocol_command.setStdIn(.{
+        .bytes = "Content-Length: 125\r\n\r\n" ++
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"capabilities\":{\"general\":{\"positionEncodings\":[\"utf-8\",\"utf-16\"]}}}}" ++
+            "Content-Length: 181\r\n\r\n" ++
+            "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///tmp/FormattingMemory.sx\",\"languageId\":\"silex\",\"version\":1,\"text\":\"func main(){print(1)}\"}}}" ++
+            "Content-Length: 173\r\n\r\n" ++
+            "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"textDocument/formatting\",\"params\":{\"textDocument\":{\"uri\":\"file:///tmp/FormattingMemory.sx\"},\"options\":{\"tabSize\":99,\"insertSpaces\":false}}}",
+    });
+    lsp_protocol_command.expectStdOutEqual(
+        "Content-Length: 288\r\n\r\n" ++
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"capabilities\":{\"positionEncoding\":\"utf-8\",\"textDocumentSync\":1,\"documentFormattingProvider\":true,\"completionProvider\":{\"triggerCharacters\":[\".\"]},\"signatureHelpProvider\":{\"triggerCharacters\":[\"(\",\",\"]}},\"serverInfo\":{\"name\":\"Silex\",\"version\":\"0.24.0\"}}}" ++
+            "Content-Length: 128\r\n\r\n" ++
+            "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":\"file:///tmp/FormattingMemory.sx\",\"diagnostics\":[]}}" ++
+            "Content-Length: 157\r\n\r\n" ++
+            "{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":[{\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":21}},\"newText\":\"func main() {\\n    print(1)\\n}\\n\"}]}",
+    );
+
+    const lsp_canonical_formatting_command = b.addRunArtifact(executable);
+    lsp_canonical_formatting_command.addArg("lsp");
+    lsp_canonical_formatting_command.setStdIn(.{
+        .bytes = "Content-Length: 169\r\n\r\n" ++
+            "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///tmp/Canonical.sx\",\"languageId\":\"silex\",\"version\":1,\"text\":\"func main() {}\\n\"}}}" ++
+            "Content-Length: 164\r\n\r\n" ++
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"textDocument/formatting\",\"params\":{\"textDocument\":{\"uri\":\"file:///tmp/Canonical.sx\"},\"options\":{\"tabSize\":4,\"insertSpaces\":true}}}",
+    });
+    lsp_canonical_formatting_command.expectStdOutEqual(
+        "Content-Length: 121\r\n\r\n" ++
+            "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":\"file:///tmp/Canonical.sx\",\"diagnostics\":[]}}" ++
+            "Content-Length: 36\r\n\r\n" ++
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":[]}",
+    );
+
+    const lsp_crlf_formatting_command = b.addRunArtifact(executable);
+    lsp_crlf_formatting_command.addArg("lsp");
+    lsp_crlf_formatting_command.setStdIn(.{
+        .bytes = "Content-Length: 166\r\n\r\n" ++
+            "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///tmp/CrLf.sx\",\"languageId\":\"silex\",\"version\":1,\"text\":\"func main() {\\r\\n}\"}}}" ++
+            "Content-Length: 159\r\n\r\n" ++
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"textDocument/formatting\",\"params\":{\"textDocument\":{\"uri\":\"file:///tmp/CrLf.sx\"},\"options\":{\"tabSize\":4,\"insertSpaces\":true}}}",
+    });
+    lsp_crlf_formatting_command.expectStdOutEqual(
+        "Content-Length: 116\r\n\r\n" ++
+            "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":\"file:///tmp/CrLf.sx\",\"diagnostics\":[]}}" ++
+            "Content-Length: 140\r\n\r\n" ++
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":[{\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":1,\"character\":1}},\"newText\":\"func main() {}\\n\"}]}",
+    );
+
+    const lsp_invalid_formatting_command = b.addRunArtifact(executable);
+    lsp_invalid_formatting_command.addArg("lsp");
+    lsp_invalid_formatting_command.setStdIn(.{
+        .bytes = "Content-Length: 163\r\n\r\n" ++
+            "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///tmp/Invalid.sx\",\"languageId\":\"silex\",\"version\":1,\"text\":\"func main( {\"}}}" ++
+            "Content-Length: 162\r\n\r\n" ++
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"textDocument/formatting\",\"params\":{\"textDocument\":{\"uri\":\"file:///tmp/Invalid.sx\"},\"options\":{\"tabSize\":4,\"insertSpaces\":true}}}",
+    });
+    lsp_invalid_formatting_command.expectStdOutEqual(
+        "Content-Length: 262\r\n\r\n" ++
+            "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":\"file:///tmp/Invalid.sx\",\"diagnostics\":[{\"range\":{\"start\":{\"line\":0,\"character\":11},\"end\":{\"line\":0,\"character\":12}},\"severity\":1,\"source\":\"silex\",\"message\":\"expected parameter name\"}]}}" ++
+            "Content-Length: 166\r\n\r\n" ++
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32803,\"message\":\"1:12: error: expected parameter name\",\"data\":{\"line\":1,\"column\":12,\"diagnostic\":\"expected parameter name\"}}}",
+    );
+
+    const lint_open_message =
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///tmp/UnsavedLint.sx\",\"languageId\":\"silex\",\"version\":1,\"text\":\"struct bad_type {}\\nfunc BadFunction() { return; print(1) }\\n\"}}}";
+    const lint_change_message =
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":\"file:///tmp/UnsavedLint.sx\",\"version\":2},\"contentChanges\":[{\"text\":\"struct GoodType {}\\nfunc good_function() {}\\n\"}]}}";
+    const lint_close_message =
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didClose\",\"params\":{\"textDocument\":{\"uri\":\"file:///tmp/UnsavedLint.sx\"}}}";
+    const lint_protocol_command = b.addRunArtifact(executable);
+    lint_protocol_command.addArg("lsp");
+    lint_protocol_command.setStdIn(.{ .bytes = b.fmt(
+        "Content-Length: {d}\r\n\r\n{s}Content-Length: {d}\r\n\r\n{s}Content-Length: {d}\r\n\r\n{s}",
+        .{ lint_open_message.len, lint_open_message, lint_change_message.len, lint_change_message, lint_close_message.len, lint_close_message },
+    ) });
+    const lint_warning_notification =
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":\"file:///tmp/UnsavedLint.sx\",\"diagnostics\":[{\"range\":{\"start\":{\"line\":0,\"character\":7},\"end\":{\"line\":0,\"character\":8}},\"severity\":2,\"source\":\"silex lint\",\"code\":\"naming/type\",\"message\":\"type name 'bad_type' should use PascalCase\"},{\"range\":{\"start\":{\"line\":1,\"character\":5},\"end\":{\"line\":1,\"character\":6}},\"severity\":2,\"source\":\"silex lint\",\"code\":\"naming/value\",\"message\":\"function name 'BadFunction' should use snake_case\"},{\"range\":{\"start\":{\"line\":1,\"character\":29},\"end\":{\"line\":1,\"character\":30}},\"severity\":2,\"source\":\"silex lint\",\"code\":\"control-flow/unreachable\",\"message\":\"statement is unreachable\"}]}}";
+    const lint_empty_notification =
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":\"file:///tmp/UnsavedLint.sx\",\"diagnostics\":[]}}";
+    lint_protocol_command.expectStdOutEqual(b.fmt(
+        "Content-Length: {d}\r\n\r\n{s}Content-Length: {d}\r\n\r\n{s}Content-Length: {d}\r\n\r\n{s}",
+        .{ lint_warning_notification.len, lint_warning_notification, lint_empty_notification.len, lint_empty_notification, lint_empty_notification.len, lint_empty_notification },
+    ));
+
+    const unicode_lint_message =
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///tmp/UnicodeLint.sx\",\"languageId\":\"silex\",\"version\":1,\"text\":\"func good() { print(\\\"😀\\\"); let BadValue = 1 }\"}}}";
+    const unicode_lint_protocol_command = b.addRunArtifact(executable);
+    unicode_lint_protocol_command.addArg("lsp");
+    unicode_lint_protocol_command.setStdIn(.{ .bytes = b.fmt(
+        "Content-Length: {d}\r\n\r\n{s}",
+        .{ unicode_lint_message.len, unicode_lint_message },
+    ) });
+    const unicode_lint_notification =
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":\"file:///tmp/UnicodeLint.sx\",\"diagnostics\":[{\"range\":{\"start\":{\"line\":0,\"character\":31},\"end\":{\"line\":0,\"character\":32}},\"severity\":2,\"source\":\"silex lint\",\"code\":\"naming/value\",\"message\":\"variable name 'BadValue' should use snake_case\"}]}}";
+    unicode_lint_protocol_command.expectStdOutEqual(b.fmt(
+        "Content-Length: {d}\r\n\r\n{s}",
+        .{ unicode_lint_notification.len, unicode_lint_notification },
+    ));
 
     const invalid_command = b.addRunArtifact(executable);
     invalid_command.addArgs(&.{ "compile", "Tests/InvalidArithmetic.sx" });
@@ -193,6 +310,43 @@ pub fn build(b: *std.Build) void {
     invalid_module_init_option_command.addArgs(&.{ "module", "init", "Core", "--force" });
     invalid_module_init_option_command.expectExitCode(1);
     invalid_module_init_option_command.expectStdErrEqual("silex: module init does not accept option '--force'\n");
+
+    const format_check_command = b.addRunArtifact(executable);
+    format_check_command.addArgs(&.{ "format", "Tests/Format/Unformatted.sx", "--check" });
+    format_check_command.expectExitCode(1);
+    format_check_command.expectStdOutEqual("Tests/Format/Unformatted.sx\n");
+
+    const lint_warning_command = b.addRunArtifact(executable);
+    lint_warning_command.addArgs(&.{ "lint", "Tests/Lint/Warnings.sx" });
+    lint_warning_command.expectExitCode(1);
+    lint_warning_command.expectStdErrEqual(
+        "Tests/Lint/Warnings.sx:1:8: warning[naming/type]: type name 'bad_type' should use PascalCase\n" ++
+            "Tests/Lint/Warnings.sx:2:9: warning[naming/value]: field name 'BadField' should use snake_case\n" ++
+            "Tests/Lint/Warnings.sx:5:6: warning[naming/value]: function name 'BadFunction' should use snake_case\n" ++
+            "Tests/Lint/Warnings.sx:5:18: warning[naming/value]: parameter name 'BadParam' should use snake_case\n" ++
+            "Tests/Lint/Warnings.sx:7:5: warning[control-flow/unreachable]: statement is unreachable\n",
+    );
+
+    const lint_clean_command = b.addRunArtifact(executable);
+    lint_clean_command.addArgs(&.{ "lint", "Tests/Lint/Clean.sx" });
+    lint_clean_command.expectStdOutEqual("");
+    lint_clean_command.expectStdErrEqual("");
+
+    const lint_invalid_command = b.addRunArtifact(executable);
+    lint_invalid_command.addArgs(&.{ "lint", "Tests/Lint/Invalid.sx" });
+    lint_invalid_command.expectExitCode(1);
+    lint_invalid_command.expectStdErrEqual("Tests/Lint/Invalid.sx:3:1: error: expected expression\n");
+
+    const lint_project_command = b.addRunArtifact(executable);
+    lint_project_command.addArgs(&.{ "lint", "Tests/Lint/Project/silex.json" });
+    lint_project_command.expectExitCode(1);
+    lint_project_command.expectStdErrEqual(
+        "Tests/Lint/Project/A.sx:1:6: warning[naming/value]: function name 'BadA' should use snake_case\n" ++
+            "Tests/Lint/Project/B.sx:1:8: warning[naming/type]: type name 'bad_b' should use PascalCase\n",
+    );
+    const lint_artifact_check_command = b.addRunArtifact(lint_artifact_check);
+    lint_artifact_check_command.step.dependOn(&lint_project_command.step);
+    lint_artifact_check_command.setCwd(b.path("Tests/Lint/Project"));
 
     const immutable_assignment_command = b.addRunArtifact(executable);
     immutable_assignment_command.addArgs(&.{ "compile", "Tests/InvalidImmutableAssignment.sx" });
@@ -1767,7 +1921,14 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(b.getInstallStep());
     test_step.dependOn(&test_command.step);
     test_step.dependOn(&semantic_test_command.step);
+    test_step.dependOn(&lint_test_command.step);
     test_step.dependOn(&lsp_test_command.step);
+    test_step.dependOn(&lsp_protocol_command.step);
+    test_step.dependOn(&lsp_canonical_formatting_command.step);
+    test_step.dependOn(&lsp_crlf_formatting_command.step);
+    test_step.dependOn(&lsp_invalid_formatting_command.step);
+    test_step.dependOn(&lint_protocol_command.step);
+    test_step.dependOn(&unicode_lint_protocol_command.step);
     test_step.dependOn(&missing_field_mutability_command.step);
     test_step.dependOn(&invalid_let_field_mutation_command.step);
     test_step.dependOn(&invalid_nested_let_field_mutation_command.step);
@@ -1793,6 +1954,12 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&missing_module_subcommand_command.step);
     test_step.dependOn(&missing_module_init_path_command.step);
     test_step.dependOn(&invalid_module_init_option_command.step);
+    test_step.dependOn(&format_check_command.step);
+    test_step.dependOn(&lint_warning_command.step);
+    test_step.dependOn(&lint_clean_command.step);
+    test_step.dependOn(&lint_invalid_command.step);
+    test_step.dependOn(&lint_project_command.step);
+    test_step.dependOn(&lint_artifact_check_command.step);
     test_step.dependOn(&immutable_assignment_command.step);
     test_step.dependOn(&invalid_mutable_reference_argument_command.step);
     test_step.dependOn(&missing_mutable_reference_argument_command.step);

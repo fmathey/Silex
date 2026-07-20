@@ -7232,14 +7232,14 @@ fn blockAlwaysReturns(statements: []const Statement) bool {
     return false;
 }
 
-fn astStatementsFallThrough(statements: []const Ast.Statement) bool {
+pub fn astStatementsFallThrough(statements: []const Ast.Statement) bool {
     for (statements) |statement_value| {
         if (!astStatementFallsThrough(statement_value)) return false;
     }
     return true;
 }
 
-fn astStatementFallsThrough(statement_value: Ast.Statement) bool {
+pub fn astStatementFallsThrough(statement_value: Ast.Statement) bool {
     return switch (statement_value) {
         .panic_statement, .break_statement, .continue_statement, .return_statement => false,
         .if_statement => |if_value| if_falls_through: {

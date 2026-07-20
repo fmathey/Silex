@@ -1,7 +1,9 @@
 const std = @import("std");
 const build_options = @import("build_options");
 const Ast = @import("Ast.zig");
+const Formatter = @import("Formatter.zig");
 const LexerModule = @import("Lexer.zig");
+const Lint = @import("Lint.zig");
 const ModuleDiscovery = @import("ModuleDiscovery.zig");
 const ParserModule = @import("Parser.zig");
 const Source = @import("Source.zig");
@@ -155,10 +157,35 @@ const Range = struct {
     end: Position,
 };
 
+const PositionEncoding = enum {
+    utf8,
+    utf16,
+    utf32,
+
+    fn protocolName(self: PositionEncoding) []const u8 {
+        return switch (self) {
+            .utf8 => "utf-8",
+            .utf16 => "utf-16",
+            .utf32 => "utf-32",
+        };
+    }
+};
+
+const TextEdit = struct {
+    range: Range,
+    newText: []const u8,
+};
+
+const FormattingOutcome = union(enum) {
+    edits: []const TextEdit,
+    diagnostic: Source.Diagnostic,
+};
+
 const Diagnostic = struct {
     range: Range,
     severity: u8 = 1,
     source: []const u8 = "silex",
+    code: ?[]const u8 = null,
     message: []const u8,
 };
 
@@ -173,6 +200,7 @@ const Server = struct {
     allocator: Allocator,
     io: Io,
     documents: std.ArrayList(Document) = .empty,
+    position_encoding: PositionEncoding = .utf16,
 
     fn init(allocator: Allocator, io: Io) Server {
         return .{ .allocator = allocator, .io = io };
@@ -192,9 +220,12 @@ const Server = struct {
 
     fn handle(self: *Server, request: Request) !void {
         if (std.mem.eql(u8, request.method, "initialize")) {
+            self.position_encoding = negotiatedPositionEncoding(request.params);
             if (request.id) |id| try self.reply(id, .{
                 .capabilities = .{
+                    .positionEncoding = self.position_encoding.protocolName(),
                     .textDocumentSync = 1,
+                    .documentFormattingProvider = true,
                     .completionProvider = .{
                         .triggerCharacters = &completion_trigger_characters,
                     },
@@ -252,7 +283,7 @@ const Server = struct {
             const items = if (request.params) |params| completion: {
                 const uri = textDocumentUri(params) orelse break :completion &[_]CompletionItem{};
                 const source = self.documentText(uri) orelse break :completion &[_]CompletionItem{};
-                const position = completionPosition(params);
+                const position = normalizePosition(source, completionPosition(params), self.position_encoding);
                 if (position) |cursor| {
                     if (useCompletionPrefix(source, cursor)) |prefix| {
                         break :completion try useCompletionItems(
@@ -301,7 +332,8 @@ const Server = struct {
             const signatures = if (request.params) |params| signatures: {
                 const uri = textDocumentUri(params) orelse break :signatures &[_]SignatureInformation{};
                 const source = self.documentText(uri) orelse break :signatures &[_]SignatureInformation{};
-                const position = completionPosition(params) orelse break :signatures &[_]SignatureInformation{};
+                const position = normalizePosition(source, completionPosition(params), self.position_encoding) orelse
+                    break :signatures &[_]SignatureInformation{};
                 break :signatures try signatureHelpItems(self.allocator, source, position);
             } else &[_]SignatureInformation{};
             if (request.id) |id| try self.reply(id, .{
@@ -309,6 +341,27 @@ const Server = struct {
                 .activeSignature = @as(usize, 0),
                 .activeParameter = @as(usize, 0),
             });
+            return;
+        }
+
+        if (std.mem.eql(u8, request.method, "textDocument/formatting")) {
+            const id = request.id orelse return;
+            const params = request.params orelse {
+                try self.replyInvalidParams(id, "missing formatting parameters");
+                return;
+            };
+            const uri = textDocumentUri(params) orelse {
+                try self.replyInvalidParams(id, "missing text document URI");
+                return;
+            };
+            const source = self.documentText(uri) orelse {
+                try self.replyInvalidParams(id, "document is not open");
+                return;
+            };
+            switch (try formattingOutcome(self.allocator, source, self.position_encoding)) {
+                .edits => |edits| try self.reply(id, edits),
+                .diagnostic => |diagnostic| try self.replyFormattingError(id, diagnostic),
+            }
         }
     }
 
@@ -317,6 +370,38 @@ const Server = struct {
             .jsonrpc = protocol_version,
             .id = id,
             .result = result,
+        });
+    }
+
+    fn replyInvalidParams(self: *Server, id: std.json.Value, message: []const u8) !void {
+        try self.send(.{
+            .jsonrpc = protocol_version,
+            .id = id,
+            .@"error" = .{
+                .code = @as(i32, -32602),
+                .message = message,
+            },
+        });
+    }
+
+    fn replyFormattingError(self: *Server, id: std.json.Value, diagnostic: Source.Diagnostic) !void {
+        const message = try std.fmt.allocPrint(
+            self.allocator,
+            "{d}:{d}: error: {s}",
+            .{ diagnostic.position.line, diagnostic.position.column, diagnostic.message },
+        );
+        try self.send(.{
+            .jsonrpc = protocol_version,
+            .id = id,
+            .@"error" = .{
+                .code = @as(i32, -32803),
+                .message = message,
+                .data = .{
+                    .line = diagnostic.position.line,
+                    .column = diagnostic.position.column,
+                    .diagnostic = diagnostic.message,
+                },
+            },
         });
     }
 
@@ -367,18 +452,10 @@ const Server = struct {
     }
 
     fn publishDiagnostics(self: *Server, uri: []const u8, source: []const u8) !void {
-        const diagnostic = syntaxDiagnostic(self.allocator, source);
-        if (diagnostic) |value| {
-            try self.sendNotification("textDocument/publishDiagnostics", .{
-                .uri = uri,
-                .diagnostics = &.{value},
-            });
-        } else {
-            try self.sendNotification("textDocument/publishDiagnostics", .{
-                .uri = uri,
-                .diagnostics = &[_]Diagnostic{},
-            });
-        }
+        try self.sendNotification("textDocument/publishDiagnostics", .{
+            .uri = uri,
+            .diagnostics = try diagnosticsWithEncoding(self.allocator, source, self.position_encoding),
+        });
     }
 };
 
@@ -437,6 +514,41 @@ fn completionPosition(params: std.json.Value) ?Position {
     };
 }
 
+fn negotiatedPositionEncoding(params: ?std.json.Value) PositionEncoding {
+    const capabilities = objectMember(params orelse return .utf16, "capabilities") orelse return .utf16;
+    const general = objectMember(capabilities, "general") orelse return .utf16;
+    const encodings = objectMember(general, "positionEncodings") orelse return .utf16;
+    if (encodings != .array) return .utf16;
+    for (encodings.array.items) |encoding| {
+        if (encoding != .string) continue;
+        if (std.mem.eql(u8, encoding.string, "utf-8")) return .utf8;
+        if (std.mem.eql(u8, encoding.string, "utf-16")) return .utf16;
+        if (std.mem.eql(u8, encoding.string, "utf-32")) return .utf32;
+    }
+    return .utf16;
+}
+
+fn formattingOutcome(
+    allocator: Allocator,
+    source: []const u8,
+    encoding: PositionEncoding,
+) Formatter.FormatError!FormattingOutcome {
+    const result = try Formatter.formatSource(allocator, source);
+    if (result.diagnostic) |diagnostic| return .{ .diagnostic = diagnostic };
+    if (std.mem.eql(u8, source, result.text)) {
+        return .{ .edits = try allocator.alloc(TextEdit, 0) };
+    }
+    const edits = try allocator.alloc(TextEdit, 1);
+    edits[0] = .{
+        .range = .{
+            .start = .{ .line = 0, .character = 0 },
+            .end = documentEndPosition(source, encoding),
+        },
+        .newText = result.text,
+    };
+    return .{ .edits = edits };
+}
+
 fn objectMember(value: std.json.Value, name: []const u8) ?std.json.Value {
     if (value != .object) return null;
     return value.object.get(name);
@@ -457,24 +569,83 @@ fn unsignedMember(value: std.json.Value, name: []const u8) ?usize {
 }
 
 fn syntaxDiagnostic(allocator: Allocator, source: []const u8) ?Diagnostic {
+    return syntaxDiagnosticWithEncoding(allocator, source, .utf16);
+}
+
+fn syntaxDiagnosticWithEncoding(
+    allocator: Allocator,
+    source: []const u8,
+    encoding: PositionEncoding,
+) ?Diagnostic {
     var parser = ParserModule.Parser.init(allocator, source);
     _ = parser.parse() catch |err| switch (err) {
-        error.InvalidSource => return diagnosticFromSource(parser.diagnostic.?),
+        error.InvalidSource => return diagnosticFromSource(source, parser.diagnostic.?, encoding),
         else => return null,
     };
     return null;
 }
 
-fn diagnosticFromSource(diagnostic: Source.Diagnostic) Diagnostic {
-    const line = diagnostic.position.line -| 1;
-    const character = diagnostic.position.column -| 1;
+fn diagnosticsWithEncoding(
+    allocator: Allocator,
+    source: []const u8,
+    encoding: PositionEncoding,
+) ![]const Diagnostic {
+    var parser = ParserModule.Parser.init(allocator, source);
+    const program = parser.parse() catch |err| switch (err) {
+        error.InvalidSource => return allocator.dupe(Diagnostic, &.{
+            diagnosticFromSource(source, parser.diagnostic.?, encoding),
+        }),
+        error.OutOfMemory => return error.OutOfMemory,
+    };
+    const lint_diagnostics = try Lint.analyze(allocator, program);
+    const diagnostics = try allocator.alloc(Diagnostic, lint_diagnostics.len);
+    for (lint_diagnostics, diagnostics) |lint_diagnostic, *diagnostic| {
+        const byte_offset = sourceDiagnosticByteOffset(source, lint_diagnostic.position);
+        const position = encodedPositionAtByteOffset(source, byte_offset, encoding) orelse Position{
+            .line = lint_diagnostic.position.line -| 1,
+            .character = lint_diagnostic.position.column -| 1,
+        };
+        diagnostic.* = .{
+            .range = .{
+                .start = position,
+                .end = .{ .line = position.line, .character = position.character + 1 },
+            },
+            .severity = 2,
+            .source = lint_diagnostic.source,
+            .code = lint_diagnostic.code,
+            .message = lint_diagnostic.message,
+        };
+    }
+    return diagnostics;
+}
+
+fn diagnosticFromSource(
+    source: []const u8,
+    diagnostic: Source.Diagnostic,
+    encoding: PositionEncoding,
+) Diagnostic {
+    const byte_offset = sourceDiagnosticByteOffset(source, diagnostic.position);
+    const position = encodedPositionAtByteOffset(source, byte_offset, encoding) orelse Position{
+        .line = diagnostic.position.line -| 1,
+        .character = diagnostic.position.column -| 1,
+    };
     return .{
         .range = .{
-            .start = .{ .line = line, .character = character },
-            .end = .{ .line = line, .character = character + 1 },
+            .start = position,
+            .end = .{ .line = position.line, .character = position.character + 1 },
         },
         .message = diagnostic.message,
     };
+}
+
+fn sourceDiagnosticByteOffset(source: []const u8, position: Source.Position) usize {
+    var offset: usize = 0;
+    var line: usize = 1;
+    while (line < position.line and offset < source.len) : (line += 1) {
+        const newline = std.mem.indexOfScalarPos(u8, source, offset, '\n') orelse return source.len;
+        offset = newline + 1;
+    }
+    return @min(source.len, offset + position.column -| 1);
 }
 
 fn signatureHelpItems(
@@ -2700,6 +2871,24 @@ fn memberVisibleForCompletion(
 }
 
 fn byteOffsetAtPosition(source: []const u8, position: Position) ?usize {
+    return byteOffsetAtEncodedPosition(source, position, .utf16);
+}
+
+fn normalizePosition(
+    source: []const u8,
+    position: ?Position,
+    encoding: PositionEncoding,
+) ?Position {
+    const requested = position orelse return null;
+    const offset = byteOffsetAtEncodedPosition(source, requested, encoding) orelse return null;
+    return encodedPositionAtByteOffset(source, offset, .utf16);
+}
+
+fn byteOffsetAtEncodedPosition(
+    source: []const u8,
+    position: Position,
+    encoding: PositionEncoding,
+) ?usize {
     var offset: usize = 0;
     var line: usize = 0;
     while (line < position.line) : (line += 1) {
@@ -2707,13 +2896,48 @@ fn byteOffsetAtPosition(source: []const u8, position: Position) ?usize {
         offset = newline + 1;
     }
 
-    var utf16_units: usize = 0;
-    while (offset < source.len and source[offset] != '\n' and utf16_units < position.character) {
+    var units: usize = 0;
+    while (offset < source.len and source[offset] != '\n' and units < position.character) {
         const sequence_length = utf8SequenceLength(source[offset]);
-        utf16_units += if (sequence_length == 4) 2 else 1;
+        units += switch (encoding) {
+            .utf8 => sequence_length,
+            .utf16 => if (sequence_length == 4) 2 else 1,
+            .utf32 => 1,
+        };
         offset += @min(sequence_length, source.len - offset);
     }
-    return if (utf16_units == position.character) offset else null;
+    return if (units == position.character) offset else null;
+}
+
+fn encodedPositionAtByteOffset(
+    source: []const u8,
+    requested_offset: usize,
+    encoding: PositionEncoding,
+) ?Position {
+    if (requested_offset > source.len) return null;
+    var position: Position = .{ .line = 0, .character = 0 };
+    var offset: usize = 0;
+    while (offset < requested_offset) {
+        if (source[offset] == '\n') {
+            position.line += 1;
+            position.character = 0;
+            offset += 1;
+            continue;
+        }
+        const sequence_length = utf8SequenceLength(source[offset]);
+        if (offset + sequence_length > requested_offset) return null;
+        position.character += switch (encoding) {
+            .utf8 => sequence_length,
+            .utf16 => if (sequence_length == 4) 2 else 1,
+            .utf32 => 1,
+        };
+        offset += sequence_length;
+    }
+    return position;
+}
+
+fn documentEndPosition(source: []const u8, encoding: PositionEncoding) Position {
+    return encodedPositionAtByteOffset(source, source.len, encoding).?;
 }
 
 fn utf8SequenceLength(first_byte: u8) usize {
@@ -4076,4 +4300,156 @@ test "syntax diagnostics accept implicit control bindings" {
         \\}
     ;
     try std.testing.expect(syntaxDiagnostic(arena.allocator(), source) == null);
+}
+
+test "lint diagnostics preserve shared identity order and positions" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const source =
+        \\struct bad_type {}
+        \\func BadFunction() { return; print(1) }
+    ;
+    var parser = ParserModule.Parser.init(allocator, source);
+    const program = try parser.parse();
+    const shared = try Lint.analyze(allocator, program);
+    const diagnostics = try diagnosticsWithEncoding(allocator, source, .utf16);
+    try std.testing.expectEqual(shared.len, diagnostics.len);
+    try std.testing.expectEqual(@as(usize, 3), diagnostics.len);
+    for (shared, diagnostics) |lint_diagnostic, diagnostic| {
+        try std.testing.expectEqualStrings(lint_diagnostic.code, diagnostic.code.?);
+        try std.testing.expectEqualStrings(lint_diagnostic.message, diagnostic.message);
+        try std.testing.expectEqualStrings("silex lint", diagnostic.source);
+        try std.testing.expectEqual(@as(u8, 2), diagnostic.severity);
+        try std.testing.expectEqual(lint_diagnostic.position.line - 1, diagnostic.range.start.line);
+    }
+    try std.testing.expectEqual(Position{ .line = 0, .character = 7 }, diagnostics[0].range.start);
+    try std.testing.expectEqual(Position{ .line = 1, .character = 5 }, diagnostics[1].range.start);
+    try std.testing.expectEqual(Position{ .line = 1, .character = 29 }, diagnostics[2].range.start);
+}
+
+test "invalid source publishes only its syntax error" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const diagnostics = try diagnosticsWithEncoding(
+        arena.allocator(),
+        "func BadFunction() { let BadValue =\n}",
+        .utf16,
+    );
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try std.testing.expectEqual(@as(u8, 1), diagnostics[0].severity);
+    try std.testing.expectEqualStrings("silex", diagnostics[0].source);
+    try std.testing.expect(diagnostics[0].code == null);
+}
+
+test "lint positions use the negotiated Unicode encoding" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const source = "func good() { print(\"😀\"); let BadValue = 1 }";
+    const utf8 = try diagnosticsWithEncoding(arena.allocator(), source, .utf8);
+    const utf16 = try diagnosticsWithEncoding(arena.allocator(), source, .utf16);
+    try std.testing.expectEqual(@as(usize, 1), utf8.len);
+    try std.testing.expectEqual(@as(usize, 1), utf16.len);
+    try std.testing.expectEqual(utf16[0].range.start.character + 2, utf8[0].range.start.character);
+}
+
+test "position encoding negotiation defaults to UTF-16 and accepts client encodings" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    try std.testing.expectEqual(PositionEncoding.utf16, negotiatedPositionEncoding(null));
+    const parsed = try std.json.parseFromSliceLeaky(
+        std.json.Value,
+        allocator,
+        "{\"capabilities\":{\"general\":{\"positionEncodings\":[\"unknown\",\"utf-8\",\"utf-16\"]}}}",
+        .{},
+    );
+    try std.testing.expectEqual(PositionEncoding.utf8, negotiatedPositionEncoding(parsed));
+}
+
+test "formatting returns one full document edit identical to the shared formatter" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const source = "func main(){print(1)}";
+    const shared = try Formatter.formatSource(allocator, source);
+    const outcome = try formattingOutcome(allocator, source, .utf16);
+    switch (outcome) {
+        .diagnostic => return error.TestUnexpectedResult,
+        .edits => |edits| {
+            try std.testing.expectEqual(@as(usize, 1), edits.len);
+            try std.testing.expectEqualStrings(shared.text, edits[0].newText);
+            try std.testing.expectEqual(Position{ .line = 0, .character = 0 }, edits[0].range.start);
+            try std.testing.expectEqual(Position{ .line = 0, .character = source.len }, edits[0].range.end);
+        },
+    }
+}
+
+test "formatting returns no edit for a canonical document" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const outcome = try formattingOutcome(arena.allocator(), "func main() {}\n", .utf16);
+    switch (outcome) {
+        .diagnostic => return error.TestUnexpectedResult,
+        .edits => |edits| try std.testing.expectEqual(@as(usize, 0), edits.len),
+    }
+}
+
+test "formatting uses the open document text without mutating its saved counterpart" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var server = Server.init(allocator, std.testing.io);
+    const uri = "file:///tmp/FormattingMemory.sx";
+    const saved_text = "func main() {}\n";
+    const open_text = "func main(){print(1)}";
+    try server.setDocument(uri, open_text);
+
+    const outcome = try formattingOutcome(allocator, server.documentText(uri).?, .utf16);
+    try std.testing.expectEqualStrings(saved_text, "func main() {}\n");
+    try std.testing.expectEqualStrings(open_text, server.documentText(uri).?);
+    switch (outcome) {
+        .diagnostic => return error.TestUnexpectedResult,
+        .edits => |edits| try std.testing.expectEqualStrings("func main() {\n    print(1)\n}\n", edits[0].newText),
+    }
+}
+
+test "formatting covers CRLF documents without a final newline" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const outcome = try formattingOutcome(arena.allocator(), "func main() {\r\n}", .utf16);
+    switch (outcome) {
+        .diagnostic => return error.TestUnexpectedResult,
+        .edits => |edits| {
+            try std.testing.expectEqual(@as(usize, 1), edits.len);
+            try std.testing.expectEqual(Position{ .line = 1, .character = 1 }, edits[0].range.end);
+            try std.testing.expectEqualStrings("func main() {}\n", edits[0].newText);
+        },
+    }
+}
+
+test "formatting rejects invalid source without edits" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const outcome = try formattingOutcome(arena.allocator(), "func main( {", .utf16);
+    switch (outcome) {
+        .edits => return error.TestUnexpectedResult,
+        .diagnostic => |diagnostic| {
+            try std.testing.expect(diagnostic.message.len != 0);
+            try std.testing.expect(diagnostic.position.line >= 1);
+            try std.testing.expect(diagnostic.position.column >= 1);
+        },
+    }
+}
+
+test "LSP positions follow the negotiated UTF encoding" {
+    const source = "// 😀";
+    try std.testing.expectEqual(Position{ .line = 0, .character = 7 }, documentEndPosition(source, .utf8));
+    try std.testing.expectEqual(Position{ .line = 0, .character = 5 }, documentEndPosition(source, .utf16));
+    try std.testing.expectEqual(Position{ .line = 0, .character = 4 }, documentEndPosition(source, .utf32));
+    try std.testing.expectEqual(
+        Position{ .line = 0, .character = 5 },
+        normalizePosition(source, .{ .line = 0, .character = 7 }, .utf8).?,
+    );
 }

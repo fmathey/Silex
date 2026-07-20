@@ -392,3 +392,78 @@ func main() {
                 (identifier)
                 (expression
                   (integer_literal))))))))))
+
+========================
+Spaced generic inputs and canonical comparisons
+========================
+
+use Result < int, str > as IntResult
+
+func main() {
+    let made = Factory < int > (value:1)
+    let filled = Module.Pair<int>.filled(2)
+    while count < 4 {
+        count++
+    }
+}
+
+---
+
+(source_file
+  (use_declaration
+    (type
+      (named_type
+        (generic_type
+          (type_identifier)
+          (type_argument_list
+            (type
+              (builtin_type))
+            (type
+              (builtin_type))))))
+    (identifier))
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (block
+      (statement
+        (variable_declaration
+          (identifier)
+          (expression
+            (invocation_expression
+              (generic_type
+                (type_identifier)
+                (type_argument_list
+                  (type
+                    (builtin_type))))
+              (field_initializer
+                (identifier)
+                (expression
+                  (integer_literal)))))))
+      (statement
+        (variable_declaration
+          (identifier)
+          (expression
+            (invocation_expression
+              (member_expression
+                (generic_type
+                  (type_identifier
+                    (identifier)
+                    (identifier))
+                  (type_argument_list
+                    (type
+                      (builtin_type))))
+                (identifier))
+              (expression
+                (integer_literal))))))
+      (statement
+        (while_statement
+          (expression
+            (binary_expression
+              (expression
+                (identifier))
+              (expression
+                (integer_literal))))
+          (block
+            (statement
+              (update_statement
+                (identifier)))))))))

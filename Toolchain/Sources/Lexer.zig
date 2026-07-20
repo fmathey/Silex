@@ -107,6 +107,8 @@ pub const Token = struct {
     tag: TokenTag,
     lexeme: []const u8,
     position: Source.Position,
+    start: usize,
+    end: usize,
 };
 
 pub const Lexer = struct {
@@ -143,7 +145,7 @@ pub const Lexer = struct {
             }
 
             const lexeme = self.source[start..self.index];
-            return .{ .tag = keywordTag(lexeme) orelse .identifier, .lexeme = lexeme, .position = position };
+            return .{ .tag = keywordTag(lexeme) orelse .identifier, .lexeme = lexeme, .position = position, .start = start, .end = self.index };
         }
 
         if (std.ascii.isDigit(character)) return self.numericToken(start, position);
@@ -202,7 +204,7 @@ pub const Lexer = struct {
                         return self.fail(position, "string literal is not valid UTF-8");
                     }
                     self.advance();
-                    return .{ .tag = .string, .lexeme = lexeme, .position = position };
+                    return .{ .tag = .string, .lexeme = lexeme, .position = position, .start = contents_start - 1, .end = self.index };
                 },
                 '\n', '\r' => return self.fail(position, "unterminated string literal"),
                 '\\' => {
@@ -460,7 +462,7 @@ pub const Lexer = struct {
     }
 
     fn token(self: *const Lexer, tag: TokenTag, start: usize, position: Source.Position) Token {
-        return .{ .tag = tag, .lexeme = self.source[start..self.index], .position = position };
+        return .{ .tag = tag, .lexeme = self.source[start..self.index], .position = position, .start = start, .end = self.index };
     }
 
     fn fail(self: *Lexer, position: Source.Position, message: []const u8) Source.Error {

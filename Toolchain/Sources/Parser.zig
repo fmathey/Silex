@@ -262,7 +262,7 @@ pub const Parser = struct {
         const alias = try self.parseOptionalAlias();
         try self.expectStatementTerminator();
         const replacement = if (alias) |name|
-            try std.fmt.allocPrint(self.allocator, "'import' was removed; use 'use {s} as {s}'", .{ path, name })
+            try std.fmt.allocPrint(self.allocator, "'import' was removed; use 'use {s} as {s}'", .{ path, name.name })
         else
             try std.fmt.allocPrint(self.allocator, "'import' was removed; use 'use {s}'", .{path});
         return self.failAt(position, replacement);
@@ -279,18 +279,30 @@ pub const Parser = struct {
         const alias = try self.parseOptionalAlias();
         if (target == .type and alias == null) return self.failAt(position, "a type expression after 'use' requires an alias with 'as'");
         try self.expectStatementTerminator();
-        return .{ .target = target, .alias = alias, .is_public = is_public, .position = position };
+        return .{
+            .target = target,
+            .alias = if (alias) |value| value.name else null,
+            .alias_position = if (alias) |value| value.position else null,
+            .is_public = is_public,
+            .position = position,
+        };
     }
 
-    fn parseOptionalAlias(self: *Parser) ParseError!?[]const u8 {
+    const ParsedAlias = struct {
+        name: []const u8,
+        position: Source.Position,
+    };
+
+    fn parseOptionalAlias(self: *Parser) ParseError!?ParsedAlias {
         if (self.current.tag != .keyword_as) return null;
         try self.advance();
         if (self.current.tag != .identifier) return self.fail("expected alias after 'as'");
         const alias = self.current.lexeme;
+        const position = self.current.position;
         if (std.mem.eql(u8, alias, "Result")) return self.fail("name 'Result' is reserved");
         if (std.mem.eql(u8, alias, "map_error")) return self.fail("name 'map_error' is reserved");
         try self.advance();
-        return alias;
+        return .{ .name = alias, .position = position };
     }
 
     fn parseQualifiedName(self: *Parser, message: []const u8) ParseError![]const u8 {
@@ -1772,10 +1784,12 @@ pub const Parser = struct {
         }
         if (self.current.tag == .shift_right) {
             const token = self.current;
-            self.previous = .{ .tag = .greater, .lexeme = token.lexeme[0..1], .position = token.position };
+            self.previous = .{ .tag = .greater, .lexeme = token.lexeme[0..1], .position = token.position, .start = token.start, .end = token.start + 1 };
             self.current = .{
                 .tag = .greater,
                 .lexeme = token.lexeme[1..2],
+                .start = token.start + 1,
+                .end = token.end,
                 .position = .{
                     .file = token.position.file,
                     .line = token.position.line,

@@ -89,6 +89,8 @@ for `Math`. The project manifest format is currently JSON.
 silex compile <source.sx|project.json> [-o <executable>] [--emit-cpp]
     [--target <arch-os-abi>] [--native <dependency.json>]
 silex run <source.sx|project.json> [--native <dependency.json>]
+silex format <source.sx|project.json> [--check]
+silex lint <source.sx|project.json>
 silex module init <directory> [--native]
 silex update [package]
 silex clean
@@ -108,6 +110,22 @@ When a link is required, `compile` reports each native package compiled or
 reused, then reports the application link separately. An unchanged local build
 is reported as up to date; internal cache paths are not part of this command's
 output contract.
+
+`format` rewrites one `.sx` source, or the sources explicitly listed by a
+project manifest, into the canonical Silex form. It prints each changed path.
+With `--check`, it performs no writes and exits unsuccessfully when a source
+would change. Project sources are all parsed and formatted successfully before
+the command replaces any file; discovered modules and dependencies are never
+included implicitly.
+
+`lint` reads one `.sx` source, or only the sources explicitly listed by a
+project manifest. It reports noncanonical type and value names and the first
+unreachable statement in each unreachable suite. Diagnostics are warnings on
+standard error and make the command exit unsuccessfully; a clean input produces
+no output. The command does not rewrite sources, generate C++, resolve packages,
+or create compilation artifacts. Syntax errors remain errors and suppress lint
+diagnostics for their invalid source unit. `compile` and `run` do not invoke the
+lint implicitly.
 
 `module init` creates the optional `@Module.json` for a directory-module without
 changing any existing source. The plain form writes an empty manifest. With

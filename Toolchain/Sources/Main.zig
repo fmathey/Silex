@@ -1,6 +1,8 @@
 const std = @import("std");
 const build_options = @import("build_options");
 const Compiler = @import("Compiler.zig");
+const Formatter = @import("Formatter.zig");
+const Lint = @import("Lint.zig");
 const Lsp = @import("Lsp.zig");
 const ModuleInit = @import("ModuleInit.zig");
 const PackageGraph = @import("PackageGraph.zig");
@@ -32,6 +34,8 @@ fn runCli(init: std.process.Init) !u8 {
     }
 
     if (std.mem.eql(u8, args[1], "compile")) return compileCommand(allocator, init.io, init.environ_map, args[2..]);
+    if (std.mem.eql(u8, args[1], "format")) return formatCommand(allocator, init.io, args[2..]);
+    if (std.mem.eql(u8, args[1], "lint")) return lintCommand(allocator, init.io, args[2..]);
     if (std.mem.eql(u8, args[1], "run")) return runCommand(allocator, init.io, init.environ_map, args[2..]);
     if (std.mem.eql(u8, args[1], "update")) return updateCommand(allocator, init.io, init.environ_map, args[2..]);
     if (std.mem.eql(u8, args[1], "module")) return moduleCommand(allocator, init.io, args[2..]);
@@ -40,6 +44,35 @@ fn runCli(init: std.process.Init) !u8 {
 
     std.debug.print("silex: unknown command '{s}'\n\n{s}", .{ args[1], usage });
     return 1;
+}
+
+fn lintCommand(allocator: Allocator, io: Io, args: []const []const u8) !u8 {
+    if (args.len == 0) {
+        std.debug.print("silex: lint expects a source or project manifest\n", .{});
+        return 1;
+    }
+    if (args.len != 1) {
+        std.debug.print("silex: lint accepts exactly one input\n", .{});
+        return 1;
+    }
+    return Lint.run(allocator, io, args[0]);
+}
+
+fn formatCommand(allocator: Allocator, io: Io, args: []const []const u8) !u8 {
+    if (args.len == 0) {
+        std.debug.print("silex: format expects a source or project manifest\n", .{});
+        return 1;
+    }
+    if (args.len > 2 or (args.len == 2 and !std.mem.eql(u8, args[1], "--check"))) {
+        std.debug.print("silex: format accepts only the '--check' option after its input\n", .{});
+        return 1;
+    }
+    const result = try Formatter.formatPath(allocator, io, args[0], args.len == 2);
+    for (result.changed_paths) |path| {
+        try Io.File.stdout().writeStreamingAll(io, path);
+        try Io.File.stdout().writeStreamingAll(io, "\n");
+    }
+    return if (args.len == 2 and result.had_differences) 1 else 0;
 }
 
 fn moduleCommand(allocator: Allocator, io: Io, args: []const []const u8) !u8 {
@@ -223,6 +256,8 @@ const usage =
     \\  silex compile <source.sx|project.json> [-o <executable>] [--emit-cpp]
     \\      [--target <arch-os-abi>] [--native <dependency.json>]
     \\  silex run <source.sx|project.json> [--native <dependency.json>]
+    \\  silex format <source.sx|project.json> [--check]
+    \\  silex lint <source.sx|project.json>
     \\  silex module init <directory> [--native]
     \\  silex update [package]
     \\  silex clean

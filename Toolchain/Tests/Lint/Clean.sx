@@ -1,0 +1,7 @@
+struct HTTP2Client {
+    let status_code:int
+}
+
+func parse_http2(value2:int) {
+    print(value2)
+}

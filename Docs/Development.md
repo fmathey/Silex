@@ -25,6 +25,11 @@ zig build cross-native-smoke
 The cross-platform checks are available when needed, but macOS ARM64 is the
 current development target.
 
+Source-quality checks are explicit: `silex lint <source.sx|project.json>` walks
+the parsed AST without starting compilation or creating `.silex` artifacts.
+Its diagnostics use stable rule codes and are ordered by source path and
+position, which keeps command-line and future editor consumers deterministic.
+
 ## Build a distributable toolchain
 
 ```sh
@@ -39,3 +44,9 @@ The verified distribution is written below
 
 The Zed extension and its Tree-sitter grammar are in `Editors/Zed/`. Its local
 development workflow is intentionally kept outside this public repository.
+The extension starts `silex lsp`; Zed's ordinary format action then uses the
+server's whole-document formatter. Formatting always follows the canonical
+Silex style, independently of editor tab and space preferences. For every open
+`.sx` document, the same server also publishes the warnings produced by
+`silex lint` from the current in-memory text; Zed displays them through its
+ordinary diagnostics interface without a separate Tree-sitter or Rust linter.

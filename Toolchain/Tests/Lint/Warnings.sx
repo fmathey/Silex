@@ -1,0 +1,8 @@
+struct bad_type {
+    var BadField:int
+}
+
+func BadFunction(BadParam:int) {
+    return
+    print(1)
+}

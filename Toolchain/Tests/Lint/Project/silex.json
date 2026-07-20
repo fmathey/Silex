@@ -1,0 +1,9 @@
+{
+    "target": "LintProject",
+    "modules": [
+        {
+            "name": "LintProject",
+            "sources": ["B.sx", "A.sx"]
+        }
+    ]
+}
