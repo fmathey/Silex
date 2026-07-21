@@ -5,12 +5,14 @@ Field mutability
 struct State {
     let id:int
     var count:int
+    private var secret:int
+    public static var instances:int
 }
 
 class User {
-    let id:int
-    pub var name:str
-    sub let generation:int = 1
+    private let id:int
+    public var name:str
+    protected let generation:int = 1
 }
 
 ---
@@ -18,6 +20,14 @@ class User {
 (source_file
   (structure_definition
     (identifier)
+    (structure_field
+      (identifier)
+      (type
+        (builtin_type)))
+    (structure_field
+      (identifier)
+      (type
+        (builtin_type)))
     (structure_field
       (identifier)
       (type

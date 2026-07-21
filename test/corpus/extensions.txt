@@ -3,7 +3,7 @@ Type extensions
 ===============
 
 extend STD.Randomizer : Drawable, Named {
-    pub func get_uint() uint {
+    public func get_uint() uint {
         return self.get_int() as uint
     }
 
@@ -11,7 +11,7 @@ extend STD.Randomizer : Drawable, Named {
         return STD.Randomizer.create(42)
     }
 
-    pub func choose<T>(values:@T[..]) @T {
+    public func choose<T>(values:@T[..]) @T {
         return @values[0]
     }
 }

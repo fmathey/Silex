@@ -300,7 +300,7 @@ use Vec3<int> as Vec3i
 use int[] as Integers
 use str? as OptionalString
 use func(int) bool as Predicate
-pub use Vec3<str> as Vec3s
+public use Vec3<str> as Vec3s
 
 func main() {
     let position:Vec3i = Vec3i(x:1, y:2, z:3)

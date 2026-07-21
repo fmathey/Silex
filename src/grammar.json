@@ -58,7 +58,7 @@
               "name": "visibility",
               "content": {
                 "type": "STRING",
-                "value": "pub"
+                "value": "public"
               }
             },
             {
@@ -171,7 +171,7 @@
       "members": [
         {
           "type": "STRING",
-          "value": "pub"
+          "value": "public"
         },
         {
           "type": "CHOICE",
@@ -376,7 +376,7 @@
                     "name": "visibility",
                     "content": {
                       "type": "STRING",
-                      "value": "pub"
+                      "value": "public"
                     }
                   },
                   {
@@ -759,11 +759,15 @@
                           "members": [
                             {
                               "type": "STRING",
-                              "value": "pub"
+                              "value": "private"
                             },
                             {
                               "type": "STRING",
-                              "value": "sub"
+                              "value": "protected"
+                            },
+                            {
+                              "type": "STRING",
+                              "value": "public"
                             }
                           ]
                         }
@@ -809,11 +813,15 @@
                           "members": [
                             {
                               "type": "STRING",
-                              "value": "pub"
+                              "value": "private"
                             },
                             {
                               "type": "STRING",
-                              "value": "sub"
+                              "value": "protected"
+                            },
+                            {
+                              "type": "STRING",
+                              "value": "public"
                             }
                           ]
                         }
@@ -863,11 +871,15 @@
                           "members": [
                             {
                               "type": "STRING",
-                              "value": "pub"
+                              "value": "private"
                             },
                             {
                               "type": "STRING",
-                              "value": "sub"
+                              "value": "protected"
+                            },
+                            {
+                              "type": "STRING",
+                              "value": "public"
                             }
                           ]
                         }

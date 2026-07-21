@@ -2,7 +2,7 @@
 Deferred callback types and literals
 ==================
 
-pub native resource Watch {
+public native resource Watch {
     drop destroy_watch
 }
 

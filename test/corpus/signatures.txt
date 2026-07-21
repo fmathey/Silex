@@ -36,7 +36,7 @@ Native standard function
 ==================
 
 native func native_next() int
-pub native func next() int
+public native func next() int
 
 ---
 

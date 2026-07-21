@@ -2,7 +2,7 @@
 Opaque native resources
 ==================
 
-pub native resource Buffer {
+public native resource Buffer {
     drop destroy_buffer
 }
 

@@ -1214,7 +1214,7 @@
         "required": false,
         "types": [
           {
-            "type": "pub",
+            "type": "public",
             "named": false
           }
         ]
@@ -2929,11 +2929,15 @@
         "required": false,
         "types": [
           {
-            "type": "pub",
+            "type": "private",
             "named": false
           },
           {
-            "type": "sub",
+            "type": "protected",
+            "named": false
+          },
+          {
+            "type": "public",
             "named": false
           }
         ]
@@ -3373,7 +3377,7 @@
         "required": false,
         "types": [
           {
-            "type": "pub",
+            "type": "public",
             "named": false
           }
         ]
@@ -3786,11 +3790,19 @@
     "named": false
   },
   {
+    "type": "private",
+    "named": false
+  },
+  {
+    "type": "protected",
+    "named": false
+  },
+  {
     "type": "protocol",
     "named": false
   },
   {
-    "type": "pub",
+    "type": "public",
     "named": false
   },
   {
@@ -3815,10 +3827,6 @@
   },
   {
     "type": "struct",
-    "named": false
-  },
-  {
-    "type": "sub",
     "named": false
   },
   {

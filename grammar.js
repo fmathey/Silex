@@ -46,7 +46,7 @@ module.exports = grammar({
 
     use_declaration: ($) =>
       seq(
-        optional(field("visibility", "pub")),
+        optional(field("visibility", "public")),
         "use",
         choice(
           prec(1, seq(
@@ -64,7 +64,7 @@ module.exports = grammar({
 
     public_declaration: ($) =>
       seq(
-        "pub",
+        "public",
         choice(
           $.enum_definition,
           $.protocol_definition,
@@ -107,7 +107,7 @@ module.exports = grammar({
         "{",
         repeat(
           seq(
-            optional(field("visibility", "pub")),
+            optional(field("visibility", "public")),
             optional(field("static", "static")),
             $.function_definition,
           ),
@@ -164,15 +164,15 @@ module.exports = grammar({
         repeat(
           choice(
             seq(
-              optional(field("visibility", choice("pub", "sub"))),
+              optional(field("visibility", choice("private", "protected", "public"))),
               optional(field("static", "static")),
               $.structure_field,
             ),
-            seq(optional(field("visibility", choice("pub", "sub"))), $.constructor_definition),
+            seq(optional(field("visibility", choice("private", "protected", "public"))), $.constructor_definition),
             $.drop_definition,
             seq(
               optional(field("override", "override")),
-              optional(field("visibility", choice("pub", "sub"))),
+              optional(field("visibility", choice("private", "protected", "public"))),
               optional(field("static", "static")),
               $.function_definition,
             ),

@@ -5,11 +5,11 @@ Class constructors
 class Session {
     var token:str
 
-    pub init(token:str) {
+    public init(token:str) {
         self.token = token
     }
 
-    sub init() {
+    protected init() {
         self.token = ""
     }
 }

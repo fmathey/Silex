@@ -4,17 +4,17 @@ Modules and visibility
 
 use NK.Window as Window
 use Window.Session
-pub use Window.Event as WindowEvent
+public use Window.Event as WindowEvent
 
-pub struct Session {}
-pub class Window {
+public struct Session {}
+public class Window {
   var id: int
-  sub var state: int
-  pub var title: str
-  pub func show() {}
+  protected var state: int
+  public var title: str
+  public func show() {}
 }
 
-pub func create() Window.Session {
+public func create() Window.Session {
     return Window.Session()
 }
 

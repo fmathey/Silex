@@ -5,7 +5,7 @@ Class inheritance
 class Entity {}
 
 class Player : Entity {
-    pub init(id:int) : super(id) {}
+    public init(id:int) : super(id) {}
 }
 
 ---
@@ -33,11 +33,11 @@ Override and direct base call
 ============================
 
 class Entity {
-    pub func update(value:int) int { return value }
+    public func update(value:int) int { return value }
 }
 
 class Player : Entity {
-    override pub func update(value:int) int {
+    override public func update(value:int) int {
         return super.update(value) + 1
     }
 }

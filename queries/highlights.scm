@@ -140,8 +140,9 @@
 
 [
   "use"
-  "pub"
-  "sub"
+  "private"
+  "public"
+  "protected"
   "as"
   "let"
   "var"
