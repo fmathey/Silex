@@ -3040,6 +3040,7 @@ const language_completions = [_]CompletionItem{
     .{ .label = "return", .kind = 14, .detail = "Silex keyword" },
     .{ .label = "try", .kind = 14, .detail = "Silex keyword" },
     .{ .label = "move", .kind = 14, .detail = "Silex keyword" },
+    .{ .label = "deferred", .kind = 14, .detail = "Silex keyword" },
     .{ .label = "use", .kind = 14, .detail = "Silex keyword" },
     .{ .label = "pub", .kind = 14, .detail = "Silex keyword" },
     .{ .label = "sub", .kind = 14, .detail = "Silex keyword" },
@@ -3049,6 +3050,7 @@ const language_completions = [_]CompletionItem{
     .{ .label = "false", .kind = 14, .detail = "Silex keyword" },
     .{ .label = "print", .kind = 3, .detail = "Silex builtin" },
     .{ .label = "map_error", .kind = 3, .detail = "Silex intrinsic function" },
+    .{ .label = "dispatch_callbacks", .kind = 3, .detail = "Silex intrinsic function" },
     .{ .label = "Result", .kind = 7, .detail = "Silex intrinsic type" },
     .{ .label = "void", .kind = 7, .detail = "Silex type" },
     .{ .label = "bool", .kind = 7, .detail = "Silex type" },
@@ -3086,6 +3088,8 @@ test "completion items include language terms and document identifiers" {
     try std.testing.expect(containsCompletion(items, "match"));
     try std.testing.expect(containsCompletion(items, "try"));
     try std.testing.expect(containsCompletion(items, "move"));
+    try std.testing.expect(containsCompletion(items, "deferred"));
+    try std.testing.expect(containsCompletion(items, "dispatch_callbacks"));
     try std.testing.expect(!containsCompletion(items, "borrow"));
     try std.testing.expect(containsCompletion(items, "total"));
     try std.testing.expect(!containsCompletion(items, "import"));

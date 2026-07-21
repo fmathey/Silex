@@ -17,6 +17,7 @@ pub const TokenTag = enum {
     keyword_return,
     keyword_try,
     keyword_move,
+    keyword_deferred,
     keyword_struct,
     keyword_class,
     keyword_protocol,
@@ -488,6 +489,7 @@ fn keywordTag(lexeme: []const u8) ?TokenTag {
         .{ "return", TokenTag.keyword_return },
         .{ "try", TokenTag.keyword_try },
         .{ "move", TokenTag.keyword_move },
+        .{ "deferred", TokenTag.keyword_deferred },
         .{ "struct", TokenTag.keyword_struct },
         .{ "class", TokenTag.keyword_class },
         .{ "protocol", TokenTag.keyword_protocol },
@@ -619,6 +621,12 @@ test "recognize reserved move keyword" {
     var lexer = Lexer.init("move value");
     try std.testing.expectEqual(TokenTag.keyword_move, (try lexer.next()).tag);
     try std.testing.expectEqual(TokenTag.identifier, (try lexer.next()).tag);
+}
+
+test "recognize deferred keyword" {
+    var lexer = Lexer.init("deferred func");
+    try std.testing.expectEqual(TokenTag.keyword_deferred, (try lexer.next()).tag);
+    try std.testing.expectEqual(TokenTag.keyword_func, (try lexer.next()).tag);
 }
 
 test "recognize read reference prefix and released borrow identifier" {

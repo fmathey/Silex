@@ -21,6 +21,7 @@ pub fn generateWithSources(
     var output: std.ArrayList(u8) = .empty;
     try output.appendSlice(allocator,
         \\#include <algorithm>
+        \\#include <atomic>
         \\#include <cstddef>
         \\#include <cstdint>
         \\#include <cstdlib>
@@ -35,6 +36,7 @@ pub fn generateWithSources(
         \\#include <iterator>
         \\#include <limits>
         \\#include <memory>
+        \\#include <mutex>
         \\#include <optional>
         \\#include <stdexcept>
         \\#include <string>
@@ -43,6 +45,9 @@ pub fn generateWithSources(
         \\#include <unordered_map>
         \\#include <utility>
         \\#include <vector>
+        \\#if defined(SILEX_DEFERRED_CALLBACK_TEST_INSTRUMENTATION)
+        \\#include <condition_variable>
+        \\#endif
         \\
     );
     var emitted_native_transports: std.ArrayList([]const u8) = .empty;
@@ -346,30 +351,128 @@ pub fn generateWithSources(
         \\
         \\inline bool silexCollectingCycles = false;
         \\inline std::size_t silexLiveObjects = 0;
+        \\#if defined(SILEX_DEFERRED_CALLBACK_TEST_INSTRUMENTATION)
+        \\inline std::atomic<std::int64_t> silexLiveDeferredCallbackContexts = 0;
+        \\inline std::atomic<std::int64_t> silexLiveDeferredCallbackEvents = 0;
+        \\inline std::atomic<std::int64_t> silexLiveCapturedValueStates = 0;
+        \\inline std::atomic<std::int64_t> silexAcceptedDeferredCallbackEvents = 0;
+        \\inline std::atomic<std::int64_t> silexDispatchedDeferredCallbackEvents = 0;
+        \\inline std::atomic<std::int64_t> silexDestroyedDeferredCallbackEvents = 0;
+        \\inline std::atomic<std::int64_t> silexCancelledDeferredCallbackEnqueues = 0;
+        \\
+        \\extern "C" std::int64_t silexGeneratedLiveDeferredCallbackContexts() {
+        \\    return silexLiveDeferredCallbackContexts.load(std::memory_order_relaxed);
+        \\}
+        \\extern "C" std::int64_t silexGeneratedLiveDeferredCallbackEvents() {
+        \\    return silexLiveDeferredCallbackEvents.load(std::memory_order_relaxed);
+        \\}
+        \\extern "C" std::int64_t silexGeneratedLiveCapturedValueStates() {
+        \\    return silexLiveCapturedValueStates.load(std::memory_order_relaxed);
+        \\}
+        \\extern "C" std::int64_t silexGeneratedAcceptedDeferredCallbackEvents() {
+        \\    return silexAcceptedDeferredCallbackEvents.load(std::memory_order_relaxed);
+        \\}
+        \\extern "C" std::int64_t silexGeneratedDispatchedDeferredCallbackEvents() {
+        \\    return silexDispatchedDeferredCallbackEvents.load(std::memory_order_relaxed);
+        \\}
+        \\extern "C" std::int64_t silexGeneratedDestroyedDeferredCallbackEvents() {
+        \\    return silexDestroyedDeferredCallbackEvents.load(std::memory_order_relaxed);
+        \\}
+        \\extern "C" std::int64_t silexGeneratedCancelledDeferredCallbackEnqueues() {
+        \\    return silexCancelledDeferredCallbackEnqueues.load(std::memory_order_relaxed);
+        \\}
+        \\
+        \\struct SilexDeferredCallbackEnqueueTestGate {
+        \\    std::mutex mutex;
+        \\    std::condition_variable condition;
+        \\    std::atomic<bool> armed = false;
+        \\    bool entered = false;
+        \\    bool released = false;
+        \\    void arm() {
+        \\        std::scoped_lock lock(mutex);
+        \\        entered = false;
+        \\        released = false;
+        \\        armed.store(true, std::memory_order_release);
+        \\    }
+        \\    void engage() {
+        \\        if (!armed.load(std::memory_order_acquire)) return;
+        \\        std::unique_lock lock(mutex);
+        \\        if (!armed.load(std::memory_order_relaxed)) return;
+        \\        entered = true;
+        \\        condition.notify_all();
+        \\        condition.wait(lock, [this] { return released; });
+        \\        armed.store(false, std::memory_order_release);
+        \\    }
+        \\    void waitUntilEntered() {
+        \\        std::unique_lock lock(mutex);
+        \\        condition.wait(lock, [this] { return entered; });
+        \\    }
+        \\    void release() {
+        \\        std::scoped_lock lock(mutex);
+        \\        released = true;
+        \\        condition.notify_all();
+        \\    }
+        \\};
+        \\
+        \\inline SilexDeferredCallbackEnqueueTestGate silexDeferredCallbackEnqueueTestGate;
+        \\
+        \\extern "C" void silexGeneratedArmDeferredCallbackEnqueueTestGate() {
+        \\    silexDeferredCallbackEnqueueTestGate.arm();
+        \\}
+        \\extern "C" void silexGeneratedWaitForDeferredCallbackEnqueueTestGate() {
+        \\    silexDeferredCallbackEnqueueTestGate.waitUntilEntered();
+        \\}
+        \\extern "C" void silexGeneratedReleaseDeferredCallbackEnqueueTestGate() {
+        \\    silexDeferredCallbackEnqueueTestGate.release();
+        \\}
+        \\#endif
+        \\
+        \\struct SilexDeferredCallbackState {
+        \\    std::mutex mutex;
+        \\    bool cancelled = false;
+        \\    virtual std::int64_t dispatch() = 0;
+        \\    void cancel() {
+        \\        std::scoped_lock lock(mutex);
+        \\        cancelled = true;
+        \\    }
+        \\    virtual ~SilexDeferredCallbackState() = default;
+        \\};
         \\
         \\struct SilexNativeResourceState {
         \\    void* handle;
         \\    void (*drop)(void*);
+        \\    std::shared_ptr<SilexDeferredCallbackState> deferred;
         \\    std::vector<std::shared_ptr<SilexNativeResourceState>> priorAcquisitions;
-        \\    SilexNativeResourceState(void* value, void (*destroy)(void*), std::vector<std::shared_ptr<SilexNativeResourceState>> prior)
-        \\        : handle(value), drop(destroy), priorAcquisitions(std::move(prior)) {}
-        \\    ~SilexNativeResourceState() { if (handle != nullptr) drop(handle); }
+        \\    SilexNativeResourceState(void* value, void (*destroy)(void*), std::shared_ptr<SilexDeferredCallbackState> callback, std::vector<std::shared_ptr<SilexNativeResourceState>> prior)
+        \\        : handle(value), drop(destroy), deferred(std::move(callback)), priorAcquisitions(std::move(prior)) {}
+        \\    ~SilexNativeResourceState() {
+        \\        if (handle != nullptr) {
+        \\            if (deferred) deferred->cancel();
+        \\            drop(handle);
+        \\        }
+        \\        deferred.reset();
+        \\    }
+        \\    void cancelDeferred() { if (deferred) deferred->cancel(); }
+        \\    std::int64_t dispatchDeferred() {
+        \\        if (deferred) return deferred->dispatch();
+        \\        return -1;
+        \\    }
         \\    void* release() { return std::exchange(handle, nullptr); }
         \\};
         \\
         \\inline thread_local std::vector<std::weak_ptr<SilexNativeResourceState>> silexNativeAcquisitions;
         \\
-        \\std::shared_ptr<SilexNativeResourceState> silexAdoptNativeResource(void* handle, void (*drop)(void*)) {
+        \\std::shared_ptr<SilexNativeResourceState> silexAdoptNativeResource(void* handle, void (*drop)(void*), std::shared_ptr<SilexDeferredCallbackState> deferred = {}) {
         \\    std::vector<std::shared_ptr<SilexNativeResourceState>> prior;
         \\    auto output = silexNativeAcquisitions.begin();
         \\    for (auto current = silexNativeAcquisitions.begin(); current != silexNativeAcquisitions.end(); ++current) {
         \\        if (auto acquisition = current->lock()) {
-        \\            prior.push_back(acquisition);
+        \\            if (!acquisition->deferred) prior.push_back(acquisition);
         \\            *output++ = *current;
         \\        }
         \\    }
         \\    silexNativeAcquisitions.erase(output, silexNativeAcquisitions.end());
-        \\    auto state = std::make_shared<SilexNativeResourceState>(handle, drop, std::move(prior));
+        \\    auto state = std::make_shared<SilexNativeResourceState>(handle, drop, std::move(deferred), std::move(prior));
         \\    silexNativeAcquisitions.push_back(state);
         \\    return state;
         \\}
@@ -379,6 +482,13 @@ pub fn generateWithSources(
         \\    std::shared_ptr<SilexNativeResourceState> state;
         \\    operator T*() const { return handle; }
         \\};
+        \\
+        \\template <typename Resource>
+        \\std::int64_t silexDispatchCallbacks(const Resource& resource) {
+        \\    const auto count = resource.silexNativeState->dispatchDeferred();
+        \\    if (count < 0) throw std::runtime_error("native resource has no deferred callback state");
+        \\    return count;
+        \\}
         \\
         \\struct SilexObject {
         \\    std::size_t references = 1;
@@ -505,10 +615,17 @@ pub fn generateWithSources(
         \\}
         \\
         \\struct SilexCapturedValuesBase {
+        \\#if defined(SILEX_DEFERRED_CALLBACK_TEST_INSTRUMENTATION)
+        \\    SilexCapturedValuesBase() { silexLiveCapturedValueStates.fetch_add(1, std::memory_order_relaxed); }
+        \\#endif
         \\    virtual void trace(const SilexTraceVisitor& visit) const = 0;
         \\    virtual void clear() = 0;
         \\    virtual std::unique_ptr<SilexCapturedValuesBase> clone() const = 0;
+        \\#if defined(SILEX_DEFERRED_CALLBACK_TEST_INSTRUMENTATION)
+        \\    virtual ~SilexCapturedValuesBase() { silexLiveCapturedValueStates.fetch_sub(1, std::memory_order_relaxed); }
+        \\#else
         \\    virtual ~SilexCapturedValuesBase() = default;
+        \\#endif
         \\};
         \\
         \\template <typename... Values>
@@ -560,6 +677,106 @@ pub fn generateWithSources(
         \\private:
         \\    std::function<Return(Arguments...)> callable_;
         \\    std::unique_ptr<SilexCapturedValuesBase> captures_;
+        \\};
+        \\
+        \\template <typename Signature>
+        \\struct SilexDeferredCallbackStateFor;
+        \\
+        \\template <typename... Arguments>
+        \\struct SilexDeferredCallbackEvent {
+        \\    explicit SilexDeferredCallbackEvent(Arguments... values)
+        \\        : arguments(std::forward<Arguments>(values)...) {
+        \\#if defined(SILEX_DEFERRED_CALLBACK_TEST_INSTRUMENTATION)
+        \\        silexLiveDeferredCallbackEvents.fetch_add(1, std::memory_order_relaxed);
+        \\        silexAcceptedDeferredCallbackEvents.fetch_add(1, std::memory_order_relaxed);
+        \\#endif
+        \\    }
+        \\    SilexDeferredCallbackEvent(const SilexDeferredCallbackEvent&) = delete;
+        \\    SilexDeferredCallbackEvent& operator=(const SilexDeferredCallbackEvent&) = delete;
+        \\    SilexDeferredCallbackEvent(SilexDeferredCallbackEvent&& other) noexcept
+        \\        : arguments(std::move(other.arguments))
+        \\#if defined(SILEX_DEFERRED_CALLBACK_TEST_INSTRUMENTATION)
+        \\        , dispatched(other.dispatched), counted(std::exchange(other.counted, false))
+        \\#endif
+        \\    {}
+        \\    SilexDeferredCallbackEvent& operator=(SilexDeferredCallbackEvent&& other) noexcept {
+        \\        if (this == &other) return *this;
+        \\#if defined(SILEX_DEFERRED_CALLBACK_TEST_INSTRUMENTATION)
+        \\        retire();
+        \\#endif
+        \\        arguments = std::move(other.arguments);
+        \\#if defined(SILEX_DEFERRED_CALLBACK_TEST_INSTRUMENTATION)
+        \\        dispatched = other.dispatched;
+        \\        counted = std::exchange(other.counted, false);
+        \\#endif
+        \\        return *this;
+        \\    }
+        \\#if defined(SILEX_DEFERRED_CALLBACK_TEST_INSTRUMENTATION)
+        \\    ~SilexDeferredCallbackEvent() { retire(); }
+        \\    void markDispatched() {
+        \\        dispatched = true;
+        \\        silexDispatchedDeferredCallbackEvents.fetch_add(1, std::memory_order_relaxed);
+        \\    }
+        \\    void retire() {
+        \\        if (!counted) return;
+        \\        if (!dispatched) silexDestroyedDeferredCallbackEvents.fetch_add(1, std::memory_order_relaxed);
+        \\        silexLiveDeferredCallbackEvents.fetch_sub(1, std::memory_order_relaxed);
+        \\        counted = false;
+        \\    }
+        \\#else
+        \\    ~SilexDeferredCallbackEvent() = default;
+        \\#endif
+        \\    std::tuple<Arguments...> arguments;
+        \\#if defined(SILEX_DEFERRED_CALLBACK_TEST_INSTRUMENTATION)
+        \\    bool dispatched = false;
+        \\    bool counted = true;
+        \\#endif
+        \\};
+        \\
+        \\template <typename... Arguments>
+        \\struct SilexDeferredCallbackStateFor<void(Arguments...)> final : SilexDeferredCallbackState {
+        \\    explicit SilexDeferredCallbackStateFor(SilexFunction<void(Arguments...)> value)
+        \\        : callback(std::move(value)) {
+        \\#if defined(SILEX_DEFERRED_CALLBACK_TEST_INSTRUMENTATION)
+        \\        silexLiveDeferredCallbackContexts.fetch_add(1, std::memory_order_relaxed);
+        \\#endif
+        \\    }
+        \\#if defined(SILEX_DEFERRED_CALLBACK_TEST_INSTRUMENTATION)
+        \\    ~SilexDeferredCallbackStateFor() override {
+        \\        silexLiveDeferredCallbackContexts.fetch_sub(1, std::memory_order_relaxed);
+        \\    }
+        \\#else
+        \\    ~SilexDeferredCallbackStateFor() override = default;
+        \\#endif
+        \\    void enqueue(Arguments... arguments) {
+        \\#if defined(SILEX_DEFERRED_CALLBACK_TEST_INSTRUMENTATION)
+        \\        silexDeferredCallbackEnqueueTestGate.engage();
+        \\#endif
+        \\        std::scoped_lock lock(mutex);
+        \\        if (cancelled) {
+        \\#if defined(SILEX_DEFERRED_CALLBACK_TEST_INSTRUMENTATION)
+        \\            silexCancelledDeferredCallbackEnqueues.fetch_add(1, std::memory_order_relaxed);
+        \\#endif
+        \\            return;
+        \\        }
+        \\        pending.emplace_back(std::forward<Arguments>(arguments)...);
+        \\    }
+        \\    std::int64_t dispatch() override {
+        \\        std::vector<SilexDeferredCallbackEvent<Arguments...>> ready;
+        \\        {
+        \\            std::scoped_lock lock(mutex);
+        \\            ready.swap(pending);
+        \\        }
+        \\        for (auto& event : ready) {
+        \\#if defined(SILEX_DEFERRED_CALLBACK_TEST_INSTRUMENTATION)
+        \\            event.markDispatched();
+        \\#endif
+        \\            std::apply(callback, event.arguments);
+        \\        }
+        \\        return static_cast<std::int64_t>(ready.size());
+        \\    }
+        \\    SilexFunction<void(Arguments...)> callback;
+        \\    std::vector<SilexDeferredCallbackEvent<Arguments...>> pending;
         \\};
         \\
         \\template <typename Function, typename Callable, typename... Captures>
@@ -1186,13 +1403,21 @@ pub fn generateWithSources(
             try output.appendSlice(allocator, structure.native_drop_symbol.?);
             try output.appendSlice(allocator, "(static_cast<::");
             try output.appendSlice(allocator, try NativeInterface.transportName(allocator, structure.native_module_name.?, structure.source_name));
-            try output.appendSlice(allocator, "*>(value)); })) {}\n    auto* silexBorrowNativeHandle() const { return static_cast<::");
+            try output.appendSlice(allocator, "*>(value)); })) {}\n\n    ");
+            try output.appendSlice(allocator, structure.generated_name);
+            try output.appendSlice(allocator, "(SilexNativeReturnTag, ::");
+            try output.appendSlice(allocator, try NativeInterface.transportName(allocator, structure.native_module_name.?, structure.source_name));
+            try output.appendSlice(allocator, "* handle, std::shared_ptr<SilexDeferredCallbackState> deferred) : silexNativeState(silexAdoptNativeResource(handle, +[](void* value) { ");
+            try output.appendSlice(allocator, structure.native_drop_symbol.?);
+            try output.appendSlice(allocator, "(static_cast<::");
+            try output.appendSlice(allocator, try NativeInterface.transportName(allocator, structure.native_module_name.?, structure.source_name));
+            try output.appendSlice(allocator, "*>(value)); }, std::move(deferred))) {}\n    auto* silexBorrowNativeHandle() const { return static_cast<::");
             try output.appendSlice(allocator, try NativeInterface.transportName(allocator, structure.native_module_name.?, structure.source_name));
             try output.appendSlice(allocator, "*>(silexNativeState->handle); }\n    auto silexReleaseNativeHandle() { if (silexNativeState.use_count() != 1) throw std::runtime_error(\"native resource still has later acquisitions\"); silexOwnsResource = false; auto state = std::move(silexNativeState); auto* handle = static_cast<::");
             try output.appendSlice(allocator, try NativeInterface.transportName(allocator, structure.native_module_name.?, structure.source_name));
             try output.appendSlice(allocator, "*>(state->release()); return SilexNativeTransfer<::");
             try output.appendSlice(allocator, try NativeInterface.transportName(allocator, structure.native_module_name.?, structure.source_name));
-            try output.appendSlice(allocator, ">{handle, std::move(state)}; }\n");
+            try output.appendSlice(allocator, ">{handle, std::move(state)}; }\n    void silexCancelDeferred() { silexNativeState->cancelDeferred(); }\n");
         }
         if (structure.is_owner) try output.appendSlice(allocator, "    bool silexOwnsResource = true;\n");
         if ((structure.is_class and structure.constructors.len == 0 and structure.implicit_constructor_available) or
@@ -2094,6 +2319,13 @@ fn isNativeCallbackType(value: Semantic.Type) bool {
     return true;
 }
 
+fn nativeDeferredCallbackIndex(arguments: []const *Semantic.Expression) ?usize {
+    for (arguments, 0..) |argument, index| {
+        if (argument.type == .function and argument.type.function.deferred) return index;
+    }
+    return null;
+}
+
 fn isNativeCallbackScalarType(value: Semantic.Type) bool {
     return switch (value) {
         .int, .int8, .int16, .int32, .uint8, .uint16, .uint32, .uint64, .float, .float64, .bool => true,
@@ -2306,11 +2538,15 @@ fn generateNativeArgumentPreludes(
             continue;
         }
         if (isNativeCallbackType(argument.type)) {
-            try output.appendSlice(allocator, "auto silexNativeCallback");
+            try output.appendSlice(allocator, if (argument.type.function.deferred) "auto silexNativeDeferred" else "auto silexNativeCallback");
             try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}", .{index}));
-            try output.appendSlice(allocator, " = ");
+            if (argument.type.function.deferred) {
+                try output.appendSlice(allocator, " = std::make_shared<");
+                try appendCppDeferredCallbackStateType(allocator, output, argument.type.function);
+                try output.appendSlice(allocator, ">(");
+            } else try output.appendSlice(allocator, " = ");
             try generateExpression(allocator, output, argument);
-            try output.append(allocator, ';');
+            try output.appendSlice(allocator, if (argument.type.function.deferred) ");" else ";");
             continue;
         }
         const structure = parameter_structure orelse continue;
@@ -2378,6 +2614,12 @@ fn generateNativeArgument(
         try generateNativeCallbackTrampoline(allocator, output, argument.type.function, index);
     } else if (call.native_parameter_structures[index]) |structure| {
         if (structure.is_native_resource) {
+            if (call.is_native_resource_drop) {
+                try output.appendSlice(allocator, "([&]() { auto&& silexNativeDropResource = ");
+                try generateExpression(allocator, output, argument);
+                try output.appendSlice(allocator, "; silexNativeDropResource.silexCancelDeferred(); return silexNativeDropResource.silexReleaseNativeHandle(); }())");
+                return;
+            }
             try generateExpression(allocator, output, argument);
             try output.appendSlice(allocator, if (call.native_parameter_modes[index] == .value) ".silexReleaseNativeHandle()" else ".silexBorrowNativeHandle()");
             return;
@@ -2403,6 +2645,18 @@ fn generateNativeCallbackTrampoline(
     }
     try output.appendSlice(allocator, ") -> ");
     try appendCppType(allocator, output, callback.return_type.*);
+    if (callback.deferred) {
+        try output.appendSlice(allocator, " {auto* silexNativeCallback = static_cast<");
+        try appendCppDeferredCallbackStateType(allocator, output, callback);
+        try output.appendSlice(allocator, "*>(silexNativeContext);silexNativeCallback->enqueue(");
+        for (callback.parameters, 0..) |_, parameter_index| {
+            if (parameter_index != 0) try output.appendSlice(allocator, ", ");
+            try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "silexNativeArgument{d}", .{parameter_index}));
+        }
+        try output.appendSlice(allocator, ");}, silexNativeDeferred");
+        try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}.get()", .{index}));
+        return;
+    }
     try output.appendSlice(allocator, " {auto& silexNativeCallback = *static_cast<SilexFunction<");
     try appendCppType(allocator, output, callback.return_type.*);
     try output.append(allocator, '(');
@@ -2419,6 +2673,19 @@ fn generateNativeCallbackTrampoline(
     }
     try output.appendSlice(allocator, ");}, &silexNativeCallback");
     try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}", .{index}));
+}
+
+fn appendCppDeferredCallbackStateType(
+    allocator: Allocator,
+    output: *std.ArrayList(u8),
+    callback: Semantic.FunctionType,
+) GenerateError!void {
+    try output.appendSlice(allocator, "SilexDeferredCallbackStateFor<void(");
+    for (callback.parameters, 0..) |parameter, index| {
+        if (index != 0) try output.appendSlice(allocator, ", ");
+        try appendCppType(allocator, output, parameter);
+    }
+    try output.appendSlice(allocator, ")>");
 }
 
 const NativeResultOwnedAction = enum { raw_free, guard, reset };
@@ -2991,6 +3258,7 @@ fn generateNativeFunctionCall(
     const returned_structure = call.native_return_structure;
     if (returned_structure != null and returned_structure.?.is_native_resource) {
         const resource = returned_structure.?;
+        const deferred_index = nativeDeferredCallbackIndex(call.arguments);
         try output.appendSlice(allocator, "callNativeFunction(");
         try appendCppByteStringLiteral(allocator, output, module_name);
         try output.appendSlice(allocator, ", ");
@@ -3004,13 +3272,23 @@ fn generateNativeFunctionCall(
             if (index != 0) try output.appendSlice(allocator, ", ");
             try generateNativeArgument(allocator, output, call, index);
         }
-        try output.appendSlice(allocator, ");if (silexNativeHandle == nullptr) nativeFunctionRuntimeError(");
+        try output.appendSlice(allocator, ");if (silexNativeHandle == nullptr) {");
+        if (deferred_index) |index| {
+            try output.appendSlice(allocator, "silexNativeDeferred");
+            try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d}->cancel();silexNativeDeferred{d}.reset();", .{ index, index }));
+        }
+        try output.appendSlice(allocator, "nativeFunctionRuntimeError(");
         try appendCppByteStringLiteral(allocator, output, module_name);
         try output.appendSlice(allocator, ", ");
         try appendCppByteStringLiteral(allocator, output, function_name);
-        try output.appendSlice(allocator, ", \"returned a null native resource\");return ");
+        try output.appendSlice(allocator, ", \"returned a null native resource\");}return ");
         try output.appendSlice(allocator, resource.generated_name);
-        try output.appendSlice(allocator, "(SilexNativeReturnTag{}, silexNativeHandle);})");
+        try output.appendSlice(allocator, "(SilexNativeReturnTag{}, silexNativeHandle");
+        if (deferred_index) |index| {
+            try output.appendSlice(allocator, ", std::move(silexNativeDeferred");
+            try output.appendSlice(allocator, try std.fmt.allocPrint(allocator, "{d})", .{index}));
+        }
+        try output.appendSlice(allocator, ");})");
         return;
     }
     try output.appendSlice(allocator, if (returns_string) "callNativeStringFunction(" else "callNativeFunction(");
@@ -5355,6 +5633,51 @@ test "generate synchronous scalar native callback trampolines" {
     try std.testing.expect(std.mem.indexOf(u8, cpp, "+[](void* silexNativeContext, std::int64_t silexNativeArgument0) -> bool") != null);
     try std.testing.expect(std.mem.indexOf(u8, cpp, "static_cast<SilexFunction<bool(std::int64_t)>*>(silexNativeContext)") != null);
     try std.testing.expect(std.mem.indexOf(u8, cpp, "}, &silexNativeCallback1") != null);
+}
+
+test "generate deferred callback queue ownership and cancellation" {
+    const Parser = @import("Parser.zig").Parser;
+    const Modules = @import("Modules.zig");
+    const Project = @import("Project.zig").Project;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var parser = Parser.init(allocator,
+        \\pub native resource Watch { drop stop_watch }
+        \\native func start_watch(callback:deferred func(int)) Watch
+        \\func main() {
+        \\    let watch = start_watch(deferred func(value:int) {})
+        \\    print(dispatch_callbacks(watch))
+        \\    stop_watch(watch)
+        \\}
+    );
+    const project = Project{
+        .program_name = "Events",
+        .target_module = 0,
+        .modules = &.{.{ .name = "Events", .sources = &.{"Events.sx"} }},
+        .single_file = false,
+    };
+    var resolver = Modules.Resolver.init(allocator, project, &.{.{ .module_index = 0, .program = try parser.parse() }});
+    var analyzer = Semantic.Analyzer.init(allocator);
+    analyzer.native_module_names = &.{"Events"};
+    const cpp = try generate(allocator, try analyzer.analyze(try resolver.resolve()));
+
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "std::make_shared<SilexDeferredCallbackStateFor<void(std::int64_t)>>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "silexNativeCallback->enqueue(silexNativeArgument0)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "std::move(silexNativeDeferred0)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "silexNativeDropResource.silexCancelDeferred()") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "silexDispatchCallbacks(silexValue") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "prior->dispatchDeferred()") == null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "if (!acquisition->deferred) prior.push_back(acquisition)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "silexNativeDeferred0->cancel();silexNativeDeferred0.reset();nativeFunctionRuntimeError") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "std::scoped_lock lock(mutex)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "silexDeferredCallbackEnqueueTestGate.engage()") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "silexAcceptedDeferredCallbackEvents.fetch_add(1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "event.markDispatched()") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "silexDestroyedDeferredCallbackEvents.fetch_add(1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "silexCancelledDeferredCallbackEnqueues.fetch_add(1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cpp, "ready.swap(pending)") != null);
 }
 
 test "generate owned uint8 list native returns" {

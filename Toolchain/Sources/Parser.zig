@@ -822,8 +822,12 @@ pub const Parser = struct {
             try self.expect(.right_parenthesis, "expected ')' after grouped type");
             break :grouped grouped_type;
         } else if (self.current.tag == .keyword_func)
-            try self.parseFunctionType()
-        else if (self.current.tag == .identifier) named: {
+            try self.parseFunctionType(false)
+        else if (self.current.tag == .keyword_deferred) deferred: {
+            try self.advance();
+            if (self.current.tag != .keyword_func) return self.fail("expected 'func' after 'deferred'");
+            break :deferred try self.parseFunctionType(true);
+        } else if (self.current.tag == .identifier) named: {
             const name = try self.parseQualifiedName(message);
             if (self.current.tag == .less) {
                 break :named .{ .generic_structure = .{
@@ -884,7 +888,7 @@ pub const Parser = struct {
         return result;
     }
 
-    fn parseFunctionType(self: *Parser) ParseError!Ast.TypeName {
+    fn parseFunctionType(self: *Parser, deferred: bool) ParseError!Ast.TypeName {
         try self.expect(.keyword_func, "expected 'func'");
         try self.expect(.left_parenthesis, "expected '(' after 'func'");
         var parameters: std.ArrayList(Ast.TypeName) = .empty;
@@ -909,6 +913,7 @@ pub const Parser = struct {
             return_type = try self.newTypeName(try self.parseTypeNameAfter("expected function return type"));
         }
         return .{ .function = .{
+            .deferred = deferred,
             .parameters = try parameters.toOwnedSlice(self.allocator),
             .parameter_modes = try parameter_modes.toOwnedSlice(self.allocator),
             .return_type = return_type,
@@ -917,7 +922,7 @@ pub const Parser = struct {
 
     fn isTypeStart(self: *const Parser) bool {
         return switch (self.current.tag) {
-            .left_parenthesis, .keyword_func, .keyword_int, .keyword_int8, .keyword_int16, .keyword_int32, .keyword_int64, .keyword_uint, .keyword_uint8, .keyword_uint16, .keyword_uint32, .keyword_uint64, .keyword_float, .keyword_float32, .keyword_float64, .keyword_bool, .keyword_str, .identifier => true,
+            .left_parenthesis, .keyword_func, .keyword_deferred, .keyword_int, .keyword_int8, .keyword_int16, .keyword_int32, .keyword_int64, .keyword_uint, .keyword_uint8, .keyword_uint16, .keyword_uint32, .keyword_uint64, .keyword_float, .keyword_float32, .keyword_float64, .keyword_bool, .keyword_str, .identifier => true,
             else => false,
         };
     }
@@ -1374,7 +1379,12 @@ pub const Parser = struct {
                 return self.parsePostfix(try self.newExpression(.{ .position = token.position, .value = .{ .string = token.lexeme } }));
             },
             .left_bracket => return self.parsePostfix(try self.parseSequenceLiteral()),
-            .keyword_func => return self.parsePostfix(try self.parseLambda()),
+            .keyword_func => return self.parsePostfix(try self.parseLambda(false)),
+            .keyword_deferred => {
+                try self.advance();
+                if (self.current.tag != .keyword_func) return self.fail("expected 'func' after 'deferred'");
+                return self.parsePostfix(try self.parseLambda(true));
+            },
             .keyword_super => return self.parseSuperMethodCall(),
             .keyword_match => return self.parsePostfix(try self.parseMatchExpression()),
             .identifier, .keyword_self => {
@@ -1490,7 +1500,7 @@ pub const Parser = struct {
         }));
     }
 
-    fn parseLambda(self: *Parser) ParseError!*Ast.Expression {
+    fn parseLambda(self: *Parser, deferred: bool) ParseError!*Ast.Expression {
         const position = self.current.position;
         try self.expect(.keyword_func, "expected 'func'");
         const parameters = try self.parseParameters();
@@ -1502,6 +1512,7 @@ pub const Parser = struct {
             .position = position,
             .value = .{ .lambda = .{
                 .position = position,
+                .deferred = deferred,
                 .parameters = parameters,
                 .return_type = return_type,
                 .statements = try self.parseBlock(),
@@ -3288,6 +3299,20 @@ test "parse move with prefix precedence" {
     const initializer = program.functions[0].statements[0].variable_declaration.initializer.?;
     try std.testing.expect(initializer.value == .move_expression);
     try std.testing.expect(initializer.value.move_expression.operand.value == .identifier);
+}
+
+test "parse deferred function type and literal" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var parser = Parser.init(arena.allocator(),
+        \\func main() {
+        \\    var callback:deferred func(int) = deferred func(value:int) {}
+        \\}
+    );
+    const program = try parser.parse();
+    const declaration = program.functions[0].statements[0].variable_declaration;
+    try std.testing.expect(declaration.annotation.?.function.deferred);
+    try std.testing.expect(declaration.initializer.?.value.lambda.deferred);
 }
 
 test "reserve Result and reject void as its error type" {

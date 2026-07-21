@@ -298,6 +298,7 @@ module.exports = grammar({
       choice(alias(choice($.identifier, $.qualified_name), $.type_identifier), $.generic_type),
     function_type: ($) =>
       seq(
+        optional(field("deferred", "deferred")),
         "func",
         "(",
         optional(seq($.function_type_parameter, repeat(seq(",", $.function_type_parameter)))),
@@ -592,6 +593,7 @@ module.exports = grammar({
 
     lambda_expression: ($) =>
       seq(
+        optional(field("deferred", "deferred")),
         "func",
         $.parameter_list,
         optional(field("return_type", choice($.void_type, $.type))),

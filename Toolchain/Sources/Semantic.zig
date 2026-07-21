@@ -5,6 +5,7 @@ const Source = @import("Source.zig");
 const Allocator = std.mem.Allocator;
 const AnalyzeError = Source.Error || Allocator.Error;
 const never_capture_box = false;
+const DeferredResourcePath = []const []const u8;
 
 pub const TransferMode = enum {
     copy,
@@ -39,6 +40,7 @@ pub const Type = union(enum) {
 };
 
 pub const FunctionType = struct {
+    deferred: bool = false,
     parameters: []const Type,
     parameter_modes: []const Ast.ParameterMode,
     return_type: *const Type,
@@ -86,6 +88,7 @@ const BindingState = struct {
     borrowed_parameter: bool = false,
     resource_dependencies: []const *BindingState = &.{},
     resource_dependents: usize = 0,
+    deferred_resource_paths: []const DeferredResourcePath = &.{},
 };
 
 const Borrow = struct {
@@ -104,6 +107,9 @@ pub const Expression = struct {
     owner_state: ?*BindingState = null,
     resource_dependencies: []const *BindingState = &.{},
     transfers_resource_dependencies: bool = false,
+    deferred_resource_paths: []const DeferredResourcePath = &.{},
+    deferred_storage_state: ?*BindingState = null,
+    deferred_storage_path: DeferredResourcePath = &.{},
     value: union(enum) {
         integer: u64,
         floating: []const u8,
@@ -177,6 +183,7 @@ pub const Expression = struct {
         native_parameter_structures: []const ?NativeStructureTransport = &.{},
         native_parameter_modes: []const Ast.ParameterMode = &.{},
         borrowed_return_parameter: ?usize = null,
+        is_native_resource_drop: bool = false,
     };
 
     pub const ValueCall = struct {
@@ -588,6 +595,7 @@ pub const Function = struct {
     native_module_name: ?[]const u8,
     native_function_name: ?[]const u8,
     borrowed_return_parameter: ?usize = null,
+    deferred_callback_index: ?usize = null,
 };
 
 pub const Method = struct {
@@ -649,6 +657,8 @@ const OwnerStateSnapshot = struct {
     state: *BindingState,
     available: bool,
     consumed_at: ?Source.Position,
+    lifetime_depth: usize,
+    deferred_resource_paths: []const DeferredResourcePath,
 };
 
 const LoopFlow = struct {
@@ -693,7 +703,9 @@ const FunctionSymbol = struct {
     native_module_name: ?[]const u8,
     native_function_name: ?[]const u8,
     return_dependency_parameters: []const usize = &.{},
+    return_deferred_resource_paths: []const DeferredResourcePath = &.{},
     return_borrow_parameter: ?usize = null,
+    deferred_callback_index: ?usize = null,
 };
 
 const StructureSymbol = struct {
@@ -867,6 +879,8 @@ pub const Analyzer = struct {
     current_loop_flow: ?*LoopFlow = null,
     function_scope_depth: usize = 0,
     current_lambda: ?*LambdaContext = null,
+    inferring_deferred_return_summaries: bool = false,
+    deferred_return_summary_changed: bool = false,
     diagnostic: ?Source.Diagnostic = null,
 
     pub fn init(allocator: Allocator) Analyzer {
@@ -989,6 +1003,26 @@ pub const Analyzer = struct {
                 .methods = try methods.toOwnedSlice(self.allocator),
             });
         }
+        const function_symbol_start = self.next_symbol_id;
+        var has_deferred_registration = false;
+        for (self.functions.items) |symbol| {
+            if (symbol.deferred_callback_index != null) has_deferred_registration = true;
+        }
+        if (has_deferred_registration) {
+            self.inferring_deferred_return_summaries = true;
+            var summary_pass: usize = 0;
+            while (summary_pass <= program.functions.len) : (summary_pass += 1) {
+                self.next_symbol_id = function_symbol_start;
+                self.deferred_return_summary_changed = false;
+                for (program.functions, self.functions.items) |ast_function, symbol| {
+                    _ = try self.function(ast_function, symbol);
+                }
+                if (!self.deferred_return_summary_changed) break;
+            }
+            self.inferring_deferred_return_summaries = false;
+        }
+        self.next_symbol_id = function_symbol_start;
+
         var functions: std.ArrayList(Function) = .empty;
         for (program.functions, self.functions.items) |ast_function, symbol| {
             try functions.append(self.allocator, try self.function(ast_function, symbol));
@@ -1714,6 +1748,22 @@ pub const Analyzer = struct {
             }
             const return_type = try typeFromReturn(self, ast_function.return_type, ast_function.position);
             if (return_type == .view) return self.fail(ast_function.position, "a view type must be borrowed as '@T[..]' or '&T[..]'");
+            var deferred_callback_index: ?usize = null;
+            for (parameter_types.items, 0..) |parameter_type, parameter_index| {
+                if (parameter_type != .function or !parameter_type.function.deferred) continue;
+                if (deferred_callback_index != null) {
+                    return self.fail(ast_function.position, "a native deferred registration requires exactly one 'deferred func' parameter");
+                }
+                deferred_callback_index = parameter_index;
+            }
+            if (deferred_callback_index != null) {
+                if (!ast_function.is_native) {
+                    return self.fail(ast_function.position, "a 'deferred func' parameter is only valid in a native registration function");
+                }
+                if (!self.isNativeResourceType(return_type)) {
+                    return self.fail(ast_function.position, "a native deferred registration must return one native resource directly");
+                }
+            }
             var return_borrow_parameter: ?usize = null;
             if (return_type == .reference) {
                 const reference = ast_function.return_type.reference;
@@ -1790,6 +1840,7 @@ pub const Analyzer = struct {
                 .native_module_name = native_module_name,
                 .native_function_name = native_function_name,
                 .return_borrow_parameter = return_borrow_parameter,
+                .deferred_callback_index = deferred_callback_index,
             });
         }
         if (main_count == 0) return self.fail(.{ .line = 1, .column = 1 }, "missing 'main' function");
@@ -1924,6 +1975,19 @@ pub const Analyzer = struct {
         defer self.current_return_borrow_root = null;
         const function_statements = try self.statements(ast.statements, &scope);
         if (!ast.is_native and try self.isNonCopyableType(symbol.return_type)) {
+            var returned_deferred = DeferredReturnSummary{};
+            try collectReturnedDeferredResourcePaths(self.allocator, function_statements, &returned_deferred);
+            for (self.functions.items) |*candidate| {
+                if (!std.mem.eql(u8, candidate.generated_name, symbol.generated_name)) continue;
+                const inferred_paths = try returned_deferred.paths.toOwnedSlice(self.allocator);
+                if (!deferredResourcePathsEqual(candidate.return_deferred_resource_paths, inferred_paths)) {
+                    self.deferred_return_summary_changed = true;
+                }
+                candidate.return_deferred_resource_paths = inferred_paths;
+                break;
+            }
+        }
+        if (!ast.is_native and try self.isNonCopyableType(symbol.return_type)) {
             var returned_dependencies: std.ArrayList(*BindingState) = .empty;
             try collectReturnedResourceDependencies(self.allocator, function_statements, &returned_dependencies);
             var parameter_dependencies: std.ArrayList(usize) = .empty;
@@ -1965,6 +2029,7 @@ pub const Analyzer = struct {
             .native_module_name = symbol.native_module_name,
             .native_function_name = symbol.native_function_name,
             .borrowed_return_parameter = symbol.return_borrow_parameter,
+            .deferred_callback_index = symbol.deferred_callback_index,
         };
     }
 
@@ -2590,6 +2655,7 @@ pub const Analyzer = struct {
         const state = try self.newBindingState(declared_type);
         if (try self.isNonCopyableType(declared_type)) {
             state.resource_dependencies = initializer.resource_dependencies;
+            state.deferred_resource_paths = initializer.deferred_resource_paths;
             if (!initializer.transfers_resource_dependencies) {
                 for (state.resource_dependencies) |dependency| dependency.resource_dependents += 1;
             }
@@ -2826,6 +2892,9 @@ pub const Analyzer = struct {
             );
             return self.fail(ast_value.position, message);
         }
+        if (symbol.scope_depth < value.lifetime_depth) {
+            return self.fail(ast_value.position, "capturing function value cannot be stored in a longer-lived destination");
+        }
         const target = try self.newExpression(.{
             .type = symbol.type,
             .position = ast.target.position,
@@ -2836,6 +2905,8 @@ pub const Analyzer = struct {
         }
         for (symbol.state.resource_dependencies) |dependency| dependency.resource_dependents -= 1;
         symbol.state.resource_dependencies = value.resource_dependencies;
+        symbol.state.deferred_resource_paths = value.deferred_resource_paths;
+        symbol.state.lifetime_depth = value.lifetime_depth;
         if (!value.transfers_resource_dependencies) {
             for (symbol.state.resource_dependencies) |dependency| dependency.resource_dependents += 1;
         }
@@ -2888,6 +2959,13 @@ pub const Analyzer = struct {
                     },
                     .self, .static => {},
                 };
+                if (target.deferred_storage_state) |state| {
+                    state.deferred_resource_paths = try self.replacedDeferredResourcePaths(
+                        state.deferred_resource_paths,
+                        target.deferred_storage_path,
+                        value.?.deferred_resource_paths,
+                    );
+                }
             },
             .add, .subtract, .multiply, .divide => {
                 value = try self.coerce(value.?, target.type);
@@ -2937,6 +3015,8 @@ pub const Analyzer = struct {
                     .state = symbol.state,
                     .available = symbol.state.owner_available,
                     .consumed_at = symbol.state.consumed_at,
+                    .lifetime_depth = symbol.state.lifetime_depth,
+                    .deferred_resource_paths = symbol.state.deferred_resource_paths,
                 });
             }
         }
@@ -2950,6 +3030,8 @@ pub const Analyzer = struct {
             .state = entry.state,
             .available = entry.state.owner_available,
             .consumed_at = entry.state.consumed_at,
+            .lifetime_depth = entry.state.lifetime_depth,
+            .deferred_resource_paths = entry.state.deferred_resource_paths,
         };
         return snapshots;
     }
@@ -2958,10 +3040,12 @@ pub const Analyzer = struct {
         for (snapshot) |entry| {
             entry.state.owner_available = entry.available;
             entry.state.consumed_at = entry.consumed_at;
+            entry.state.lifetime_depth = entry.lifetime_depth;
+            entry.state.deferred_resource_paths = entry.deferred_resource_paths;
         }
     }
 
-    fn mergeOwnerStates(base: []const OwnerStateSnapshot, outcomes: []const []const OwnerStateSnapshot) void {
+    fn mergeOwnerStates(self: *Analyzer, base: []const OwnerStateSnapshot, outcomes: []const []const OwnerStateSnapshot) Allocator.Error!void {
         if (outcomes.len == 0) {
             restoreOwnerStates(base);
             return;
@@ -2976,6 +3060,21 @@ pub const Analyzer = struct {
             }
             entry.state.owner_available = available;
             entry.state.consumed_at = if (available) null else consumed_at;
+            var lifetime_depth: usize = 0;
+            for (outcomes) |outcome| lifetime_depth = @max(lifetime_depth, outcome[index].lifetime_depth);
+            entry.state.lifetime_depth = lifetime_depth;
+            var deferred_resource_paths: std.ArrayList(DeferredResourcePath) = .empty;
+            for (outcomes[0][index].deferred_resource_paths) |path| {
+                var present_everywhere = true;
+                for (outcomes[1..]) |outcome| {
+                    if (!containsDeferredResourcePath(outcome[index].deferred_resource_paths, path)) {
+                        present_everywhere = false;
+                        break;
+                    }
+                }
+                if (present_everywhere) try deferred_resource_paths.append(self.allocator, path);
+            }
+            entry.state.deferred_resource_paths = try deferred_resource_paths.toOwnedSlice(self.allocator);
         }
     }
 
@@ -2986,13 +3085,28 @@ pub const Analyzer = struct {
         loop_position: Source.Position,
     ) AnalyzeError!void {
         for (expected, actual) |before, after| {
-            if (before.available == after.available) continue;
+            if (before.available == after.available and
+                before.lifetime_depth == after.lifetime_depth and
+                deferredResourcePathsEqual(before.deferred_resource_paths, after.deferred_resource_paths)) continue;
             const position = after.consumed_at orelse loop_position;
-            const message = try std.fmt.allocPrint(
-                self.allocator,
-                "unique resource '{s}' must have the same availability on every path returning to the loop header",
-                .{before.name},
-            );
+            const message = if (before.available != after.available)
+                try std.fmt.allocPrint(
+                    self.allocator,
+                    "unique resource '{s}' must have the same availability on every path returning to the loop header",
+                    .{before.name},
+                )
+            else if (before.lifetime_depth != after.lifetime_depth)
+                try std.fmt.allocPrint(
+                    self.allocator,
+                    "unique resource '{s}' must keep the same capture lifetime on every path returning to the loop header",
+                    .{before.name},
+                )
+            else
+                try std.fmt.allocPrint(
+                    self.allocator,
+                    "unique resource '{s}' must keep the same deferred callback provenance on every path returning to the loop header",
+                    .{before.name},
+                );
             return self.fail(position, message);
         }
     }
@@ -3039,7 +3153,7 @@ pub const Analyzer = struct {
         } else {
             try outcomes.append(self.allocator, remaining);
         }
-        mergeOwnerStates(tracked, outcomes.items);
+        try self.mergeOwnerStates(tracked, outcomes.items);
 
         return .{ .if_statement = .{
             .condition = condition,
@@ -3080,7 +3194,7 @@ pub const Analyzer = struct {
         var exits: std.ArrayList([]const OwnerStateSnapshot) = .empty;
         try exits.append(self.allocator, condition_exit);
         try exits.appendSlice(self.allocator, flow.break_states.items);
-        mergeOwnerStates(tracked, exits.items);
+        try self.mergeOwnerStates(tracked, exits.items);
         return .{ .while_statement = .{
             .condition = condition,
             .body = body,
@@ -3320,7 +3434,7 @@ pub const Analyzer = struct {
         var exits: std.ArrayList([]const OwnerStateSnapshot) = .empty;
         try exits.append(self.allocator, tracked);
         try exits.appendSlice(self.allocator, flow.break_states.items);
-        mergeOwnerStates(tracked, exits.items);
+        try self.mergeOwnerStates(tracked, exits.items);
         return .{ .for_statement = .{
             .generated_name = generated_name,
             .element_type = element_type,
@@ -3715,6 +3829,8 @@ pub const Analyzer = struct {
             .borrowed_parameter = symbol.state.borrowed_parameter,
             .owner_state = symbol.state,
             .resource_dependencies = symbol.state.resource_dependencies,
+            .deferred_resource_paths = symbol.state.deferred_resource_paths,
+            .deferred_storage_state = symbol.state,
             .value = if (narrowed)
                 .{ .optional_unwrap = .{ .generated_name = symbol.generated_name, .capture_box = &symbol.state.capture_box } }
             else
@@ -3956,6 +4072,7 @@ pub const Analyzer = struct {
     }
 
     fn callExpression(self: *Analyzer, call: Ast.Expression.Call, scope: *const Scope) AnalyzeError!*Expression {
+        if (std.mem.eql(u8, call.name, "dispatch_callbacks")) return self.dispatchCallbacksExpression(call, scope);
         if (findSymbol(scope, call.name)) |symbol| {
             if (symbol.type != .function) {
                 const message = try std.fmt.allocPrint(self.allocator, "value '{s}' is not callable", .{call.name});
@@ -3979,6 +4096,7 @@ pub const Analyzer = struct {
         }
         const function_symbol = try self.resolveFunctionOverload(call.name, call.name_position, call.arguments, scope, candidates.items);
         var arguments: std.ArrayList(*Expression) = .empty;
+        var lifetime_depth: usize = 0;
         var transient_borrows: std.ArrayList(Borrow) = .empty;
         defer for (transient_borrows.items) |borrow| releaseBorrow(borrow);
         for (call.arguments, function_symbol.parameter_types, function_symbol.parameter_modes, function_symbol.parameter_stored, 0..) |argument, expected_type, mode, is_stored, index| {
@@ -3991,11 +4109,21 @@ pub const Analyzer = struct {
                 const message = try std.fmt.allocPrint(self.allocator, "argument {d} of '{s}' expects '{s}', found '{s}'", .{ index + 1, call.name, typeName(expected_type), typeName(value.type) });
                 return self.fail(argument.position, message);
             }
+            if (function_symbol.is_native and
+                !function_symbol.is_native_resource_drop and
+                mode == .value and
+                value.deferred_resource_paths.len != 0)
+            {
+                return self.fail(argument.position, "a deferred subscription can only be transferred to its declared native destructor");
+            }
             if (mode == .value and !function_symbol.is_native_resource_drop) try self.rejectUniqueOwnerArgument(value, argument.position);
             if (is_stored and value.lifetime_depth != 0) {
                 return self.fail(argument.position, "capturing callback cannot be passed to a parameter whose value escapes the call");
             }
             try arguments.append(self.allocator, value);
+            if (expected_type == .function and expected_type.function.deferred) {
+                lifetime_depth = @max(lifetime_depth, value.lifetime_depth);
+            }
             try self.retainTransientBorrow(&transient_borrows, value);
         }
         const resource_dependencies = if (try self.isNonCopyableType(function_symbol.return_type))
@@ -4014,9 +4142,14 @@ pub const Analyzer = struct {
         return self.newExpression(.{
             .type = function_symbol.return_type,
             .position = call.name_position,
+            .lifetime_depth = lifetime_depth,
             .borrow = returned_borrow,
             .owns_borrow = returned_borrow != null,
             .resource_dependencies = resource_dependencies,
+            .deferred_resource_paths = if (function_symbol.deferred_callback_index != null)
+                &.{&.{}}
+            else
+                function_symbol.return_deferred_resource_paths,
             .value = .{ .call = .{
                 .generated_name = function_symbol.generated_name,
                 .arguments = try arguments.toOwnedSlice(self.allocator),
@@ -4037,6 +4170,37 @@ pub const Analyzer = struct {
                     &.{},
                 .native_parameter_modes = if (function_symbol.is_native) function_symbol.parameter_modes else &.{},
                 .borrowed_return_parameter = function_symbol.return_borrow_parameter,
+                .is_native_resource_drop = function_symbol.is_native_resource_drop,
+            } },
+        });
+    }
+
+    fn dispatchCallbacksExpression(
+        self: *Analyzer,
+        call: Ast.Expression.Call,
+        scope: *const Scope,
+    ) AnalyzeError!*Expression {
+        if (call.type_arguments.len != 0 or call.named_fields != null or call.arguments.len != 1) {
+            return self.fail(call.name_position, "dispatch_callbacks expects exactly one subscription resource place");
+        }
+        const subscription = try self.expression(call.arguments[0], scope);
+        if (!isPlaceValue(subscription)) {
+            return self.fail(call.arguments[0].position, "dispatch_callbacks requires a readable subscription resource place");
+        }
+        if (!self.isNativeResourceType(subscription.type) or
+            (!hasDirectDeferredResource(subscription) and !self.inferring_deferred_return_summaries))
+        {
+            return self.fail(call.arguments[0].position, "dispatch_callbacks requires a native resource returned by a deferred registration");
+        }
+        return self.newExpression(.{
+            .type = .int,
+            .position = call.name_position,
+            .value = .{ .call = .{
+                .generated_name = "silexDispatchCallbacks",
+                .arguments = try self.allocator.dupe(*Expression, &.{subscription}),
+                .is_native = false,
+                .native_module_name = null,
+                .native_function_name = null,
             } },
         });
     }
@@ -4085,6 +4249,7 @@ pub const Analyzer = struct {
             .function => |value| value,
             else => return self.fail(position, "expression is not callable"),
         };
+        if (function_type.deferred) return self.fail(position, "a 'deferred func' cannot be called directly in Silex");
         if (ast_arguments.len != function_type.parameters.len) {
             const message = try std.fmt.allocPrint(self.allocator, "function value expects {d} arguments, found {d}", .{ function_type.parameters.len, ast_arguments.len });
             return self.fail(position, message);
@@ -4132,6 +4297,9 @@ pub const Analyzer = struct {
             }
             const parameter_type = try typeFromAnnotation(self, parameter.type, parameter.position);
             try self.validateParameterMode(parameter_type, parameter.mode, parameter.position, false);
+            if (lambda.deferred and (parameter.mode != .value or !isNativeCallbackScalarType(parameter_type))) {
+                return self.fail(parameter.position, "a 'deferred func' parameter must be a scalar bool or numeric value");
+            }
             const generated_name = try std.fmt.allocPrint(self.allocator, "silexValue{d}", .{self.next_symbol_id});
             self.next_symbol_id += 1;
             try parameter_types.append(self.allocator, parameter_type);
@@ -4154,10 +4322,12 @@ pub const Analyzer = struct {
             });
         }
         const return_type = try typeFromReturn(self, lambda.return_type, lambda.position);
+        if (lambda.deferred and return_type != .void) return self.fail(lambda.position, "a 'deferred func' must return 'void'");
         try self.rejectUniqueOwnerComposition(return_type, true, lambda.position);
         const return_pointer = try self.allocator.create(Type);
         return_pointer.* = return_type;
         var lambda_type: Type = .{ .function = .{
+            .deferred = lambda.deferred,
             .parameters = try parameter_types.toOwnedSlice(self.allocator),
             .parameter_modes = try parameter_modes.toOwnedSlice(self.allocator),
             .return_type = return_pointer,
@@ -4790,7 +4960,7 @@ pub const Analyzer = struct {
                 return self.fail(ast_match.subject.position, message);
             }
         }
-        mergeOwnerStates(tracked, owner_outcomes.items);
+        try self.mergeOwnerStates(tracked, owner_outcomes.items);
         self.releaseTransientBorrow(subject);
         return self.newExpression(.{
             .type = if (expression_form orelse false) result_type.? else .void,
@@ -5754,6 +5924,7 @@ pub const Analyzer = struct {
         }
 
         var values: std.ArrayList(*Expression) = .empty;
+        var deferred_resource_paths: std.ArrayList(DeferredResourcePath) = .empty;
         var lifetime_depth: usize = 0;
         for (structure.fields) |expected_field| {
             var matching: ?Ast.Expression.FieldInitializer = null;
@@ -5785,12 +5956,19 @@ pub const Analyzer = struct {
             }
             if (matching) |field| try self.rejectUniqueOwnerArgument(value, field.value.position);
             try values.append(self.allocator, value);
+            for (value.deferred_resource_paths) |path| {
+                const prefixed = try self.allocator.alloc([]const u8, path.len + 1);
+                prefixed[0] = expected_field.generated_name;
+                @memcpy(prefixed[1..], path);
+                try deferred_resource_paths.append(self.allocator, prefixed);
+            }
             lifetime_depth = @max(lifetime_depth, value.lifetime_depth);
         }
         return self.newExpression(.{
             .type = .{ .structure = self.structureType(structure_index) },
             .position = initializer.name_position,
             .lifetime_depth = lifetime_depth,
+            .deferred_resource_paths = try deferred_resource_paths.toOwnedSlice(self.allocator),
             .value = .{ .structure_initializer = .{
                 .generated_name = structure.generated_name,
                 .fields = try values.toOwnedSlice(self.allocator),
@@ -5942,6 +6120,9 @@ pub const Analyzer = struct {
                 .position = member.name_position,
                 .lifetime_depth = object.lifetime_depth,
                 .borrowed_parameter = object.borrowed_parameter,
+                .deferred_resource_paths = try self.projectDeferredResourcePaths(object.deferred_resource_paths, field.generated_name),
+                .deferred_storage_state = object.deferred_storage_state,
+                .deferred_storage_path = try self.appendDeferredStoragePath(object.deferred_storage_path, field.generated_name),
                 .value = .{ .member_access = .{
                     .object = object,
                     .generated_name = field.generated_name,
@@ -6082,6 +6263,9 @@ pub const Analyzer = struct {
         is_native: bool,
     ) AnalyzeError!void {
         try self.rejectUniqueOwnerComposition(type_value, true, position);
+        if (type_value == .function and type_value.function.deferred and !is_native) {
+            return self.fail(position, "a 'deferred func' parameter is only valid in a native registration function");
+        }
         if (mode == .value) {
             if (type_value == .view) return self.fail(position, "a view type must be borrowed as '@T[..]' or '&T[..]'");
             return;
@@ -6128,10 +6312,9 @@ pub const Analyzer = struct {
         allow_direct_owner: bool,
         position: Source.Position,
     ) AnalyzeError!void {
-        _ = self;
-        _ = type_value;
-        _ = allow_direct_owner;
-        _ = position;
+        if (!containsDeferredCallback(type_value)) return;
+        if (allow_direct_owner and type_value == .function and type_value.function.deferred) return;
+        return self.fail(position, "a 'deferred func' cannot be stored in another type");
     }
 
     fn uniqueOwnerCause(self: *const Analyzer, type_value: Type) Allocator.Error!?StructureType {
@@ -6141,12 +6324,14 @@ pub const Analyzer = struct {
     }
 
     fn isNonCopyableType(self: *const Analyzer, type_value: Type) Allocator.Error!bool {
+        if (type_value == .function and type_value.function.deferred) return true;
         return (try self.uniqueOwnerCause(type_value)) != null;
     }
 
     fn isNonCopyableTemporary(self: *const Analyzer, expression_value: *const Expression) bool {
         return switch (expression_value.value) {
             .move_expression,
+            .lambda,
             .structure_initializer,
             .enum_initializer,
             .sequence_literal,
@@ -6614,12 +6799,16 @@ pub const Analyzer = struct {
         }
         const resource_dependencies = symbol.state.resource_dependencies;
         symbol.state.resource_dependencies = &.{};
+        const deferred_resource_paths = symbol.state.deferred_resource_paths;
+        symbol.state.deferred_resource_paths = &.{};
         return self.newExpression(.{
             .type = symbol.type,
             .position = move_value.operator_position,
+            .lifetime_depth = symbol.state.lifetime_depth,
             .owner_state = symbol.state,
             .resource_dependencies = resource_dependencies,
             .transfers_resource_dependencies = true,
+            .deferred_resource_paths = deferred_resource_paths,
             .value = .{ .move_expression = .{ .operand = operand } },
         });
     }
@@ -7157,6 +7346,49 @@ pub const Analyzer = struct {
         return result;
     }
 
+    fn projectDeferredResourcePaths(
+        self: *Analyzer,
+        paths: []const DeferredResourcePath,
+        field_name: []const u8,
+    ) Allocator.Error![]const DeferredResourcePath {
+        var projected: std.ArrayList(DeferredResourcePath) = .empty;
+        for (paths) |path| {
+            if (path.len == 0 or !std.mem.eql(u8, path[0], field_name)) continue;
+            try projected.append(self.allocator, path[1..]);
+        }
+        return projected.toOwnedSlice(self.allocator);
+    }
+
+    fn appendDeferredStoragePath(
+        self: *Analyzer,
+        path: DeferredResourcePath,
+        field_name: []const u8,
+    ) Allocator.Error!DeferredResourcePath {
+        const appended = try self.allocator.alloc([]const u8, path.len + 1);
+        @memcpy(appended[0..path.len], path);
+        appended[path.len] = field_name;
+        return appended;
+    }
+
+    fn replacedDeferredResourcePaths(
+        self: *Analyzer,
+        existing: []const DeferredResourcePath,
+        destination: DeferredResourcePath,
+        replacement: []const DeferredResourcePath,
+    ) Allocator.Error![]const DeferredResourcePath {
+        var paths: std.ArrayList(DeferredResourcePath) = .empty;
+        for (existing) |path| {
+            if (!deferredResourcePathStartsWith(path, destination)) try paths.append(self.allocator, path);
+        }
+        for (replacement) |path| {
+            const prefixed = try self.allocator.alloc([]const u8, destination.len + path.len);
+            @memcpy(prefixed[0..destination.len], destination);
+            @memcpy(prefixed[destination.len..], path);
+            try paths.append(self.allocator, prefixed);
+        }
+        return paths.toOwnedSlice(self.allocator);
+    }
+
     fn recordLambdaCapture(
         self: *Analyzer,
         lambda: *LambdaContext,
@@ -7409,6 +7641,81 @@ fn containsIndex(values: []const usize, candidate: usize) bool {
     return false;
 }
 
+fn hasDirectDeferredResource(expression_value: *const Expression) bool {
+    for (expression_value.deferred_resource_paths) |path| {
+        if (path.len == 0) return true;
+    }
+    return false;
+}
+
+fn deferredResourcePathStartsWith(path: DeferredResourcePath, prefix: DeferredResourcePath) bool {
+    if (path.len < prefix.len) return false;
+    for (path[0..prefix.len], prefix) |component, expected| {
+        if (!std.mem.eql(u8, component, expected)) return false;
+    }
+    return true;
+}
+
+fn containsDeferredResourcePath(paths: []const DeferredResourcePath, candidate: DeferredResourcePath) bool {
+    for (paths) |path| {
+        if (path.len != candidate.len) continue;
+        if (deferredResourcePathStartsWith(path, candidate)) return true;
+    }
+    return false;
+}
+
+fn deferredResourcePathsEqual(left: []const DeferredResourcePath, right: []const DeferredResourcePath) bool {
+    if (left.len != right.len) return false;
+    for (left) |path| if (!containsDeferredResourcePath(right, path)) return false;
+    return true;
+}
+
+const DeferredReturnSummary = struct {
+    paths: std.ArrayList(DeferredResourcePath) = .empty,
+    saw_return: bool = false,
+};
+
+fn mergeReturnedDeferredResourcePaths(
+    allocator: Allocator,
+    summary: *DeferredReturnSummary,
+    candidate: []const DeferredResourcePath,
+) Allocator.Error!void {
+    if (!summary.saw_return) {
+        try summary.paths.appendSlice(allocator, candidate);
+        summary.saw_return = true;
+        return;
+    }
+    var index = summary.paths.items.len;
+    while (index != 0) {
+        index -= 1;
+        if (!containsDeferredResourcePath(candidate, summary.paths.items[index])) {
+            _ = summary.paths.orderedRemove(index);
+        }
+    }
+}
+
+fn collectReturnedDeferredResourcePaths(
+    allocator: Allocator,
+    statements_value: []const Statement,
+    summary: *DeferredReturnSummary,
+) Allocator.Error!void {
+    for (statements_value) |statement| switch (statement) {
+        .return_statement => |returned| if (returned) |value| {
+            try mergeReturnedDeferredResourcePaths(allocator, summary, value.deferred_resource_paths);
+        },
+        .if_statement => |conditional| {
+            try collectReturnedDeferredResourcePaths(allocator, conditional.body, summary);
+            for (conditional.alternatives) |alternative| {
+                try collectReturnedDeferredResourcePaths(allocator, alternative.body, summary);
+            }
+            if (conditional.else_body) |body| try collectReturnedDeferredResourcePaths(allocator, body, summary);
+        },
+        .while_statement => |loop| try collectReturnedDeferredResourcePaths(allocator, loop.body, summary),
+        .for_statement => |loop| try collectReturnedDeferredResourcePaths(allocator, loop.body, summary),
+        else => {},
+    };
+}
+
 fn collectReturnedResourceDependencies(
     allocator: Allocator,
     statements_value: []const Statement,
@@ -7583,7 +7890,11 @@ fn typeFromReturn(
         .generic_structure => |generic| typeFromAnnotation(self, .{ .generic_structure = generic }, position),
         .type_parameter => |name| typeFromAnnotation(self, .{ .type_parameter = name }, position),
         .reference => |reference| typeFromReference(self, reference, position),
-        .function => |function| typeFromFunction(self, function, position),
+        .function => |function| function_return: {
+            const value = try typeFromFunction(self, function, position);
+            if (value.function.deferred) return self.fail(position, "a Silex function cannot return 'deferred func'");
+            break :function_return value;
+        },
         .optional => |contained| typeFromAnnotation(self, .{ .optional = contained }, position),
     };
 }
@@ -7608,7 +7919,18 @@ fn typeFromFunction(
     else
         .void;
     if (return_type.* == .reference) return self.fail(position, "a function value cannot return a reference");
+    if (function.deferred and return_type.* != .void) {
+        return self.fail(position, "a 'deferred func' must return 'void'");
+    }
+    if (function.deferred) {
+        for (parameters.items, function.parameter_modes) |parameter, mode| {
+            if (mode != .value or !isNativeCallbackScalarType(parameter)) {
+                return self.fail(position, "a 'deferred func' parameter must be a scalar bool or numeric value");
+            }
+        }
+    }
     return .{ .function = .{
+        .deferred = function.deferred,
         .parameters = try parameters.toOwnedSlice(self.allocator),
         .parameter_modes = try self.allocator.dupe(Ast.ParameterMode, function.parameter_modes),
         .return_type = return_type,
@@ -7866,6 +8188,18 @@ fn isUniqueOwnerType(type_value: Type) bool {
     return type_value == .structure and type_value.structure.is_owner;
 }
 
+fn containsDeferredCallback(type_value: Type) bool {
+    return switch (type_value) {
+        .function => |function| function.deferred,
+        .optional => |contained| containsDeferredCallback(contained.*),
+        .list => |element| containsDeferredCallback(element.*),
+        .fixed_array => |array| containsDeferredCallback(array.element.*),
+        .view => |element| containsDeferredCallback(element.*),
+        .reference => |reference| containsDeferredCallback(reference.target.*),
+        else => false,
+    };
+}
+
 fn typeEqual(left: Type, right: Type) bool {
     return switch (left) {
         .void => right == .void,
@@ -7899,6 +8233,7 @@ fn typeEqual(left: Type, right: Type) bool {
         },
         .function => |left_function| switch (right) {
             .function => |right_function| function_type: {
+                if (left_function.deferred != right_function.deferred) break :function_type false;
                 if (left_function.parameters.len != right_function.parameters.len) break :function_type false;
                 if (!typeEqual(left_function.return_type.*, right_function.return_type.*)) break :function_type false;
                 for (left_function.parameters, left_function.parameter_modes, right_function.parameters, right_function.parameter_modes) |left_parameter, left_mode, right_parameter, right_mode| {
@@ -8162,7 +8497,7 @@ fn typeName(value: Type) []const u8 {
         .fixed_array => "array",
         .view => "view",
         .reference => |reference| if (reference.mutable) "reference&" else "reference@",
-        .function => "func",
+        .function => |function| if (function.deferred) "deferred func" else "func",
         .optional => "optional",
         .null => "null",
         .structure => |structure_type| structure_type.source_name,
@@ -8185,7 +8520,7 @@ fn allocatedSignatureTypeName(allocator: Allocator, value: Type) Allocator.Error
     return switch (value) {
         .function => |function| function_name: {
             var output: std.ArrayList(u8) = .empty;
-            try output.appendSlice(allocator, "func(");
+            try output.appendSlice(allocator, if (function.deferred) "deferred func(" else "func(");
             for (function.parameters, function.parameter_modes, 0..) |parameter, mode, index| {
                 if (index != 0) try output.appendSlice(allocator, ", ");
                 if (mode == .borrow) try output.append(allocator, '@');
@@ -8448,6 +8783,47 @@ fn expectSemanticSuccess(source: []const u8) !void {
         if (analyzer.diagnostic) |diagnostic| std.debug.print("unexpected semantic error: {s}\n", .{diagnostic.message});
         return failure;
     };
+}
+
+fn analyzeDeferredNativeTest(allocator: Allocator, source: []const u8) !Program {
+    const Parser = @import("Parser.zig").Parser;
+    var parser = Parser.init(allocator, source);
+    var analyzer = Analyzer.init(allocator);
+    analyzer.native_module_names = &.{"Test"};
+    return analyzer.analyze(try resolveDeferredNativeTestProgram(allocator, try parser.parse()));
+}
+
+fn resolveDeferredNativeTestProgram(allocator: Allocator, program: Ast.Program) !Ast.Program {
+    const Modules = @import("Modules.zig");
+    const project = @import("Project.zig").Project{
+        .program_name = "Test",
+        .target_module = 0,
+        .modules = &.{.{ .name = "Test", .sources = &.{"Test.sx"} }},
+        .single_file = false,
+    };
+    var resolver = Modules.Resolver.init(allocator, project, &.{.{ .module_index = 0, .program = program }});
+    return resolver.resolve();
+}
+
+fn expectDeferredNativeError(source: []const u8, expected_message: []const u8) !void {
+    const Parser = @import("Parser.zig").Parser;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var parser = Parser.init(allocator, source);
+    var analyzer = Analyzer.init(allocator);
+    analyzer.native_module_names = &.{"Test"};
+    try std.testing.expectError(
+        error.InvalidSource,
+        analyzer.analyze(try resolveDeferredNativeTestProgram(allocator, try parser.parse())),
+    );
+    try std.testing.expectEqualStrings(expected_message, analyzer.diagnostic.?.message);
+}
+
+fn expectDeferredNativeSuccess(source: []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    _ = try analyzeDeferredNativeTest(arena.allocator(), source);
 }
 
 fn expectNativeStructureReturnRejected(source: []const u8) !void {
@@ -10612,6 +10988,239 @@ test "native functions reject read reference parameters" {
     try std.testing.expectEqualStrings(
         "a native function cannot declare an '@T' parameter",
         analyzer.diagnostic.?.message,
+    );
+}
+
+test "deferred native registrations transfer callbacks and expose dispatch" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const program = try analyzeDeferredNativeTest(arena.allocator(),
+        \\pub native resource Watch { drop stop_watch }
+        \\native func start_watch(callback:deferred func(int)) Watch
+        \\func main() {
+        \\    var total = 0
+        \\    var callback:deferred func(int) = deferred func(value:int) { total += value }
+        \\    let watch = start_watch(move callback)
+        \\    assert(dispatch_callbacks(watch) == 0, "empty")
+        \\}
+    );
+    try std.testing.expect(program.functions[1].deferred_callback_index != null);
+    try std.testing.expectEqual(@as(usize, 0), program.functions[1].deferred_callback_index.?);
+    try std.testing.expectEqual(Type.int, program.functions[2].statements[3].assertion.condition.value.binary.left.type);
+}
+
+test "deferred callbacks enforce scalar void signatures" {
+    const resource =
+        \\pub native resource Watch { drop stop_watch }
+    ;
+    try expectDeferredNativeError(
+        resource ++ "\nnative func start_watch(callback:deferred func(int) bool) Watch\nfunc main() {}",
+        "a 'deferred func' must return 'void'",
+    );
+    try expectDeferredNativeError(
+        resource ++ "\nnative func start_watch(callback:deferred func(str)) Watch\nfunc main() {}",
+        "a 'deferred func' parameter must be a scalar bool or numeric value",
+    );
+    try expectDeferredNativeError(
+        resource ++ "\nnative func start_watch(callback:deferred func(@int)) Watch\nfunc main() {}",
+        "a 'deferred func' parameter must be a scalar bool or numeric value",
+    );
+    try expectDeferredNativeError(
+        resource ++ "\nnative func start_watch(callback:deferred func(Watch)) Watch\nfunc main() {}",
+        "a 'deferred func' parameter must be a scalar bool or numeric value",
+    );
+    try expectDeferredNativeError(
+        resource ++ "\nnative func start_watch(callback:deferred func(func())) Watch\nfunc main() {}",
+        "a 'deferred func' parameter must be a scalar bool or numeric value",
+    );
+}
+
+test "deferred callbacks are unique and cannot be called or stored" {
+    try expectDeferredNativeError(
+        "func main() { var callback:deferred func() = deferred func() {}; callback() }",
+        "a 'deferred func' cannot be called directly in Silex",
+    );
+    try expectDeferredNativeError(
+        "func main() { var callback:deferred func() = deferred func() {}; var copy = callback }",
+        "cannot copy noncopyable value 'deferred func'; initialize it directly from a temporary value or use 'move'",
+    );
+    try expectDeferredNativeError(
+        "struct Holder { var callback:deferred func() } func main() {}",
+        "a 'deferred func' cannot be stored in another type",
+    );
+    try expectDeferredNativeError(
+        "func main() { var callback:(deferred func())? = deferred func() {} }",
+        "a 'deferred func' cannot be stored in another type",
+    );
+}
+
+test "deferred registration requires one callback and one direct resource return" {
+    const resource =
+        \\pub native resource Watch { drop stop_watch }
+    ;
+    try expectDeferredNativeError(
+        resource ++ "\nnative func start_watch(first:deferred func(), second:deferred func()) Watch\nfunc main() {}",
+        "a native deferred registration requires exactly one 'deferred func' parameter",
+    );
+    try expectDeferredNativeError(
+        resource ++ "\nnative func start_watch(callback:deferred func()) void\nfunc main() {}",
+        "a native deferred registration must return one native resource directly",
+    );
+    try expectDeferredNativeError(
+        resource ++ "\nnative func start_watch(callback:deferred func()) Watch?\nfunc main() {}",
+        "a native deferred registration must return one native resource directly",
+    );
+    try expectDeferredNativeError(
+        "func consume(callback:deferred func()) {} func main() {}",
+        "a 'deferred func' parameter is only valid in a native registration function",
+    );
+    try expectDeferredNativeError(
+        "func make() deferred func() { return deferred func() {} } func main() {}",
+        "a Silex function cannot return 'deferred func'",
+    );
+}
+
+test "deferred registration requires move and propagates capture lifetime" {
+    const resource =
+        \\pub native resource Watch { drop stop_watch }
+        \\native func start_watch(callback:deferred func(int)) Watch
+    ;
+    try expectDeferredNativeError(
+        resource ++ "\nfunc main() { var callback:deferred func(int) = deferred func(value:int) {}; let watch = start_watch(callback) }",
+        "noncopyable value 'deferred func' must be passed with 'move'",
+    );
+    try expectDeferredNativeError(
+        resource ++ "\nfunc subscribe() Watch { var total = 0; return start_watch(deferred func(value:int) { total += value }) } func main() {}",
+        "capturing function value cannot be returned from its lexical scope",
+    );
+    try expectDeferredNativeError(
+        resource ++ "\nnative func create_watch() Watch\nfunc leak() Watch { var watch = create_watch(); var total = 0; watch = start_watch(deferred func(value:int) { total += value }); return move watch } func main() {}",
+        "capturing function value cannot be returned from its lexical scope",
+    );
+    try expectDeferredNativeError(
+        resource ++ "\nnative func create_watch() Watch\nfunc leak(use_deferred:bool) Watch { var watch = create_watch(); var total = 0; if use_deferred { watch = start_watch(deferred func(value:int) { total += value }) } else { watch = create_watch() } return move watch } func main() {}",
+        "capturing function value cannot be returned from its lexical scope",
+    );
+    try expectDeferredNativeError(
+        resource ++ "\nfunc main() { let first = start_watch(deferred func(value:int) {}); let second = start_watch(deferred func(value:int) { dispatch_callbacks(first) }) }",
+        "noncopyable value 'Test.Watch' cannot be captured by a lambda",
+    );
+    try expectDeferredNativeError(
+        resource ++ "\nfunc invalid(value:@int) { var callback:deferred func(int) = deferred func(event:int) { print(value + event) } } func main() {}",
+        "a read-reference parameter cannot be captured by a lambda",
+    );
+    try expectDeferredNativeError(
+        resource ++ "\nfunc main() { var first:deferred func(int) = deferred func(value:int) {}; var second:deferred func(int) = deferred func(value:int) { var captured = move first } }",
+        "noncopyable value 'deferred func' cannot be captured by a lambda",
+    );
+}
+
+test "deferred subscriptions cannot transfer ownership to ordinary native calls" {
+    try expectDeferredNativeError(
+        \\pub native resource Watch { drop stop_watch }
+        \\native func start_watch(callback:deferred func()) Watch
+        \\native func retain_watch(watch:Watch) void
+        \\func main() {
+        \\    let watch = start_watch(deferred func() {})
+        \\    retain_watch(move watch)
+        \\}
+    ,
+        "a deferred subscription can only be transferred to its declared native destructor",
+    );
+}
+
+test "dispatch callbacks rejects ordinary and destroyed resources" {
+    const declarations =
+        \\pub native resource Watch { drop stop_watch }
+        \\pub native resource Other { drop stop_other }
+        \\native func start_watch(callback:deferred func()) Watch
+        \\native func create_watch() Watch
+        \\native func create_other() Other
+    ;
+    try expectDeferredNativeError(
+        declarations ++ "\nfunc main() { let ordinary = create_watch(); dispatch_callbacks(ordinary) }",
+        "dispatch_callbacks requires a native resource returned by a deferred registration",
+    );
+    try expectDeferredNativeError(
+        declarations ++ "\nstruct Watches { var subscription:Watch; var ordinary:Watch } func main() { let watches = Watches(subscription:start_watch(deferred func() {}), ordinary:create_watch()); dispatch_callbacks(watches.ordinary) }",
+        "dispatch_callbacks requires a native resource returned by a deferred registration",
+    );
+    try expectDeferredNativeError(
+        declarations ++ "\nstruct Watches { var subscription:Watch } func main() { var watches = Watches(subscription:start_watch(deferred func() {})); watches.subscription = create_watch(); dispatch_callbacks(watches.subscription) }",
+        "dispatch_callbacks requires a native resource returned by a deferred registration",
+    );
+    try expectDeferredNativeError(
+        declarations ++ "\nfunc main() { var watch = create_watch(); if true { watch = start_watch(deferred func() {}) } else { watch = create_watch() } dispatch_callbacks(watch) }",
+        "dispatch_callbacks requires a native resource returned by a deferred registration",
+    );
+    try expectDeferredNativeError(
+        declarations ++ "\nfunc main() { let other = create_other(); dispatch_callbacks(other) }",
+        "dispatch_callbacks requires a native resource returned by a deferred registration",
+    );
+
+    const Parser = @import("Parser.zig").Parser;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var parser = Parser.init(allocator, declarations ++ "\nfunc main() { let watch = start_watch(deferred func() {}); stop_watch(watch); dispatch_callbacks(watch) }");
+    var analyzer = Analyzer.init(allocator);
+    analyzer.native_module_names = &.{"Test"};
+    try std.testing.expectError(error.InvalidSource, analyzer.analyze(try resolveDeferredNativeTestProgram(allocator, try parser.parse())));
+    try std.testing.expect(std.mem.startsWith(u8, analyzer.diagnostic.?.message, "noncopyable value 'watch' was consumed by 'move'"));
+}
+
+test "deferred resource provenance follows moves and aggregate fields" {
+    try expectDeferredNativeSuccess(
+        \\pub native resource Watch { drop stop_watch }
+        \\native func start_watch(callback:deferred func()) Watch
+        \\native func create_watch() Watch
+        \\struct Watches { var subscription:Watch; var ordinary:Watch }
+        \\func main() {
+        \\    let subscription = start_watch(deferred func() {})
+        \\    let moved = move subscription
+        \\    let watches = Watches(subscription:move moved, ordinary:create_watch())
+        \\    dispatch_callbacks(watches.subscription)
+        \\    var replaced = Watches(subscription:create_watch(), ordinary:create_watch())
+        \\    replaced.subscription = start_watch(deferred func() {})
+        \\    dispatch_callbacks(replaced.subscription)
+        \\    var branched = create_watch()
+        \\    if true { branched = start_watch(deferred func() {}) }
+        \\    else { branched = start_watch(deferred func() {}) }
+        \\    dispatch_callbacks(branched)
+        \\}
+    );
+    try expectDeferredNativeSuccess(
+        \\pub native resource Watch { drop stop_watch }
+        \\native func start_watch(callback:deferred func()) Watch
+        \\func main() {
+        \\    let watch = subscribe()
+        \\    dispatch_callbacks(watch)
+        \\}
+        \\func subscribe() Watch { return start_watch(deferred func() {}) }
+    );
+    try expectDeferredNativeSuccess(
+        \\pub native resource Watch { drop stop_watch }
+        \\native func start_watch(callback:deferred func()) Watch
+        \\func subscribe() Watch { return start_watch(deferred func() {}) }
+        \\func main() {
+        \\    let watch = subscribe()
+        \\    dispatch_callbacks(watch)
+        \\}
+    );
+    try expectDeferredNativeError(
+        \\pub native resource Watch { drop stop_watch }
+        \\native func start_watch(callback:deferred func()) Watch
+        \\native func create_watch() Watch
+        \\func maybe_subscribe(use_deferred:bool) Watch {
+        \\    if use_deferred { return start_watch(deferred func() {}) }
+        \\    return create_watch()
+        \\}
+        \\func main() {
+        \\    let watch = maybe_subscribe(true)
+        \\    dispatch_callbacks(watch)
+        \\}
+    ,
+        "dispatch_callbacks requires a native resource returned by a deferred registration",
     );
 }
 

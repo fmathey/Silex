@@ -1,0 +1,5 @@
+use NativeDeferredCallbacks as Native
+
+func main() {
+    Native.trigger_null_return()
+}

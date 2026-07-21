@@ -1,0 +1,19 @@
+{
+  "native": {
+    "defines": {
+      "SILEX_DEFERRED_CALLBACK_TEST_INSTRUMENTATION": "1"
+    },
+    "sources": {
+      "cpp": [
+        "Module.cpp"
+      ]
+    },
+    "targets": {
+      "linux": {
+        "system_libraries": [
+          "pthread"
+        ]
+      }
+    }
+  }
+}

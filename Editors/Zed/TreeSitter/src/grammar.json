@@ -1632,6 +1632,22 @@
       "type": "SEQ",
       "members": [
         {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "deferred",
+              "content": {
+                "type": "STRING",
+                "value": "deferred"
+              }
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
           "type": "STRING",
           "value": "func"
         },
@@ -3413,6 +3429,22 @@
     "lambda_expression": {
       "type": "SEQ",
       "members": [
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "deferred",
+              "content": {
+                "type": "STRING",
+                "value": "deferred"
+              }
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
         {
           "type": "STRING",
           "value": "func"

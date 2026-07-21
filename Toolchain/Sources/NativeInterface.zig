@@ -1075,6 +1075,37 @@ test "native headers expose synchronous scalar callbacks" {
     ) != null);
 }
 
+test "native headers expose deferred callbacks with the synchronous C shape" {
+    const Parser = @import("Parser.zig").Parser;
+    const Modules = @import("Modules.zig");
+    const Project = @import("Project.zig").Project;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var parser = Parser.init(allocator,
+        \\pub native resource Watch { drop stop_watch }
+        \\native func start_watch(callback:deferred func(int)) Watch
+        \\func main() {}
+    );
+    const project = Project{
+        .program_name = "Events",
+        .target_module = 0,
+        .modules = &.{.{ .name = "Events", .sources = &.{"Events.sx"} }},
+        .single_file = false,
+    };
+    var resolver = Modules.Resolver.init(allocator, project, &.{.{ .module_index = 0, .program = try parser.parse() }});
+    var analyzer = Semantic.Analyzer.init(allocator);
+    analyzer.native_module_names = &.{"Events"};
+    const header = try renderHeader(allocator, try analyzer.analyze(try resolver.resolve()), "Events");
+
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        header,
+        "SilexNative_Events_Watch* silexNative_Events_start_watch(void (*silexValue1)(void*, int64_t), void* silexValue1_context);",
+    ) != null);
+}
+
 test "native headers expose owned uint8 list returns" {
     const Parser = @import("Parser.zig").Parser;
     const Generics = @import("Generics.zig");

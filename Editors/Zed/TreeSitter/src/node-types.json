@@ -1383,7 +1383,18 @@
   {
     "type": "function_type",
     "named": true,
-    "fields": {},
+    "fields": {
+      "deferred": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "deferred",
+            "named": false
+          }
+        ]
+      }
+    },
     "children": {
       "multiple": true,
       "required": false,
@@ -1719,6 +1730,16 @@
           {
             "type": "block",
             "named": true
+          }
+        ]
+      },
+      "deferred": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "deferred",
+            "named": false
           }
         ]
       },
@@ -3655,6 +3676,10 @@
   {
     "type": "continue_statement",
     "named": true
+  },
+  {
+    "type": "deferred",
+    "named": false
   },
   {
     "type": "drop",

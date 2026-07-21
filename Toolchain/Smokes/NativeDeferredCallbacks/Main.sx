@@ -1,0 +1,6 @@
+use NativeDeferredCallbacks as Native
+
+func main() {
+    Native.verify()
+    print("native deferred callbacks ok")
+}

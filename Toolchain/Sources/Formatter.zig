@@ -452,7 +452,7 @@ fn canEndLine(tag: TokenTag, next: TokenTag, generic_angle: bool) bool {
 
 fn isTypeListToken(tag: TokenTag) bool {
     return switch (tag) {
-        .identifier, .keyword_void, .keyword_int, .keyword_int8, .keyword_int16, .keyword_int32, .keyword_int64, .keyword_uint, .keyword_uint8, .keyword_uint16, .keyword_uint32, .keyword_uint64, .keyword_float, .keyword_float32, .keyword_float64, .keyword_bool, .keyword_str, .keyword_func, .comma, .colon, .dot, .less, .greater, .shift_right, .left_parenthesis, .right_parenthesis, .left_bracket, .right_bracket, .question, .amp, .at => true,
+        .identifier, .keyword_void, .keyword_int, .keyword_int8, .keyword_int16, .keyword_int32, .keyword_int64, .keyword_uint, .keyword_uint8, .keyword_uint16, .keyword_uint32, .keyword_uint64, .keyword_float, .keyword_float32, .keyword_float64, .keyword_bool, .keyword_str, .keyword_func, .keyword_deferred, .comma, .colon, .dot, .less, .greater, .shift_right, .left_parenthesis, .right_parenthesis, .left_bracket, .right_bracket, .question, .amp, .at => true,
         else => false,
     };
 }
@@ -693,6 +693,19 @@ test "control parentheses and else if use their canonical forms" {
     defer arena.deinit();
     const result = try formatSource(arena.allocator(), "func main() { if (true) {} else if false {} }");
     try std.testing.expectEqualStrings("func main() {\n    if true {} elif false {}\n}\n", result.text);
+}
+
+test "deferred callbacks keep their canonical type and literal spelling" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try formatSource(
+        arena.allocator(),
+        "func main(){var callback : deferred func ( int ) = deferred func(value : int){print(value)}}",
+    );
+    try std.testing.expectEqualStrings(
+        "func main() {\n    var callback:deferred func(int) = deferred func(value:int) {\n        print(value)\n    }\n}\n",
+        result.text,
+    );
 }
 
 test "a comment between else and if prevents elif rewriting" {

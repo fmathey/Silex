@@ -107,8 +107,10 @@ The generated C++ retains prior live acquisition records behind the opaque
 handles. Consequently, reordering fields cannot make a root disappear before a
 later acquisition, including for independent resources. An aggregate `drop`
 block runs first while all fields remain alive; automatic native cleanup follows
-it. No annotation on fields and no manual `clear` call participates in this
-order.
+it. A deferred subscription is not retained by a later unrelated acquisition:
+its callback context follows only that subscription's own moves and containing
+values, so its capture lifetime ends with that owner. No annotation on fields
+and no manual `clear` call participates in this order.
 
 ### Borrowed returns
 
@@ -265,6 +267,82 @@ pass it to another API. Silex keeps the callback and captures alive for that
 synchronous interval. Unique resources cannot be captures. Strings,
 structures, collections, references, optionals, Results, and nested callbacks
 are excluded from callback signatures.
+
+## Deferred callbacks
+
+`deferred func(...)` is a distinct, noncopyable callback type for a native
+subscription that outlives its registration call. A deferred callback returns
+`void` and accepts only by-value `bool` or numeric scalar parameters. It cannot
+be called directly in Silex, nested in another stored type, used as an ordinary
+function parameter or return, or captured by another lambda. A local binding
+uses `var`; a named binding is transferred with `move`, while a direct
+`deferred func` literal transfers implicitly.
+
+A native registration has exactly one `deferred func(...)` parameter and
+returns exactly one `native resource` directly. The callback's function pointer
+and context keep the ordinary C shape:
+
+```sx
+pub native resource Watch {
+    drop stop_watch
+}
+
+pub native func start_watch(callback:deferred func(int)) Watch
+
+var total = 0
+let watch = start_watch(deferred func(value:int) {
+    total += value
+})
+```
+
+```c
+SilexNative_Watcher_Watch* silexNative_Watcher_start_watch(
+    void (*callback)(void*, int64_t),
+    void* callback_context
+);
+```
+
+The native object may retain both pointers and invoke them later from one or
+several native threads. The trampoline copies each complete scalar argument
+tuple into a synchronized FIFO owned by the subscription; it never runs Silex
+code, reads captures, or destroys Silex values. Each accepted invocation takes
+one position in the queue. Calls from one producer retain their order; calls
+that are concurrent across producers are ordered only by their effective entry
+into the queue.
+
+`dispatch_callbacks(watch)` is called on the Silex thread that owns the
+subscription. It atomically detaches the events present when it enters the
+queue, invokes that batch in its established order, and returns its count as
+`int`. Events enqueued after the detachment, including reentrant events and
+concurrent native arrivals, remain for the next dispatch. The intrinsic
+requires a readable, live resource place returned by a deferred registration
+and neither consumes nor replaces it.
+
+The generated bridge attaches the callback, queue, and cancellation state to
+the returned resource. Moves, containing aggregate fields, and ordinary Silex
+function returns transfer that hidden state with the resource and preserve the
+shortest lexical lifetime of the callback's captures. A deferred subscription
+cannot be transferred by value to an ordinary native function: that ABI would
+transfer only the opaque handle and separate it from the hidden callback state.
+Only the resource's declared native destructor consumes the subscription at the
+native boundary. References, unique resources, and another deferred callback
+cannot be captured. The registration's null resource return remains fatal and
+releases the callback state without dispatching queued events.
+
+The resource's declared native destructor is the cancellation operation. The
+bridge synchronizes the transition to the cancelled state before calling it.
+An invocation fully enqueued before that transition remains pending and is
+destroyed without running its body; an invocation that observes cancellation
+is ignored; an invocation already entering the queue finishes or observes the
+transition before the context can be released. Pending events and callback
+state are destroyed on the owner thread after the native destructor returns.
+
+The native destructor must make the producer quiescent: it unregisters the
+source, requests worker shutdown when needed, waits for all engaged calls, and
+returns only when no thread can invoke or retain the function/context pointers.
+Calls after that return are native contract violations. Destruction is
+synchronous; an API whose shutdown is asynchronous needs an adapter that waits
+for observable quiescence before its attached destructor returns.
 
 ## Optional and Result returns
 

@@ -50,6 +50,14 @@
     ],
     "description": "Expose a module function implemented by its native runtime"
   },
+  "Deferred native registration": {
+    "prefix": "deferrednative",
+    "body": [
+      "pub native func ${1:register}(${2:callback}:deferred func(${3:int})) ${4:Resource}",
+      "$0"
+    ],
+    "description": "Declare a native registration whose callback is dispatched explicitly by Silex"
+  },
   "Public native resource": {
     "prefix": "pubresource",
     "body": [

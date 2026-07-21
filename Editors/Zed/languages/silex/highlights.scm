@@ -66,7 +66,9 @@
   method: (identifier) @function.method.call)
 
 (lambda_expression "func" @keyword)
+(lambda_expression deferred: "deferred" @keyword)
 (function_type "func" @type.builtin)
+(function_type deferred: "deferred" @keyword)
 (function_type_parameter mutable_reference: "&" @type)
 (function_type_parameter read_reference: "@" @type)
 (borrowed_return_type mode: ["@" "&"] @type)
@@ -159,6 +161,7 @@
   "return"
   "try"
   "move"
+  "deferred"
   "struct"
   "protocol"
   "extend"

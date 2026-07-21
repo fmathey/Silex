@@ -314,6 +314,7 @@ pub const Specializer = struct {
                     try parameters.append(self.allocator, try self.rewriteType(parameter, bindings, position));
                 }
                 break :function_type .{ .function = .{
+                    .deferred = function.deferred,
                     .parameters = try parameters.toOwnedSlice(self.allocator),
                     .parameter_modes = try self.allocator.dupe(Ast.ParameterMode, function.parameter_modes),
                     .return_type = if (function.return_type) |return_type| try self.rewriteTypePointer(return_type.*, bindings, position) else null,
@@ -645,6 +646,7 @@ pub const Specializer = struct {
                 }
                 break :lambda_expression .{ .lambda = .{
                     .position = lambda.position,
+                    .deferred = lambda.deferred,
                     .parameters = try parameters.toOwnedSlice(self.allocator),
                     .return_type = try self.rewriteReturnType(lambda.return_type, bindings, lambda.position),
                     .statements = try self.rewriteStatements(lambda.statements, bindings),

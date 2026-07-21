@@ -14,6 +14,12 @@ the captured values. The compiler therefore prevents the lambda, or any
 structure or collection containing it, from surviving the shortest captured
 scope.
 
+The native-only `deferred func(...)` form is the noncopyable exception. It may
+exist only as a direct local `var` or as the direct temporary argument of its
+native registration, and a named value transfers with `move`. Its captures are
+then owned indirectly by the returned subscription resource until that resource
+is destroyed. See [Native interoperability](Native-Interop.md#deferred-callbacks).
+
 This shared captured state also means a function value is not independent and
 cannot be bound directly with `let`, or inside an ordinary containing value.
 A local `let` collection is the exception: its storage is immutable even when

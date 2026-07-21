@@ -35,6 +35,7 @@ const NativeConfiguration = enum {
 };
 
 const default_native_configuration: NativeConfiguration = .optimized;
+const deferred_callback_test_define = "SILEX_DEFERRED_CALLBACK_TEST_INSTRUMENTATION";
 
 pub const Compilation = struct {
     executable_path: []const u8,
@@ -232,7 +233,9 @@ pub fn compile(
         try arguments.appendSlice(allocator, &.{ zig_path.?, "c++" });
         if (target.zig_triple) |triple| try arguments.appendSlice(allocator, &.{ "-target", triple });
         try arguments.appendSlice(allocator, default_native_configuration.compilerFlags());
-        try arguments.appendSlice(allocator, &.{ "-std=c++23", "-Wno-nullability-completeness", cpp_path });
+        try arguments.appendSlice(allocator, &.{ "-std=c++23", "-Wno-nullability-completeness" });
+        try appendGeneratedRuntimeTestDefine(allocator, &arguments, module_runtimes);
+        try arguments.append(allocator, cpp_path);
         for (native_dependencies) |dependency| try arguments.appendSlice(allocator, dependency.sources);
         try arguments.appendSlice(allocator, local_runtime_objects);
         try arguments.appendSlice(allocator, shared.objects);
@@ -569,6 +572,23 @@ fn appendUniqueName(
     for (values.items) |existing| if (std.mem.eql(u8, existing, value)) return false;
     try values.append(allocator, value);
     return true;
+}
+
+fn appendGeneratedRuntimeTestDefine(
+    allocator: Allocator,
+    arguments: *std.ArrayList([]const u8),
+    runtimes: []const NativeDependency.ModuleRuntime,
+) !void {
+    for (runtimes) |runtime| {
+        for (runtime.defines) |define| {
+            if (!std.mem.eql(u8, define.name, deferred_callback_test_define)) continue;
+            try arguments.append(
+                allocator,
+                try std.fmt.allocPrint(allocator, "-D{s}={s}", .{ define.name, define.value }),
+            );
+            return;
+        }
+    }
 }
 
 fn compileLocalRuntimeObjects(
@@ -920,6 +940,33 @@ test "native system linkage always reruns the final link" {
     };
     try std.testing.expect(requiresFinalRelink(&.{runtime}));
     try std.testing.expect(!requiresFinalRelink(&.{}));
+}
+
+test "deferred callback proof instrumentation is an explicit generated runtime opt-in" {
+    const runtime = NativeDependency.ModuleRuntime{
+        .module_name = "Probe",
+        .module_directory = "Probe",
+        .manifest_path = "Probe/@Module.json",
+        .sources = &.{},
+        .include_dirs = &.{},
+        .defines = &.{.{ .name = deferred_callback_test_define, .value = "1" }},
+        .system_libraries = &.{},
+        .frameworks = &.{},
+    };
+    var arguments: std.ArrayList([]const u8) = .empty;
+    defer arguments.deinit(std.testing.allocator);
+    try appendGeneratedRuntimeTestDefine(std.testing.allocator, &arguments, &.{runtime});
+    try std.testing.expectEqual(@as(usize, 1), arguments.items.len);
+    defer std.testing.allocator.free(arguments.items[0]);
+    try std.testing.expectEqualStrings(
+        "-DSILEX_DEFERRED_CALLBACK_TEST_INSTRUMENTATION=1",
+        arguments.items[0],
+    );
+
+    var ordinary_arguments: std.ArrayList([]const u8) = .empty;
+    defer ordinary_arguments.deinit(std.testing.allocator);
+    try appendGeneratedRuntimeTestDefine(std.testing.allocator, &ordinary_arguments, &.{});
+    try std.testing.expectEqual(@as(usize, 0), ordinary_arguments.items.len);
 }
 
 test "cache pruning keeps the active entry and a bounded history" {

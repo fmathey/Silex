@@ -1,0 +1,247 @@
+pub native resource Watch {
+    drop stop_watch
+}
+
+native func start_watch(callback:deferred func(int)) Watch
+native func create_ordinary_watch() Watch
+native func start_null_watch(callback:deferred func(int)) Watch
+native func emit(value:int) void
+native func start_workers(producer_count:int, events_per_producer:int) void
+native func start_cancellation_workers(producer_count:int) void
+native func first_wave_ready() bool
+native func release_workers() void
+native func engage_cancellation_workers() void
+native func workers_done() bool
+native func yield_workers() void
+native func on_owner_thread() bool
+native func reset_counters() void
+native func attempted_callbacks() int
+native func accepted_callbacks() int
+native func late_callbacks() int
+native func destroyed_watches() int
+native func runtime_counts_zero() bool
+native func generated_live_contexts() int
+native func generated_live_events() int
+native func generated_live_capture_states() int
+native func generated_accepted_events() int
+native func generated_dispatched_events() int
+native func generated_destroyed_events() int
+native func generated_cancelled_enqueues() int
+
+func verify_no_hidden_retention() {
+    reset_counters()
+    var calls = 0
+    let subscription = start_watch(deferred func(value:int) {
+        calls += value
+    })
+    emit(7)
+    let ordinary = create_ordinary_watch()
+    assert(generated_live_contexts() == 1, "generated deferred context is live")
+    assert(generated_live_events() == 1, "generated pending event is live")
+    assert(generated_live_capture_states() == 1, "generated capture state is live")
+
+    stop_watch(subscription)
+    assert(calls == 0, "pending callback remains cancelled")
+    assert(destroyed_watches() == 1, "later ordinary acquisition does not retain subscription")
+    assert(generated_live_contexts() == 0, "subscription context destroys at its owner")
+    assert(generated_live_events() == 0, "pending event destroys on cancellation")
+    assert(generated_live_capture_states() == 0, "callback captures destroy with context")
+
+    stop_watch(ordinary)
+    assert(destroyed_watches() == 2, "ordinary resource destroys independently")
+    assert(runtime_counts_zero(), "unrelated resource leaves no hidden deferred retention")
+}
+
+func verify_returned_subscription() {
+    reset_counters()
+    let subscription = returned_subscription()
+    emit(23)
+    assert(dispatch_callbacks(subscription) == 1, "returned subscription dispatches")
+    stop_watch(subscription)
+    assert(destroyed_watches() == 1, "returned subscription destroys once")
+    assert(runtime_counts_zero(), "returned subscription releases native state")
+}
+
+pub func trigger_null_return() {
+    var captured = 0
+    let watch = start_null_watch(deferred func(value:int) {
+        captured += value
+    })
+}
+
+func verify_basics() {
+    reset_counters()
+    var total = 0
+    var calls = 0
+    var callback:deferred func(int) = deferred func(value:int) {
+        calls += 1
+        total = total * 10 + value
+        if value == 2 {
+            emit(9)
+        }
+    }
+    let watch = start_watch(move callback)
+
+    assert(dispatch_callbacks(watch) == 0, "empty dispatch")
+    emit(1)
+    assert(calls == 0, "callback remains deferred")
+    assert(dispatch_callbacks(watch) == 1, "single dispatch count")
+    assert(total == 1, "single deferred value")
+
+    emit(2)
+    emit(3)
+    assert(dispatch_callbacks(watch) == 2, "multiple dispatch count")
+    assert(total == 123, "FIFO dispatch")
+    assert(dispatch_callbacks(watch) == 1, "reentrant event waits")
+    assert(total == 1239, "reentrant event order")
+
+    emit(4)
+    stop_watch(watch)
+    assert(calls == 4, "pending and cancellation events ignored")
+    assert(attempted_callbacks() == 6, "native invocation attempts counted")
+    assert(destroyed_watches() == 1, "explicit cancellation destroys once")
+    assert(runtime_counts_zero(), "explicit cancellation releases native state")
+
+    if true {
+        var ignored = 0
+        let automatic = start_watch(deferred func(value:int) {
+            ignored += value
+        })
+        emit(5)
+        assert(ignored == 0, "pending event stays inactive")
+    }
+    assert(destroyed_watches() == 2, "automatic cancellation destroys once")
+    assert(attempted_callbacks() == 8, "automatic cancellation invocation ignored")
+    assert(runtime_counts_zero(), "automatic cancellation releases native state")
+}
+
+func verify_concurrent_producers() {
+    reset_counters()
+    let accepted_before = generated_accepted_events()
+    let dispatched_before = generated_dispatched_events()
+    let destroyed_before = generated_destroyed_events()
+    var calls = 0
+    var first_next = 0
+    var second_next = 0
+    var third_next = 0
+    var fourth_next = 0
+    let watch = start_watch(deferred func(value:int) {
+        assert(on_owner_thread(), "callback body stays on owner thread")
+        calls += 1
+        if calls == 1 {
+            release_workers()
+        }
+        if value < 100000 {
+            assert(value == first_next, "first producer order")
+            first_next += 1
+        } elif value < 200000 {
+            assert(value == 100000 + second_next, "second producer order")
+            second_next += 1
+        } elif value < 300000 {
+            assert(value == 200000 + third_next, "third producer order")
+            third_next += 1
+        } else {
+            assert(value == 300000 + fourth_next, "fourth producer order")
+            fourth_next += 1
+        }
+    })
+
+    start_workers(4, 128)
+    while !first_wave_ready() {
+        yield_workers()
+    }
+
+    var dispatched = dispatch_callbacks(watch)
+    assert(dispatched == 4, "entry batch detached before second wave")
+    while !workers_done() {
+        dispatched += dispatch_callbacks(watch)
+        yield_workers()
+    }
+    dispatched += dispatch_callbacks(watch)
+
+    assert(dispatched == 512, "every accepted event dispatched once")
+    assert(calls == 512, "no concurrent event duplicated or lost")
+    assert(first_next == 128, "first producer complete")
+    assert(second_next == 128, "second producer complete")
+    assert(third_next == 128, "third producer complete")
+    assert(fourth_next == 128, "fourth producer complete")
+    assert(accepted_callbacks() == 512, "all producer callbacks accepted")
+    assert(late_callbacks() == 0, "no callback cancelled while active")
+    let generated_accepted = generated_accepted_events() - accepted_before
+    let generated_dispatched = generated_dispatched_events() - dispatched_before
+    let generated_destroyed = generated_destroyed_events() - destroyed_before
+    assert(generated_accepted == 512, "generated queue accepted every producer tuple")
+    assert(generated_dispatched == 512, "generated queue dispatched every accepted tuple once")
+    assert(generated_destroyed == 0, "no dispatched tuple classified as cancelled")
+    assert(
+        generated_accepted == generated_dispatched + generated_destroyed,
+        "every accepted tuple has one outcome"
+    )
+    assert(generated_live_events() == 0, "all dispatched generated events are retired")
+
+    stop_watch(watch)
+    assert(attempted_callbacks() == 513, "destructor callback attempted after cancellation")
+    assert(late_callbacks() == 1, "destructor callback classified late")
+    assert(destroyed_watches() == 1, "concurrent watch destroyed once")
+    assert(generated_live_contexts() == 0, "concurrent callback context destroyed on owner")
+    assert(generated_live_events() == 0, "concurrent event tuples return to zero")
+    assert(generated_live_capture_states() == 0, "concurrent captures destroyed on owner")
+    assert(runtime_counts_zero(), "workers, callback, context and resource released")
+}
+
+func verify_concurrent_cancellation() {
+    reset_counters()
+    let accepted_before = generated_accepted_events()
+    let dispatched_before = generated_dispatched_events()
+    let destroyed_before = generated_destroyed_events()
+    let cancelled_before = generated_cancelled_enqueues()
+    var calls = 0
+    let watch = start_watch(deferred func(value:int) {
+        calls += value
+    })
+
+    start_cancellation_workers(4)
+    while !first_wave_ready() {
+        yield_workers()
+    }
+    assert(accepted_callbacks() == 4, "first cancellation wave enqueued")
+    assert(generated_live_events() == 4, "first cancellation wave owns four generated tuples")
+
+    engage_cancellation_workers()
+    stop_watch(watch)
+    assert(calls == 0, "pending and late worker events never execute")
+    assert(accepted_callbacks() == 4, "accepted pending events accounted")
+    assert(late_callbacks() == 5, "owner and worker cancellation races ignored")
+    assert(attempted_callbacks() == 9, "all cancellation attempts returned")
+    let generated_accepted = generated_accepted_events() - accepted_before
+    let generated_dispatched = generated_dispatched_events() - dispatched_before
+    let generated_destroyed = generated_destroyed_events() - destroyed_before
+    let generated_cancelled = generated_cancelled_enqueues() - cancelled_before
+    assert(generated_accepted == 4, "only the pre-cancellation tuples were accepted")
+    assert(generated_dispatched == 0, "cancellation executes no pending tuple")
+    assert(generated_destroyed == 4, "every accepted pending tuple destroys once")
+    assert(
+        generated_accepted == generated_dispatched + generated_destroyed,
+        "accepted cancellation tuples have one outcome"
+    )
+    assert(generated_cancelled == 5, "engaged and late enqueues observe cancellation before reset")
+    assert(destroyed_watches() == 1, "cancelled watch destroyed once")
+    assert(generated_live_contexts() == 0, "cancelled callback context returns to zero")
+    assert(generated_live_events() == 0, "cancelled event tuples return to zero")
+    assert(generated_live_capture_states() == 0, "cancelled captures return to zero")
+    assert(runtime_counts_zero(), "cancellation joins workers and releases all state")
+}
+
+pub func verify() {
+    verify_no_hidden_retention()
+    verify_returned_subscription()
+    verify_basics()
+    verify_concurrent_producers()
+    verify_concurrent_cancellation()
+}
+
+func returned_subscription() Watch {
+    return start_watch(deferred func(value:int) {
+        assert(value == 23, "returned subscription receives its event")
+    })
+}

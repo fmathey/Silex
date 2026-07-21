@@ -2942,8 +2942,20 @@ pub fn build(b: *std.Build) void {
     native_callback_command.addArgs(&.{ "run", "Smokes/NativeCallbacks/Main.sx" });
     native_callback_command.expectStdOutEqual(hostText(b, "native callbacks ok\n"));
 
+    const native_deferred_callback_command = b.addRunArtifact(executable);
+    native_deferred_callback_command.step.dependOn(&native_callback_command.step);
+    native_deferred_callback_command.addArgs(&.{ "run", "Smokes/NativeDeferredCallbacks/Main.sx" });
+    native_deferred_callback_command.expectStdOutEqual(hostText(b, "native deferred callbacks ok\n"));
+
+    const null_deferred_callback_command = b.addRunArtifact(executable);
+    null_deferred_callback_command.step.dependOn(&native_deferred_callback_command.step);
+    null_deferred_callback_command.addArgs(&.{ "run", "Smokes/NativeDeferredCallbacks/NullReturn.sx" });
+    null_deferred_callback_command.expectExitCode(1);
+    null_deferred_callback_command.expectStdOutEqual(hostText(b, "null deferred cleanup 0 0 0\n"));
+    null_deferred_callback_command.expectStdErrEqual("runtime error: native function 'NativeDeferredCallbacks.start_null_watch' failed: returned a null native resource\n");
+
     const native_string_command = b.addRunArtifact(executable);
-    native_string_command.step.dependOn(&native_callback_command.step);
+    native_string_command.step.dependOn(&null_deferred_callback_command.step);
     native_string_command.addArgs(&.{ "run", "Smokes/NativeStrings/Main.sx" });
     native_string_command.expectStdOutEqual(hostText(b, "true\ntrue\ntrue\ntrue\ntrue\ntrue\n"));
 

@@ -785,6 +785,7 @@ pub const Resolver = struct {
                 var parameters: std.ArrayList(Ast.TypeName) = .empty;
                 for (function.parameters) |parameter| try parameters.append(self.allocator, try self.transformType(parameter, position));
                 break :function_type .{ .function = .{
+                    .deferred = function.deferred,
                     .parameters = try parameters.toOwnedSlice(self.allocator),
                     .parameter_modes = try self.allocator.dupe(Ast.ParameterMode, function.parameter_modes),
                     .return_type = if (function.return_type) |return_type| try self.transformTypePointer(return_type.*, position) else null,
@@ -1096,9 +1097,9 @@ pub const Resolver = struct {
                     } };
                 }
                 const arguments = try self.transformExpressions(call.arguments);
-                if (std.mem.eql(u8, call.name, "map_error")) {
+                if (std.mem.eql(u8, call.name, "map_error") or std.mem.eql(u8, call.name, "dispatch_callbacks")) {
                     break :call .{ .call = .{
-                        .name = "map_error",
+                        .name = call.name,
                         .name_position = call.name_position,
                         .type_arguments = type_arguments,
                         .arguments = arguments,
@@ -1164,6 +1165,7 @@ pub const Resolver = struct {
                 }
                 break :lambda_expression .{ .lambda = .{
                     .position = lambda.position,
+                    .deferred = lambda.deferred,
                     .parameters = try parameters.toOwnedSlice(self.allocator),
                     .return_type = try self.transformReturnType(lambda.return_type, lambda.position),
                     .statements = try self.transformStatementsInCurrentScope(lambda.statements),

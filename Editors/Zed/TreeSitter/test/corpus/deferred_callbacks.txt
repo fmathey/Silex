@@ -1,0 +1,83 @@
+==================
+Deferred callback types and literals
+==================
+
+pub native resource Watch {
+    drop destroy_watch
+}
+
+native func install(callback:deferred func(int)) Watch
+
+func main() {
+    var owned:deferred func(int) = deferred func(value:int) {
+        print(value)
+    }
+    let watch = install(move owned)
+    dispatch_callbacks(watch)
+}
+
+---
+
+(source_file
+  (public_declaration
+    (native_resource_declaration
+      (identifier)
+      (identifier)
+      (identifier)
+      (identifier)))
+  (native_function_declaration
+    (identifier)
+    (identifier)
+    (parameter_list
+      (parameter
+        (identifier)
+        (type
+          (function_type
+            (function_type_parameter
+              (type
+                (builtin_type)))))))
+    (type
+      (named_type
+        (type_identifier))))
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (block
+      (statement
+        (variable_declaration
+          (identifier)
+          (type_annotation
+            (type
+              (function_type
+                (function_type_parameter
+                  (type
+                    (builtin_type))))))
+          (expression
+            (lambda_expression
+              (parameter_list
+                (parameter
+                  (identifier)
+                  (type
+                    (builtin_type))))
+              (block
+                (statement
+                  (print_statement
+                    (identifier)
+                    (expression
+                      (identifier)))))))))
+      (statement
+        (variable_declaration
+          (identifier)
+          (expression
+            (invocation_expression
+              (identifier)
+              (expression
+                (move_expression
+                  (expression
+                    (identifier))))))))
+      (statement
+        (expression_statement
+          (invocation_expression
+            (identifier)
+            (expression
+              (identifier))))))))

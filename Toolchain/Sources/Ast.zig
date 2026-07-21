@@ -77,6 +77,7 @@ pub const TypeName = union(enum) {
     };
 
     pub const FunctionType = struct {
+        deferred: bool = false,
         parameters: []const TypeName,
         parameter_modes: []const ParameterMode,
         return_type: ?*TypeName,
@@ -212,6 +213,7 @@ pub const Expression = struct {
 
     pub const Lambda = struct {
         position: Source.Position,
+        deferred: bool = false,
         parameters: []const Parameter,
         return_type: ReturnType,
         statements: []const Statement,
