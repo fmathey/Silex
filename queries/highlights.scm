@@ -52,6 +52,21 @@
 (safe_member_expression
   field: (identifier) @property)
 
+(invocation_expression
+  target: (identifier) @function.call)
+
+(invocation_expression
+  target: (generic_type
+    name: (type_identifier) @function.call))
+
+(invocation_expression
+  target: (member_expression
+    field: (identifier) @function.method.call))
+
+(invocation_expression
+  target: (safe_member_expression
+    field: (identifier) @function.method.call))
+
 (function_definition
   name: (identifier) @function.definition)
 
@@ -78,10 +93,10 @@
   function: (identifier) @function.call)
 
 (assert_statement
-  function: (identifier) @keyword)
+  function: (identifier) @function.call)
 
 (panic_statement
-  function: (identifier) @keyword)
+  function: (identifier) @function.call)
 
 (cascade_operation
   operator: ".." @operator)

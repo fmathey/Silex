@@ -1,0 +1,33 @@
+func inspect(value:Vec3) {
+    Configuration(strict:true)
+    // <- function.call
+    //            ^^^^^^ property
+
+    Math.Vec3(value)
+    //   ^^^^ function.method.call
+
+    Math.Vec3.pow(value)
+    //   ^^^^ property
+    //        ^^^ function.method.call
+
+    Text.normalize("value")
+    //   ^^^^^^^^^ function.method.call
+
+    Text.Normalization.nfc()
+    //                 ^^^ function.method.call
+
+    value.method()
+    //    ^^^^^^ function.method.call
+
+    value?.method()
+    //     ^^^^^^ function.method.call
+
+    Box<int>(value)
+    // <- function.call
+
+    assert(true, "valid")
+    // <- function.call
+
+    panic("failure")
+    // <- function.call
+}
