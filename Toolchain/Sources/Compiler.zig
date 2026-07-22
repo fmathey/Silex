@@ -53,8 +53,13 @@ pub fn compile(
     input_path: []const u8,
     target: TargetModule.Target,
     native_dependencies: []const NativeDependency.Dependency,
+    progress: std.Progress.Node,
 ) !Compilation {
-    const outcome = try Frontend.analyze(allocator, io, environ_map, input_path, .compiler, &.{});
+    const outcome = outcome: {
+        const step = progress.start("Analyzing sources", 0);
+        defer step.end();
+        break :outcome try Frontend.analyze(allocator, io, environ_map, input_path, .compiler, &.{});
+    };
     const frontend = switch (outcome) {
         .success => |snapshot| snapshot,
         .failure => |failure| return report(failure.source_paths, failure.diagnostic),
@@ -65,9 +70,17 @@ pub fn compile(
     const source_contents = frontend.source_contents;
     const package_graph = frontend.package_graph;
     const program = frontend.program;
-    const loaded_module_runtimes = try loadModuleRuntimes(allocator, io, project, package_graph, target);
+    const loaded_module_runtimes = runtimes: {
+        const step = progress.start("Resolving native modules", 0);
+        defer step.end();
+        break :runtimes try loadModuleRuntimes(allocator, io, project, package_graph, target);
+    };
 
-    const cpp = try CppGenerator.generateWithSources(allocator, program, canonical_source_paths);
+    const cpp = cpp: {
+        const step = progress.start("Generating C++", 0);
+        defer step.end();
+        break :cpp try CppGenerator.generateWithSources(allocator, program, canonical_source_paths);
+    };
     const artifact_root = "";
     const program_name = project.program_name;
     const target_name = try target.cacheName(allocator);
@@ -179,33 +192,46 @@ pub fn compile(
     }
     if (!cache_hit) {
         try Io.Dir.cwd().writeFile(io, .{ .sub_path = cpp_path, .data = cpp });
-        const local_runtime_objects = try compileLocalRuntimeObjects(
-            allocator,
-            io,
-            zig_path.?,
-            target,
-            target_name,
-            module_runtimes,
-            cache_dir,
-            backend_log_path,
-        );
-        const shared = NativeObjectCache.prepareShared(
-            allocator,
-            io,
-            environ_map,
-            zig_path.?,
-            target,
-            target_name,
-            default_native_configuration.compilerFlags(),
-            module_runtimes,
-            object_plan,
-            backend_log_path,
-        ) catch |err| switch (err) {
-            error.NativeObjectCompilationFailed => {
-                reportNativeBackendFailure(target_name, backend_log_path);
-                return error.Reported;
-            },
-            else => |other| return other,
+        const local_runtime_objects = local_objects: {
+            const step = progress.start(
+                "Compiling native sources",
+                runtimeSourceCount(module_runtimes, 0),
+            );
+            defer step.end();
+            break :local_objects try compileLocalRuntimeObjects(
+                allocator,
+                io,
+                zig_path.?,
+                target,
+                target_name,
+                module_runtimes,
+                cache_dir,
+                backend_log_path,
+                step,
+            );
+        };
+        const shared = shared: {
+            const step = progress.start("Compiling dependency native sources", objectPlanCount(object_plan));
+            defer step.end();
+            break :shared NativeObjectCache.prepareShared(
+                allocator,
+                io,
+                environ_map,
+                zig_path.?,
+                target,
+                target_name,
+                default_native_configuration.compilerFlags(),
+                module_runtimes,
+                object_plan,
+                backend_log_path,
+                step,
+            ) catch |err| switch (err) {
+                error.NativeObjectCompilationFailed => {
+                    reportNativeBackendFailure(target_name, backend_log_path);
+                    return error.Reported;
+                },
+                else => |other| return other,
+            };
         };
         compiled_packages = shared.compiled_packages;
         reused_packages = shared.reused_packages;
@@ -234,11 +260,15 @@ pub fn compile(
         }
         try arguments.appendSlice(allocator, &.{ "-o", temporary_executable_path });
 
-        const result = try std.process.run(allocator, io, .{
-            .argv = arguments.items,
-            .stdout_limit = .limited(16 * 1024 * 1024),
-            .stderr_limit = .limited(16 * 1024 * 1024),
-        });
+        const result = result: {
+            const step = progress.start("Compiling and linking application", 0);
+            defer step.end();
+            break :result try std.process.run(allocator, io, .{
+                .argv = arguments.items,
+                .stdout_limit = .limited(16 * 1024 * 1024),
+                .stderr_limit = .limited(16 * 1024 * 1024),
+            });
+        };
         if (exitCode(result.term) != 0) {
             Io.Dir.cwd().deleteFile(io, temporary_executable_path) catch {};
             try Io.Dir.cwd().writeFile(io, .{ .sub_path = backend_log_path, .data = result.stderr });
@@ -572,6 +602,7 @@ fn compileLocalRuntimeObjects(
     runtimes: []const NativeDependency.ModuleRuntime,
     cache_dir: []const u8,
     backend_log_path: []const u8,
+    progress: std.Progress.Node,
 ) ![]const []const u8 {
     var objects: std.ArrayList([]const u8) = .empty;
     for (runtimes, 0..) |runtime, runtime_index| {
@@ -602,9 +633,26 @@ fn compileLocalRuntimeObjects(
             if (result.stdout.len > 0) try Io.File.stdout().writeStreamingAll(io, result.stdout);
             if (result.stderr.len > 0) try Io.File.stderr().writeStreamingAll(io, result.stderr);
             try objects.append(allocator, object_path);
+            progress.completeOne();
         }
     }
     return objects.toOwnedSlice(allocator);
+}
+
+fn runtimeSourceCount(runtimes: []const NativeDependency.ModuleRuntime, package_index: usize) usize {
+    var count: usize = 0;
+    for (runtimes) |runtime| {
+        if (runtime.package_index == package_index) count += runtime.sources.len;
+    }
+    return count;
+}
+
+fn objectPlanCount(plan: NativeObjectCache.Plan) usize {
+    var count: usize = 0;
+    for (plan.entries) |entry| {
+        if (entry.package_index != 0) count += entry.object_count;
+    }
+    return count;
 }
 
 fn reportNativeBackendFailure(target_name: []const u8, backend_log_path: []const u8) void {

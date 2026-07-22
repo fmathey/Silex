@@ -92,6 +92,7 @@ pub fn prepareShared(
     runtimes: []const NativeDependency.ModuleRuntime,
     plan: Plan,
     backend_log_path: []const u8,
+    progress: std.Progress.Node,
 ) !Prepared {
     const root = try objectCacheRoot(allocator, environ_map);
     const target_root = try std.fs.path.join(allocator, &.{ root, format, target_name });
@@ -105,6 +106,7 @@ pub fn prepareShared(
         const entry_path = try std.fs.path.join(allocator, &.{ target_root, &entry.key });
         if (try entryComplete(allocator, io, entry_path, entry.object_count)) {
             try reused.append(allocator, entry.package_label);
+            for (0..entry.object_count) |_| progress.completeOne();
         } else {
             Io.Dir.cwd().deleteTree(io, entry_path) catch {};
             const published = try compileAndPublish(
@@ -118,6 +120,7 @@ pub fn prepareShared(
                 target_root,
                 entry_path,
                 backend_log_path,
+                progress,
             );
             if (published) {
                 try compiled.append(allocator, entry.package_label);
@@ -160,6 +163,7 @@ fn compileAndPublish(
     target_root: []const u8,
     entry_path: []const u8,
     backend_log_path: []const u8,
+    progress: std.Progress.Node,
 ) !bool {
     var random_bytes: [8]u8 = undefined;
     io.random(&random_bytes);
@@ -186,6 +190,7 @@ fn compileAndPublish(
                 backend_log_path,
             );
             object_index += 1;
+            progress.completeOne();
         }
     }
     const marker = try std.fmt.allocPrint(allocator, "{d}\n", .{entry.object_count});

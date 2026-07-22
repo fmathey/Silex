@@ -136,7 +136,14 @@ fn compileCommand(allocator: Allocator, io: Io, environ_map: *const std.process.
         }
     }
 
-    const compilation = try Compiler.compile(allocator, io, environ_map, input_path, target, native_dependencies.items);
+    const compilation = try compileWithProgress(
+        allocator,
+        io,
+        environ_map,
+        input_path,
+        target,
+        native_dependencies.items,
+    );
     const output = output_path orelse try Compiler.defaultOutputPath(
         allocator,
         compilation.artifact_root,
@@ -188,7 +195,7 @@ fn runCommand(allocator: Allocator, io: Io, environ_map: *const std.process.Envi
         try native_dependencies.append(allocator, dependency);
     }
 
-    const compilation = try Compiler.compile(
+    const compilation = try compileWithProgress(
         allocator,
         io,
         environ_map,
@@ -199,6 +206,28 @@ fn runCommand(allocator: Allocator, io: Io, environ_map: *const std.process.Envi
     const term = try Compiler.runProcess(io, &.{compilation.executable_path});
     if (runTerminationMessage(term)) |message| std.debug.print("{s}", .{message});
     return Compiler.exitCode(term);
+}
+
+fn compileWithProgress(
+    allocator: Allocator,
+    io: Io,
+    environ_map: *const std.process.Environ.Map,
+    input_path: []const u8,
+    target: TargetModule.Target,
+    native_dependencies: []const NativeDependency.Dependency,
+) !Compiler.Compilation {
+    const progress_name = try std.fmt.allocPrint(allocator, "Building {s}", .{input_path});
+    const progress = std.Progress.start(io, .{ .root_name = progress_name });
+    defer progress.end();
+    return Compiler.compile(
+        allocator,
+        io,
+        environ_map,
+        input_path,
+        target,
+        native_dependencies,
+        progress,
+    );
 }
 
 fn updateCommand(allocator: Allocator, io: Io, environ_map: *const std.process.Environ.Map, args: []const []const u8) !u8 {
