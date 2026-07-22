@@ -6,26 +6,31 @@ const Io = std.Io;
 pub fn main(init: std.process.Init) !void {
     const allocator = init.arena.allocator();
     const args = try init.minimal.args.toSlice(allocator);
-    if (args.len != 4) return error.InvalidArguments;
+    if (args.len != 6) return error.InvalidArguments;
     const silex = try Io.Dir.cwd().realPathFileAlloc(init.io, args[1], allocator);
     const root = args[2];
     const home = args[3];
+    const std_interface_source = try Io.Dir.cwd().realPathFileAlloc(init.io, args[4], allocator);
+    const expected_std_header = try Io.Dir.cwd().realPathFileAlloc(init.io, args[5], allocator);
 
     Io.Dir.cwd().deleteTree(init.io, root) catch {};
-    Io.Dir.cwd().deleteTree(init.io, home) catch {};
     try Io.Dir.cwd().createDirPath(init.io, root);
     try Io.Dir.cwd().createDirPath(init.io, home);
     const canonical_root = try Io.Dir.cwd().realPathFileAlloc(init.io, root, allocator);
     const canonical_home = try Io.Dir.cwd().realPathFileAlloc(init.io, home, allocator);
+    const silex_home = try std.fs.path.join(allocator, &.{ canonical_home, ".silex" });
+    const objects = try std.fs.path.join(allocator, &.{ silex_home, "cache", "objects" });
+    Io.Dir.cwd().deleteTree(init.io, objects) catch {};
     const vendor = try std.fs.path.join(allocator, &.{ canonical_root, "Vendor" });
     const first_app = try std.fs.path.join(allocator, &.{ canonical_root, "FirstApp" });
     const second_app = try std.fs.path.join(allocator, &.{ canonical_root, "SecondApp" });
+    const std_full_app = try std.fs.path.join(allocator, &.{ canonical_root, "StdFullApp" });
+    const std_math_app = try std.fs.path.join(allocator, &.{ canonical_root, "StdMathApp" });
     try createVendor(allocator, init.io, vendor, 40);
-    try createApp(allocator, init.io, first_app, 2);
-    try createApp(allocator, init.io, second_app, 2);
+    try createApp(allocator, init.io, first_app, 2, false);
+    try createApp(allocator, init.io, second_app, 2, false);
 
     var environment = try init.environ_map.clone(allocator);
-    const silex_home = try std.fs.path.join(allocator, &.{ canonical_home, ".silex" });
     try environment.put("SILEX_HOME", silex_home);
 
     try expectCompile(
@@ -37,6 +42,7 @@ pub fn main(init: std.process.Init) !void {
         &.{ "compile", "Main.sx" },
         "Compiled native package Vendor",
     );
+    try expectLocalNativeObject(allocator, init.io, first_app);
     try expectCompile(
         allocator,
         init.io,
@@ -46,6 +52,7 @@ pub fn main(init: std.process.Init) !void {
         &.{ "compile", "Main.sx" },
         "Reused native package Vendor",
     );
+    try expectLocalNativeObject(allocator, init.io, second_app);
 
     try writeFile(
         allocator,
@@ -78,6 +85,7 @@ pub fn main(init: std.process.Init) !void {
             "    return native_value()\n" ++
             "}\n\n",
     );
+    try writeNativeHeader(allocator, init.io, vendor, true);
     try expectCompile(
         allocator,
         init.io,
@@ -88,7 +96,7 @@ pub fn main(init: std.process.Init) !void {
         "Compiled native package Vendor",
     );
 
-    try createApp(allocator, init.io, second_app, 3);
+    try createApp(allocator, init.io, second_app, 3, true);
     try expectCompile(
         allocator,
         init.io,
@@ -124,6 +132,41 @@ pub fn main(init: std.process.Init) !void {
     var second = try spawnCompile(init.io, &environment, silex, second_app);
     try expectSuccess(try first.wait(init.io));
     try expectSuccess(try second.wait(init.io));
+
+    const complete_std_surface = try Io.Dir.cwd().readFileAlloc(
+        init.io,
+        std_interface_source,
+        allocator,
+        .limited(1024 * 1024),
+    );
+    try writeFile(allocator, init.io, std_full_app, "Main.sx", complete_std_surface);
+    try expectCompile(
+        allocator,
+        init.io,
+        &environment,
+        silex,
+        std_full_app,
+        &.{ "compile", "Main.sx" },
+        "Compiled native package STD",
+    );
+    try expectStableStdHeader(allocator, init.io, std_full_app, expected_std_header);
+
+    try writeFile(
+        allocator,
+        init.io,
+        std_math_app,
+        "Main.sx",
+        "use STD.Math\n\nfunc main() {\n    print(Math.sqrt(4))\n}\n",
+    );
+    try expectCompile(
+        allocator,
+        init.io,
+        &environment,
+        silex,
+        std_math_app,
+        &.{ "compile", "Main.sx" },
+        "Reused native package STD",
+    );
 
     const objects_root = try userObjectsRoot(allocator, canonical_home);
     try verifyPublishedEntries(allocator, init.io, objects_root);
@@ -185,6 +228,7 @@ fn createVendor(allocator: Allocator, io: Io, root: []const u8, value: u8) !void
             "}\n",
     );
     try writeHeader(allocator, io, root, value);
+    try writeNativeHeader(allocator, io, root, false);
 }
 
 fn writeHeader(allocator: Allocator, io: Io, root: []const u8, value: u8) !void {
@@ -192,7 +236,26 @@ fn writeHeader(allocator: Allocator, io: Io, root: []const u8, value: u8) !void 
     try writeFile(allocator, io, root, "include/Header.h", contents);
 }
 
-fn createApp(allocator: Allocator, io: Io, root: []const u8, increment: u8) !void {
+fn writeNativeHeader(allocator: Allocator, io: Io, root: []const u8, include_unused: bool) !void {
+    const unused = if (include_unused)
+        "int64_t silexNative_Vendor_Value_native_unused(int64_t value);\n"
+    else
+        "";
+    const contents = try std.fmt.allocPrint(
+        allocator,
+        "#ifndef SILEX_NATIVE_VENDOR_H\n" ++
+            "#define SILEX_NATIVE_VENDOR_H\n\n" ++
+            "#include <stdint.h>\n\n" ++
+            "#ifdef __cplusplus\nextern \"C\" {{\n#endif\n\n" ++
+            "int64_t silexNative_Vendor_Value_native_value(void);\n{s}\n" ++
+            "#ifdef __cplusplus\n}}\n#endif\n\n" ++
+            "#endif\n",
+        .{unused},
+    );
+    try writeFile(allocator, io, root, "include/SilexNative/Vendor.h", contents);
+}
+
+fn createApp(allocator: Allocator, io: Io, root: []const u8, increment: u8, import_extra: bool) !void {
     try writeFile(
         allocator,
         io,
@@ -201,15 +264,71 @@ fn createApp(allocator: Allocator, io: Io, root: []const u8, increment: u8) !voi
         "{\n" ++
             "  \"dependencies\": {\n" ++
             "    \"Vendor\": { \"path\": \"../Vendor\" }\n" ++
+            "  },\n" ++
+            "  \"native\": {\n" ++
+            "    \"sources\": { \"c\": [\"Local.c\"] }\n" ++
             "  }\n" ++
             "}\n",
     );
     const source = try std.fmt.allocPrint(
         allocator,
-        "use Vendor.Value as Vendor\n\nfunc main() {{\n    print(Vendor.value() + {d})\n}}\n",
-        .{increment},
+        "use Vendor.Value as Value\n{s}\nfunc main() {{\n    print(Value.value() + {d}{s})\n}}\n",
+        .{
+            if (import_extra) "use Vendor.Extra as Extra\n" else "",
+            increment,
+            if (import_extra) " + Extra.extra()" else "",
+        },
     );
     try writeFile(allocator, io, root, "Main.sx", source);
+    try writeFile(allocator, io, root, "Local.c", "int silex_test_local_bridge(void) { return 1; }\n");
+    try writeFile(
+        allocator,
+        io,
+        root,
+        "../Vendor/Extra.sx",
+        "public func extra() int {\n    return 1\n}\n",
+    );
+}
+
+fn expectLocalNativeObject(allocator: Allocator, io: Io, app_root: []const u8) !void {
+    const build_root = try std.fs.path.join(allocator, &.{ app_root, ".silex", "build" });
+    if (!try directoryContainsLocalObject(allocator, io, build_root)) return error.MissingLocalNativeObject;
+}
+
+fn directoryContainsLocalObject(allocator: Allocator, io: Io, path: []const u8) !bool {
+    var directory = try Io.Dir.cwd().openDir(io, path, .{ .iterate = true });
+    defer directory.close(io);
+    var iterator = directory.iterateAssumeFirstIteration();
+    while (try iterator.next(io)) |entry| {
+        switch (entry.kind) {
+            .file => if (std.mem.startsWith(u8, entry.name, "native-") and
+                std.mem.endsWith(u8, entry.name, ".o")) return true,
+            .directory => {
+                const child = try std.fs.path.join(allocator, &.{ path, entry.name });
+                if (try directoryContainsLocalObject(allocator, io, child)) return true;
+            },
+            else => {},
+        }
+    }
+    return false;
+}
+
+fn expectStableStdHeader(
+    allocator: Allocator,
+    io: Io,
+    app_root: []const u8,
+    expected_path: []const u8,
+) !void {
+    const generated_path = try std.fs.path.join(
+        allocator,
+        &.{ app_root, ".silex", "interfaces", "SilexNative", "STD.h" },
+    );
+    const generated = try Io.Dir.cwd().readFileAlloc(io, generated_path, allocator, .limited(1024 * 1024));
+    const expected = try Io.Dir.cwd().readFileAlloc(io, expected_path, allocator, .limited(1024 * 1024));
+    if (!std.mem.eql(u8, generated, expected)) {
+        std.debug.print("Generated STD native interface differs from {s}\n", .{expected_path});
+        return error.UnstableStdNativeInterface;
+    }
 }
 
 fn writeFile(
@@ -282,9 +401,8 @@ fn verifyPublishedEntries(allocator: Allocator, io: Io, objects_root: []const u8
         defer target_directory.close(io);
         var entry_iterator = target_directory.iterateAssumeFirstIteration();
         while (try entry_iterator.next(io)) |entry| {
-            if (entry.kind != .directory or std.mem.startsWith(u8, entry.name, ".")) {
-                return error.IncompleteObjectCachePublication;
-            }
+            if (std.mem.startsWith(u8, entry.name, ".")) continue;
+            if (entry.kind != .directory) return error.IncompleteObjectCachePublication;
             const entry_path = try std.fs.path.join(allocator, &.{ target_path, entry.name });
             const marker_path = try std.fs.path.join(allocator, &.{ entry_path, ".complete" });
             const marker = try Io.Dir.cwd().readFileAlloc(io, marker_path, allocator, .limited(64));
@@ -302,9 +420,6 @@ fn verifyPublishedEntries(allocator: Allocator, io: Io, objects_root: []const u8
 }
 
 fn userObjectsRoot(allocator: Allocator, home: []const u8) ![]const u8 {
-    if (@import("builtin").os.tag == .windows) {
-        return std.fs.path.join(allocator, &.{ home, "Silex", "cache", "objects", "v1" });
-    }
     return std.fs.path.join(allocator, &.{ home, ".silex", "cache", "objects", "v1" });
 }
 

@@ -15,15 +15,35 @@ The development executable is installed at `Toolchain/zig-out/bin/silex`.
 
 ```sh
 cd Toolchain
+zig build check
 zig build test
 zig build smoke
+zig build release-check
 zig build cross-smoke
 zig build cross-native-smoke
 ```
 
-`test` runs targeted compiler checks; `smoke` compiles and runs Silex programs.
-The cross-platform checks are available when needed, but macOS ARM64 is the
-current development target.
+`check` installs the current development executable and runs the shared
+in-process toolchain tests. It is the normal feedback loop while changing the
+frontend, generator or command implementation. `test` adds CLI diagnostics,
+filesystem, package, cache and native integration checks. `smoke` compiles and
+runs the Silex programs through four independent, bounded lanes. `release-check`
+combines `test` and `smoke` for the final validation of a release. The
+cross-platform checks are available when needed, but macOS ARM64 is the current
+development target.
+
+The build limits its outer concurrency to four jobs by default because one
+Silex process can itself launch several C or C++ compiler processes. An
+explicit Zig `-j` value overrides that default. Tests must not rely on `-j1`:
+commands that share ports, generated fixtures, package homes or another mutable
+resource carry an explicit dependency in `build.zig`.
+
+Parallel Silex commands share four versioned compiler-module lanes under the
+user's Silex cache. A compilation input always selects the same lane, and final
+`zig c++` application links acquire its short lock. This preserves module reuse
+without allowing two linker drivers to invalidate the same temporary state,
+while four independent links and all native source object compilations may
+still progress in parallel.
 
 Source-quality checks are explicit: `silex lint <source.sx|project.json>` walks
 the parsed AST without starting compilation or creating `.silex` artifacts.

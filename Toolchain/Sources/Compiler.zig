@@ -17,7 +17,7 @@ const ProjectModule = @import("Project.zig");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
-pub const cache_format = "v45";
+pub const cache_format = "v46";
 pub const cache_entry_limit = 8;
 
 const NativeConfiguration = enum {
@@ -144,7 +144,13 @@ pub fn compile(
         default_native_configuration,
     );
 
-    const cache_dir = try std.fs.path.join(allocator, &.{ target_cache_dir, &cache_key });
+    const project_key = projectCacheKey(input_path);
+    const project_cache_dir = try std.fs.path.join(allocator, &.{
+        target_cache_dir,
+        "projects",
+        &project_key,
+    });
+    const cache_dir = try std.fs.path.join(allocator, &.{ project_cache_dir, &cache_key });
     try Io.Dir.cwd().createDirPath(io, cache_dir);
 
     const cpp_path = try std.fs.path.join(allocator, &.{ cache_dir, "Generated.cpp" });
@@ -155,7 +161,7 @@ pub fn compile(
     const cache_hit = try fileExists(io, executable_path) and !requiresFinalRelink(module_runtimes);
     const access_path = try std.fs.path.join(allocator, &.{ cache_dir, ".access" });
     try Io.Dir.cwd().writeFile(io, .{ .sub_path = access_path, .data = "" });
-    pruneTargetCache(allocator, io, target_cache_dir, &cache_key, cache_entry_limit) catch |err| {
+    pruneProjectCache(allocator, io, project_cache_dir, &cache_key, cache_entry_limit) catch |err| {
         std.debug.print("silex: warning: unable to prune compilation cache: {t}\n", .{err});
     };
 
@@ -195,7 +201,7 @@ pub fn compile(
         const local_runtime_objects = local_objects: {
             const step = progress.start(
                 "Compiling native sources",
-                runtimeSourceCount(module_runtimes, 0),
+                localRuntimeSourceCount(module_runtimes),
             );
             defer step.end();
             break :local_objects try compileLocalRuntimeObjects(
@@ -239,7 +245,23 @@ pub fn compile(
         try arguments.appendSlice(allocator, &.{ zig_path.?, "c++" });
         if (target.zig_triple) |triple| try arguments.appendSlice(allocator, &.{ "-target", triple });
         try arguments.appendSlice(allocator, default_native_configuration.compilerFlags());
-        try arguments.appendSlice(allocator, &.{ "-std=c++23", "-Wno-nullability-completeness" });
+        const compiler_cache_root = try NativeObjectCache.compilerCacheRoot(
+            allocator,
+            environ_map,
+            target_name,
+            compilerCacheLane(project_key),
+        );
+        try Io.Dir.cwd().createDirPath(io, compiler_cache_root);
+        const link_modules_cache = try std.fs.path.join(allocator, &.{ compiler_cache_root, "modules" });
+        try arguments.append(
+            allocator,
+            try std.fmt.allocPrint(allocator, "-fmodules-cache-path={s}", .{link_modules_cache}),
+        );
+        try arguments.appendSlice(allocator, &.{
+            "-std=c++23",
+            "-Wno-nullability-completeness",
+            "-Wno-unused-command-line-argument",
+        });
         try appendGeneratedRuntimeTestDefine(allocator, &arguments, module_runtimes);
         try arguments.append(allocator, cpp_path);
         for (native_dependencies) |dependency| try arguments.appendSlice(allocator, dependency.sources);
@@ -263,6 +285,9 @@ pub fn compile(
         const result = result: {
             const step = progress.start("Compiling and linking application", 0);
             defer step.end();
+            const link_lock_path = try std.fs.path.join(allocator, &.{ compiler_cache_root, ".link.lock" });
+            const link_lock = try NativeObjectCache.acquireExclusiveLock(io, link_lock_path);
+            defer if (link_lock) |file| file.close(io);
             break :result try std.process.run(allocator, io, .{
                 .argv = arguments.items,
                 .stdout_limit = .limited(16 * 1024 * 1024),
@@ -317,8 +342,16 @@ fn applyNativeInterface(
     for (runtimes) |runtime| {
         var composed = runtime;
         var include_dirs: std.ArrayList([]const u8) = .empty;
-        try include_dirs.append(allocator, root);
-        try include_dirs.appendSlice(allocator, runtime.include_dirs);
+        if (runtime.origin != .project) {
+            // A library may ship the complete stable contract used to build
+            // its shared objects. Keep the generated application subset as a
+            // fallback for packages that do not ship one yet.
+            try include_dirs.appendSlice(allocator, runtime.include_dirs);
+            try include_dirs.append(allocator, root);
+        } else {
+            try include_dirs.append(allocator, root);
+            try include_dirs.appendSlice(allocator, runtime.include_dirs);
+        }
         composed.include_dirs = try include_dirs.toOwnedSlice(allocator);
         try updated.append(allocator, composed);
     }
@@ -607,7 +640,7 @@ fn compileLocalRuntimeObjects(
     var objects: std.ArrayList([]const u8) = .empty;
     var requests: std.ArrayList(NativeCommand.CompileRequest) = .empty;
     for (runtimes, 0..) |runtime, runtime_index| {
-        if (runtime.package_index != 0) continue;
+        if (runtime.origin != .project) continue;
         for (runtime.sources, 0..) |source, source_index| {
             const object_name = try std.fmt.allocPrint(allocator, "native-{d}-{d}.o", .{ runtime_index, source_index });
             const object_path = try std.fs.path.join(allocator, &.{ cache_dir, object_name });
@@ -638,19 +671,17 @@ fn compileLocalRuntimeObjects(
     return objects.toOwnedSlice(allocator);
 }
 
-fn runtimeSourceCount(runtimes: []const NativeDependency.ModuleRuntime, package_index: usize) usize {
+fn localRuntimeSourceCount(runtimes: []const NativeDependency.ModuleRuntime) usize {
     var count: usize = 0;
     for (runtimes) |runtime| {
-        if (runtime.package_index == package_index) count += runtime.sources.len;
+        if (runtime.origin == .project) count += runtime.sources.len;
     }
     return count;
 }
 
 fn objectPlanCount(plan: NativeObjectCache.Plan) usize {
     var count: usize = 0;
-    for (plan.entries) |entry| {
-        if (entry.package_index != 0) count += entry.object_count;
-    }
+    for (plan.entries) |entry| count += entry.object_count;
     return count;
 }
 
@@ -806,6 +837,20 @@ fn cacheKey(
     return std.fmt.bytesToHex(digest, .lower);
 }
 
+fn projectCacheKey(input_path: []const u8) [64]u8 {
+    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+    hasher.update("silex-project-cache-v1\x00");
+    hasher.update(input_path);
+
+    var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
+    hasher.final(&digest);
+    return std.fmt.bytesToHex(digest, .lower);
+}
+
+fn compilerCacheLane(project_key: [64]u8) usize {
+    return @as(usize, project_key[0] & 3);
+}
+
 fn cleanObsoleteCacheLayouts(allocator: Allocator, io: Io, cache_root: []const u8) !void {
     var directory = try Io.Dir.cwd().openDir(io, cache_root, .{ .iterate = true });
     defer directory.close(io);
@@ -828,20 +873,20 @@ const CacheEntry = struct {
     modified: i96,
 };
 
-fn pruneTargetCache(
+fn pruneProjectCache(
     allocator: Allocator,
     io: Io,
-    target_cache_dir: []const u8,
+    project_cache_dir: []const u8,
     active_key: []const u8,
     maximum_entries: usize,
 ) !void {
-    var directory = try Io.Dir.cwd().openDir(io, target_cache_dir, .{ .iterate = true });
+    var directory = try Io.Dir.cwd().openDir(io, project_cache_dir, .{ .iterate = true });
     defer directory.close(io);
 
-    try pruneTargetCacheInDir(allocator, io, directory, active_key, maximum_entries);
+    try pruneProjectCacheInDir(allocator, io, directory, active_key, maximum_entries);
 }
 
-fn pruneTargetCacheInDir(
+fn pruneProjectCacheInDir(
     allocator: Allocator,
     io: Io,
     directory: Io.Dir,
@@ -980,7 +1025,18 @@ test "deferred callback proof instrumentation is an explicit generated runtime o
     try std.testing.expectEqual(@as(usize, 0), ordinary_arguments.items.len);
 }
 
-test "cache pruning keeps the active entry and a bounded history" {
+test "project cache key separates inputs" {
+    const first = projectCacheKey("Tests/First.sx");
+    const repeated = projectCacheKey("Tests/First.sx");
+    const second = projectCacheKey("Tests/Second.sx");
+
+    try std.testing.expectEqualSlices(u8, &first, &repeated);
+    try std.testing.expect(!std.mem.eql(u8, &first, &second));
+    try std.testing.expect(compilerCacheLane(first) < 4);
+    try std.testing.expectEqual(compilerCacheLane(first), compilerCacheLane(repeated));
+}
+
+test "project cache pruning keeps the active entry and a bounded history" {
     var temporary = std.testing.tmpDir(.{ .iterate = true });
     defer temporary.cleanup();
 
@@ -993,7 +1049,7 @@ test "cache pruning keeps the active entry and a bounded history" {
     try temporary.dir.createDir(std.testing.io, active_key, .default_dir);
     try temporary.dir.createDir(std.testing.io, "notes", .default_dir);
 
-    try pruneTargetCacheInDir(std.testing.allocator, std.testing.io, temporary.dir, active_key, 3);
+    try pruneProjectCacheInDir(std.testing.allocator, std.testing.io, temporary.dir, active_key, 3);
 
     var cache_entry_count: usize = 0;
     var active_found = false;

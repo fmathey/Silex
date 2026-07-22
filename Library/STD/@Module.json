@@ -3,6 +3,9 @@
     "defines": {
       "UTF8PROC_STATIC": "1"
     },
+    "include_dirs": [
+      "@Native/Includes"
+    ],
     "sources": {
       "c": [
         "@Native/Unicode/utf8proc/utf8proc.c"

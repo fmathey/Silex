@@ -250,12 +250,54 @@ source receives the effective Zig driver, target, profile, generated
 native-interface include path, module include paths, defines, and language
 standard used by its object compilation.
 
-Generated native contracts remain immutable under the content-addressed build
-cache used by the compiler. The same header contents are refreshed at stable
-paths under `.silex/interfaces/SilexNative/`, and the compilation database
-places `.silex/interfaces` before the cached include root for editor navigation.
-`.silex/interfaces/.generation` records the matching cached interface hash.
-Stable headers are generated output and must not be edited.
+Application-native contracts remain immutable under the content-addressed
+build cache used by the compiler. The same header contents are refreshed at
+stable paths under `.silex/interfaces/SilexNative/`, and the compilation
+database places `.silex/interfaces` before the cached include root for editor
+navigation. `.silex/interfaces/.generation` records the matching cached
+interface hash. These project headers are generated output and must not be
+edited.
+
+A native library may instead provide its complete, stable contract as
+`SilexNative/<runtime>.h` from one of its declared `native.include_dirs`. That
+header describes every native declaration owned by the library, independently
+of the subset imported by an application. It is a source input of the library:
+changing it invalidates the corresponding native objects. STD keeps this
+contract in `STD/@Native/Includes/SilexNative/STD.h`, and the toolchain tests
+compare it with an interface generated from the complete native STD surface.
+The application-generated header remains a compatibility fallback for a
+package that does not provide a stable contract yet.
+
+Build entries are grouped by compilation input before their content hash is
+applied. Silex retains a bounded history for each source or project manifest,
+rather than allowing unrelated executables built from the same directory to
+evict one another. A test workspace or repository containing several entry
+points can therefore reuse all unchanged executables on its next run.
+
+Native objects follow their source owner. Objects for the application remain
+inside its `.silex/build/` entry. Objects for STD and external packages are
+published atomically under the user's shared cache:
+
+```text
+Linux/macOS: $HOME/.silex/cache/objects/v1/<target>/<key>/
+Windows:     %LOCALAPPDATA%\Silex\cache\objects\v1\<target>\<key>\
+Override:    $SILEX_HOME/cache/objects/v1/<target>/<key>/
+```
+
+Windows falls back to `%USERPROFILE%\.silex\cache\` when `LOCALAPPDATA` is
+unavailable. The key covers the package identity and version, Silex and Zig
+versions, target, native compiler flags, definitions, sources, transitively
+included headers and the stable native interface. A second project using the
+same compatible key links the published objects without recompiling the
+library's C or C++ sources. `silex clean` removes only the current project's
+`.silex/` tree and leaves this shared cache intact.
+
+The same platform root contains
+`cache/compiler/v1/<zig-version>/<target>/` for the compiler's reusable module
+state. Four deterministic lanes below each target each carry a short link lock.
+This bounds concurrent application links to the same outer concurrency used by
+the development build while native source objects remain parallel and no two
+linker drivers can corrupt the same module state.
 
 The project database excludes the distributed Silex library, Git packages and
 other external package sources even when they participate in the same build.

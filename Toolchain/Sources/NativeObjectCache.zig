@@ -13,7 +13,9 @@ const EnvironMap = std.process.Environ.Map;
 pub const format = "v1";
 
 pub const Entry = struct {
+    origin: NativeDependency.RuntimeOrigin,
     package_index: usize,
+    manifest_path: []const u8,
     package_label: []const u8,
     key: [64]u8,
     object_count: usize,
@@ -38,45 +40,67 @@ pub fn makePlan(
     compiler_flags: []const []const u8,
 ) !Plan {
     var entries: std.ArrayList(Entry) = .empty;
-    var previous_package: ?usize = null;
     for (runtimes) |runtime| {
-        if (runtime.sources.len == 0 or previous_package == runtime.package_index) continue;
-        previous_package = runtime.package_index;
+        if (runtime.sources.len == 0 or runtime.origin == .project) continue;
+        for (entries.items) |entry| {
+            if (entryOwnsRuntime(entry, runtime)) break;
+        } else {
+            const package_root = switch (runtime.origin) {
+                .project => unreachable,
+                .package => graph.packages[runtime.package_index].root,
+                .distributed => std.fs.path.dirname(runtime.manifest_path) orelse runtime.module_directory,
+            };
+            const package_label = switch (runtime.origin) {
+                .project => unreachable,
+                .package => graph.packageLabel(runtime.package_index),
+                .distributed => runtime.module_name,
+            };
 
-        var hasher = std.crypto.hash.sha2.Sha256.init(.{});
-        hasher.update("silex-native-object-cache-");
-        hasher.update(format);
-        hasher.update("\x00silex-");
-        hasher.update(build_options.silex_version);
-        hasher.update("\x00zig-");
-        hasher.update(builtin.zig_version_string);
-        hashTarget(&hasher, target);
-        for (compiler_flags) |flag| {
-            hasher.update("\x00flag\x00");
-            hasher.update(flag);
+            var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+            hasher.update("silex-native-object-cache-");
+            hasher.update(format);
+            hasher.update("\x00owner\x00");
+            hasher.update(@tagName(runtime.origin));
+            hasher.update("\x00label\x00");
+            hasher.update(package_label);
+            if (runtime.origin == .package) {
+                hasher.update("\x00version\x00");
+                hasher.update(graph.packages[runtime.package_index].version orelse "");
+            }
+            hasher.update("\x00silex-");
+            hasher.update(build_options.silex_version);
+            hasher.update("\x00zig-");
+            hasher.update(builtin.zig_version_string);
+            hashTarget(&hasher, target);
+            for (compiler_flags) |flag| {
+                hasher.update("\x00flag\x00");
+                hasher.update(flag);
+            }
+
+            var object_count: usize = 0;
+            for (runtimes) |owned_runtime| {
+                if (!sameOwner(runtime, owned_runtime)) continue;
+                object_count += owned_runtime.sources.len;
+                try hashRuntimeInputs(
+                    allocator,
+                    io,
+                    &hasher,
+                    package_root,
+                    owned_runtime,
+                );
+            }
+
+            var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
+            hasher.final(&digest);
+            try entries.append(allocator, .{
+                .origin = runtime.origin,
+                .package_index = runtime.package_index,
+                .manifest_path = runtime.manifest_path,
+                .package_label = package_label,
+                .key = std.fmt.bytesToHex(digest, .lower),
+                .object_count = object_count,
+            });
         }
-
-        var object_count: usize = 0;
-        for (runtimes) |package_runtime| {
-            if (package_runtime.package_index != runtime.package_index) continue;
-            object_count += package_runtime.sources.len;
-            try hashRuntimeInputs(
-                allocator,
-                io,
-                &hasher,
-                graph.packages[runtime.package_index].root,
-                package_runtime,
-            );
-        }
-
-        var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
-        hasher.final(&digest);
-        try entries.append(allocator, .{
-            .package_index = runtime.package_index,
-            .package_label = graph.packageLabel(runtime.package_index),
-            .key = std.fmt.bytesToHex(digest, .lower),
-            .object_count = object_count,
-        });
     }
     return .{ .entries = try entries.toOwnedSlice(allocator) };
 }
@@ -102,30 +126,36 @@ pub fn prepareShared(
     var compiled: std.ArrayList([]const u8) = .empty;
     var reused: std.ArrayList([]const u8) = .empty;
     for (plan.entries) |entry| {
-        if (entry.package_index == 0) continue;
         const entry_path = try std.fs.path.join(allocator, &.{ target_root, &entry.key });
         if (try entryComplete(allocator, io, entry_path, entry.object_count)) {
             try reused.append(allocator, entry.package_label);
             for (0..entry.object_count) |_| progress.completeOne();
         } else {
-            Io.Dir.cwd().deleteTree(io, entry_path) catch {};
-            const published = try compileAndPublish(
-                allocator,
-                io,
-                zig_path,
-                target,
-                compiler_flags,
-                runtimes,
-                entry,
-                target_root,
-                entry_path,
-                backend_log_path,
-                progress,
-            );
-            if (published) {
-                try compiled.append(allocator, entry.package_label);
-            } else {
+            const lock = try acquireEntryLock(allocator, io, target_root, &entry.key);
+            defer if (lock) |file| file.close(io);
+            if (try entryComplete(allocator, io, entry_path, entry.object_count)) {
                 try reused.append(allocator, entry.package_label);
+                for (0..entry.object_count) |_| progress.completeOne();
+            } else {
+                Io.Dir.cwd().deleteTree(io, entry_path) catch {};
+                const published = try compileAndPublish(
+                    allocator,
+                    io,
+                    zig_path,
+                    target,
+                    compiler_flags,
+                    runtimes,
+                    entry,
+                    target_root,
+                    entry_path,
+                    backend_log_path,
+                    progress,
+                );
+                if (published) {
+                    try compiled.append(allocator, entry.package_label);
+                } else {
+                    try reused.append(allocator, entry.package_label);
+                }
             }
         }
         for (0..entry.object_count) |object_index| {
@@ -139,17 +169,76 @@ pub fn prepareShared(
     };
 }
 
+fn acquireEntryLock(
+    allocator: Allocator,
+    io: Io,
+    target_root: []const u8,
+    key: []const u8,
+) !?Io.File {
+    const filename = try std.fmt.allocPrint(allocator, ".{s}.lock", .{key});
+    const path = try std.fs.path.join(allocator, &.{ target_root, filename });
+    return acquireExclusiveLock(io, path);
+}
+
+pub fn acquireExclusiveLock(io: Io, path: []const u8) !?Io.File {
+    return Io.Dir.cwd().createFile(io, path, .{
+        .read = true,
+        .truncate = false,
+        .lock = .exclusive,
+    }) catch |err| switch (err) {
+        error.FileLocksUnsupported => null,
+        else => |other| return other,
+    };
+}
+
 pub fn objectCacheRoot(allocator: Allocator, environ_map: *const EnvironMap) ![]const u8 {
+    return objectCacheRootForOs(allocator, environ_map, builtin.os.tag);
+}
+
+fn objectCacheRootForOs(
+    allocator: Allocator,
+    environ_map: *const EnvironMap,
+    os_tag: std.Target.Os.Tag,
+) ![]const u8 {
+    const root = try userCacheRootForOs(allocator, environ_map, os_tag);
+    return std.fs.path.join(allocator, &.{ root, "objects" });
+}
+
+pub fn compilerCacheRoot(
+    allocator: Allocator,
+    environ_map: *const EnvironMap,
+    target_name: []const u8,
+    lane: usize,
+) ![]const u8 {
+    const root = try userCacheRootForOs(allocator, environ_map, builtin.os.tag);
+    const lane_name = try std.fmt.allocPrint(allocator, "lane-{d}", .{lane});
+    return std.fs.path.join(allocator, &.{
+        root,
+        "compiler",
+        "v1",
+        builtin.zig_version_string,
+        target_name,
+        lane_name,
+    });
+}
+
+fn userCacheRootForOs(
+    allocator: Allocator,
+    environ_map: *const EnvironMap,
+    os_tag: std.Target.Os.Tag,
+) ![]const u8 {
     if (environ_map.get("SILEX_HOME")) |silex_home| {
-        return std.fs.path.join(allocator, &.{ silex_home, "cache", "objects" });
+        return std.fs.path.join(allocator, &.{ silex_home, "cache" });
     }
-    if (builtin.os.tag == .windows) {
-        const local = environ_map.get("LOCALAPPDATA") orelse environ_map.get("USERPROFILE") orelse
-            return error.UserCacheUnavailable;
-        return std.fs.path.join(allocator, &.{ local, "Silex", "cache", "objects" });
+    if (os_tag == .windows) {
+        if (environ_map.get("LOCALAPPDATA")) |local| {
+            return std.fs.path.join(allocator, &.{ local, "Silex", "cache" });
+        }
+        const profile = environ_map.get("USERPROFILE") orelse return error.UserCacheUnavailable;
+        return std.fs.path.join(allocator, &.{ profile, ".silex", "cache" });
     }
     const home = environ_map.get("HOME") orelse return error.UserCacheUnavailable;
-    return std.fs.path.join(allocator, &.{ home, ".silex", "cache", "objects" });
+    return std.fs.path.join(allocator, &.{ home, ".silex", "cache" });
 }
 
 fn compileAndPublish(
@@ -176,7 +265,7 @@ fn compileAndPublish(
     var requests: std.ArrayList(NativeCommand.CompileRequest) = .empty;
     var object_index: usize = 0;
     for (runtimes) |runtime| {
-        if (runtime.package_index != entry.package_index) continue;
+        if (!entryOwnsRuntime(entry, runtime)) continue;
         for (runtime.sources) |source| {
             const destination = try objectPath(allocator, temporary_path, object_index);
             try requests.append(allocator, .{
@@ -272,6 +361,24 @@ fn entryComplete(allocator: Allocator, io: Io, entry_path: []const u8, expected_
 fn objectPath(allocator: Allocator, directory: []const u8, index: usize) ![]const u8 {
     const name = try std.fmt.allocPrint(allocator, "object-{d}.o", .{index});
     return std.fs.path.join(allocator, &.{ directory, name });
+}
+
+fn sameOwner(left: NativeDependency.ModuleRuntime, right: NativeDependency.ModuleRuntime) bool {
+    if (left.origin != right.origin) return false;
+    return switch (left.origin) {
+        .project => false,
+        .package => left.package_index == right.package_index,
+        .distributed => std.mem.eql(u8, left.manifest_path, right.manifest_path),
+    };
+}
+
+fn entryOwnsRuntime(entry: Entry, runtime: NativeDependency.ModuleRuntime) bool {
+    if (entry.origin != runtime.origin) return false;
+    return switch (entry.origin) {
+        .project => false,
+        .package => entry.package_index == runtime.package_index,
+        .distributed => std.mem.eql(u8, entry.manifest_path, runtime.manifest_path),
+    };
 }
 
 fn hashRuntimeInputs(
@@ -514,4 +621,117 @@ test "package object key follows native inputs but ignores Silex-only changes" {
     const linux = try TargetModule.Target.parse(allocator, std.testing.io, "x86_64-linux-musl");
     const other_target = try makePlan(allocator, std.testing.io, graph, &.{runtime}, linux, &.{"-O2"});
     try std.testing.expect(!std.mem.eql(u8, &after_header.entries[0].key, &other_target.entries[0].key));
+    const other_flags = try makePlan(
+        allocator,
+        std.testing.io,
+        graph,
+        &.{runtime},
+        TargetModule.Target.native(),
+        &.{"-O3"},
+    );
+    try std.testing.expect(!std.mem.eql(u8, &after_header.entries[0].key, &other_flags.entries[0].key));
+
+    var versioned_packages = [_]PackageGraph.Package{graph.packages[0]};
+    versioned_packages[0].version = "2.0.0";
+    const versioned_graph: PackageGraph.Graph = .{
+        .explicit = true,
+        .packages = &versioned_packages,
+    };
+    const other_version = try makePlan(
+        allocator,
+        std.testing.io,
+        versioned_graph,
+        &.{runtime},
+        TargetModule.Target.native(),
+        &.{"-O2"},
+    );
+    try std.testing.expect(!std.mem.eql(u8, &after_header.entries[0].key, &other_version.entries[0].key));
+}
+
+test "distributed runtimes are shared independently from project runtimes" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "Project.c", .data = "int project(void) { return 1; }\n" });
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "STD.c", .data = "int library(void) { return 2; }\n" });
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "@Module.json", .data = "{}\n" });
+    const root = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &temporary.sub_path });
+    const project_source = try std.fs.path.join(allocator, &.{ root, "Project.c" });
+    const distributed_source = try std.fs.path.join(allocator, &.{ root, "STD.c" });
+    const manifest = try std.fs.path.join(allocator, &.{ root, "@Module.json" });
+    const graph: PackageGraph.Graph = .{
+        .explicit = true,
+        .packages = &.{.{
+            .name = null,
+            .version = null,
+            .root = root,
+            .manifest_path = null,
+            .dependencies = &.{},
+            .first_chain = "application",
+            .origin = .root,
+        }},
+    };
+    const project_runtime: NativeDependency.ModuleRuntime = .{
+        .module_name = "Application",
+        .module_directory = root,
+        .manifest_path = manifest,
+        .origin = .project,
+        .sources = &.{.{ .kind = .c, .path = project_source }},
+        .include_dirs = &.{root},
+        .defines = &.{},
+        .system_libraries = &.{},
+        .frameworks = &.{},
+    };
+    const distributed_runtime: NativeDependency.ModuleRuntime = .{
+        .module_name = "STD",
+        .module_directory = root,
+        .manifest_path = manifest,
+        .origin = .distributed,
+        .sources = &.{.{ .kind = .c, .path = distributed_source }},
+        .include_dirs = &.{root},
+        .defines = &.{},
+        .system_libraries = &.{},
+        .frameworks = &.{},
+    };
+
+    const plan = try makePlan(
+        allocator,
+        std.testing.io,
+        graph,
+        &.{ project_runtime, distributed_runtime },
+        TargetModule.Target.native(),
+        &.{},
+    );
+    try std.testing.expectEqual(@as(usize, 1), plan.entries.len);
+    try std.testing.expectEqual(NativeDependency.RuntimeOrigin.distributed, plan.entries[0].origin);
+    try std.testing.expectEqualStrings("STD", plan.entries[0].package_label);
+    try std.testing.expectEqual(@as(usize, 1), plan.entries[0].object_count);
+}
+
+test "Windows object cache falls back from LOCALAPPDATA to USERPROFILE" {
+    var environment = EnvironMap.init(std.testing.allocator);
+    defer environment.deinit();
+    try environment.put("LOCALAPPDATA", "local-data");
+    try environment.put("USERPROFILE", "profile");
+    const local = try objectCacheRootForOs(std.testing.allocator, &environment, .windows);
+    defer std.testing.allocator.free(local);
+    const expected_local = try std.fs.path.join(
+        std.testing.allocator,
+        &.{ "local-data", "Silex", "cache", "objects" },
+    );
+    defer std.testing.allocator.free(expected_local);
+    try std.testing.expectEqualStrings(expected_local, local);
+
+    _ = environment.remove("LOCALAPPDATA");
+    const profile = try objectCacheRootForOs(std.testing.allocator, &environment, .windows);
+    defer std.testing.allocator.free(profile);
+    const expected_profile = try std.fs.path.join(
+        std.testing.allocator,
+        &.{ "profile", ".silex", "cache", "objects" },
+    );
+    defer std.testing.allocator.free(expected_profile);
+    try std.testing.expectEqualStrings(expected_profile, profile);
 }

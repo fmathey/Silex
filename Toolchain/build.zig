@@ -1,7 +1,11 @@
 const std = @import("std");
-const silex_version = "0.28.0";
+const silex_version = "0.29.0";
 
 pub fn build(b: *std.Build) void {
+    // A Silex run can itself launch several native compiler processes. Keep the
+    // outer build bounded unless the caller selected an explicit `-j` value.
+    if (b.graph.max_jobs == null) b.graph.max_jobs = 4;
+
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
@@ -352,6 +356,10 @@ pub fn build(b: *std.Build) void {
     });
     const lsp_test_command = b.addRunArtifact(lsp_tests);
     lsp_test_command.step.dependOn(b.getInstallStep());
+
+    const check_step = b.step("check", "Run the fast internal toolchain checks");
+    check_step.dependOn(b.getInstallStep());
+    check_step.dependOn(&test_command.step);
     // Lsp imports the shared front-end, so its test binary also contains the
     // SourceGraph tests. Serialize both deterministic temporary namespaces.
     lsp_test_command.step.dependOn(&test_command.step);
@@ -368,7 +376,7 @@ pub fn build(b: *std.Build) void {
     });
     lsp_protocol_command.expectStdOutEqual(
         "Content-Length: 574\r\n\r\n" ++
-            "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"capabilities\":{\"positionEncoding\":\"utf-8\",\"textDocumentSync\":1,\"documentFormattingProvider\":true,\"completionProvider\":{\"triggerCharacters\":[\".\"]},\"signatureHelpProvider\":{\"triggerCharacters\":[\"(\",\",\"]},\"definitionProvider\":true,\"referencesProvider\":true,\"renameProvider\":{\"prepareProvider\":true},\"hoverProvider\":true,\"semanticTokensProvider\":{\"legend\":{\"tokenTypes\":[\"namespace\",\"type\",\"enumMember\",\"function\",\"method\",\"property\",\"parameter\",\"variable\"],\"tokenModifiers\":[]},\"full\":true}},\"serverInfo\":{\"name\":\"Silex\",\"version\":\"0.28.0\"}}}" ++
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"capabilities\":{\"positionEncoding\":\"utf-8\",\"textDocumentSync\":1,\"documentFormattingProvider\":true,\"completionProvider\":{\"triggerCharacters\":[\".\"]},\"signatureHelpProvider\":{\"triggerCharacters\":[\"(\",\",\"]},\"definitionProvider\":true,\"referencesProvider\":true,\"renameProvider\":{\"prepareProvider\":true},\"hoverProvider\":true,\"semanticTokensProvider\":{\"legend\":{\"tokenTypes\":[\"namespace\",\"type\",\"enumMember\",\"function\",\"method\",\"property\",\"parameter\",\"variable\"],\"tokenModifiers\":[]},\"full\":true}},\"serverInfo\":{\"name\":\"Silex\",\"version\":\"0.29.0\"}}}" ++
             "Content-Length: 136\r\n\r\n" ++
             "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":\"file:///private/tmp/FormattingMemory.sx\",\"diagnostics\":[]}}" ++
             "Content-Length: 157\r\n\r\n" ++
@@ -1853,7 +1861,7 @@ pub fn build(b: *std.Build) void {
         "silex: native compilation failed for target 'x86_64-linux-musl'; target support, SDKs, or native sources may be unavailable or incomplete\n",
     );
     backend_discovered_target_failure_command.expectStdErrMatch(b.fmt(
-        "silex: backend details: .silex{c}build{c}v45{c}x86_64-linux-musl{c}",
+        "silex: backend details: .silex{c}build{c}v46{c}x86_64-linux-musl{c}",
         .{
             std.fs.path.sep,
             std.fs.path.sep,
@@ -2051,6 +2059,10 @@ pub fn build(b: *std.Build) void {
         ".zig-cache/native-object-cache-integration",
         ".zig-cache/native-object-cache-home",
     });
+    native_object_cache_integration_command.addFileArg(b.path("Tests/STDNativeInterface.sx"));
+    native_object_cache_integration_command.addFileArg(
+        b.path("../Library/STD/@Native/Includes/SilexNative/STD.h"),
+    );
 
     const native_package_diamond_command = b.addRunArtifact(executable);
     native_package_diamond_command.setEnvironmentVariable("SILEX_HOME", ".zig-cache/native-package-test-home/.silex");
@@ -2635,6 +2647,13 @@ pub fn build(b: *std.Build) void {
     const udp_native_test_command = b.addRunArtifact(udp_native_integration);
     test_step.dependOn(&udp_native_test_command.step);
 
+    // A dependency of `test` is otherwise a sibling of the install step and
+    // may start while the distributed library is being replaced.
+    const installed_toolchain = b.getInstallStep();
+    for (test_step.dependencies.items) |dependency| {
+        if (dependency != installed_toolchain) dependency.dependOn(installed_toolchain);
+    }
+
     const smoke_command = b.addRunArtifact(executable);
     smoke_command.step.dependOn(b.getInstallStep());
     smoke_command.addArgs(&.{ "run", "Smokes/Main.sx" });
@@ -3080,7 +3099,7 @@ pub fn build(b: *std.Build) void {
     }
 
     const modules_command = b.addRunArtifact(executable);
-    modules_command.step.dependOn(previous_integer_error_step);
+    modules_command.step.dependOn(b.getInstallStep());
     modules_command.addArgs(&.{ "run", "Smokes/Modules/silex.json" });
     modules_command.expectStdOutEqual(hostText(b, "true\ntrue\ntrue\nfalse\n7\n16\n11\n3\ngeneric module\n1\n2\n4\n5\n1\n2\nenum module\n20\nmodules\n"));
 
@@ -3389,11 +3408,16 @@ pub fn build(b: *std.Build) void {
 
     const console_session_compile_command = b.addRunArtifact(executable);
     console_session_compile_command.step.dependOn(&console_negative_coordinates_command.step);
-    console_session_compile_command.addArgs(&.{ "compile", "Smokes/ConsoleSession/Main.sx" });
+    console_session_compile_command.addArgs(&.{
+        "compile",
+        "Smokes/ConsoleSession/Main.sx",
+        "-o",
+        ".silex/console-session-smoke-bin",
+    });
 
     const console_session_command = b.addRunArtifact(console_session_integration);
     console_session_command.step.dependOn(&console_session_compile_command.step);
-    console_session_command.addArg(".silex/bin/Main");
+    console_session_command.addArg(".silex/console-session-smoke-bin");
 
     const console_session_noninteractive_command = b.addRunArtifact(executable);
     console_session_noninteractive_command.step.dependOn(&console_session_command.step);
@@ -3650,7 +3674,7 @@ pub fn build(b: *std.Build) void {
     ));
 
     const borrowed_returns_smoke_command = b.addRunArtifact(executable);
-    borrowed_returns_smoke_command.step.dependOn(&unique_resources_smoke_command.step);
+    borrowed_returns_smoke_command.step.dependOn(b.getInstallStep());
     borrowed_returns_smoke_command.addArgs(&.{ "run", "Smokes/NativeOpaqueResources/BorrowedReturns.sx" });
 
     const contiguous_views_smoke_command = b.addRunArtifact(executable);
@@ -3692,7 +3716,7 @@ pub fn build(b: *std.Build) void {
     ));
 
     const system_error_smoke_command = b.addRunArtifact(executable);
-    system_error_smoke_command.step.dependOn(&algorithms_comparator_panic_command.step);
+    system_error_smoke_command.step.dependOn(b.getInstallStep());
     system_error_smoke_command.addArgs(&.{ "run", "Smokes/SystemErrors.sx" });
     system_error_smoke_command.expectStdOutEqual(hostText(b, "system errors ok\n"));
 
@@ -3928,7 +3952,14 @@ pub fn build(b: *std.Build) void {
 
     const smoke_step = b.step("smoke", "Compile and run the smoke program");
     smoke_step.dependOn(b.getInstallStep());
+    smoke_step.dependOn(previous_integer_error_step);
+    smoke_step.dependOn(&unique_resources_smoke_command.step);
+    smoke_step.dependOn(&algorithms_comparator_panic_command.step);
     smoke_step.dependOn(&set_negative_reserve_command.step);
+
+    const release_check_step = b.step("release-check", "Run tests and end-to-end smokes");
+    release_check_step.dependOn(test_step);
+    release_check_step.dependOn(smoke_step);
 
     const benchmark_suffix = if (b.graph.host.result.os.tag == .windows) ".exe" else "";
     const silex_benchmark_path = b.fmt("zig-out/bin/IntegerLoopsSilex{s}", .{benchmark_suffix});

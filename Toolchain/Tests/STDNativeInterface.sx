@@ -1,0 +1,21 @@
+use STD.Collections.Hashing
+use STD.Console
+use STD.Console.Session
+use STD.Environment
+use STD.File
+use STD.FileSystem
+use STD.JSON
+use STD.Math
+use STD.Network
+use STD.Network.TCP
+use STD.Network.UDP
+use STD.Path
+use STD.Process
+use STD.Randomizer
+use STD.Subprocess
+use STD.Text
+use STD.Text.Grapheme
+use STD.Text.UTF8
+use STD.Time.Internal
+
+func main() {}
