@@ -51,7 +51,7 @@ pub fn main(init: std.process.Init) !void {
         allocator,
         init.io,
         vendor,
-        "Vendor.sx",
+        "Value.sx",
         "native func native_value() int\n\n" ++
             "public func value() int {\n" ++
             "    return native_value()\n" ++
@@ -71,7 +71,7 @@ pub fn main(init: std.process.Init) !void {
         allocator,
         init.io,
         vendor,
-        "Vendor.sx",
+        "Value.sx",
         "native func native_value() int\n" ++
             "native func native_unused(value:int) int\n\n" ++
             "public func value() int {\n" ++
@@ -166,7 +166,7 @@ fn createVendor(allocator: Allocator, io: Io, root: []const u8, value: u8) !void
         allocator,
         io,
         root,
-        "Vendor.sx",
+        "Value.sx",
         "native func native_value() int\n\n" ++
             "public func value() int {\n" ++
             "    return native_value()\n" ++
@@ -180,7 +180,7 @@ fn createVendor(allocator: Allocator, io: Io, root: []const u8, value: u8) !void
         "#include <Header.h>\n" ++
             "#include <SilexNative/Vendor.h>\n" ++
             "#include <stdint.h>\n\n" ++
-            "int64_t silexNative_Vendor_native_value(void) {\n" ++
+            "int64_t silexNative_Vendor_Value_native_value(void) {\n" ++
             "    return VENDOR_VALUE;\n" ++
             "}\n",
     );
@@ -206,7 +206,7 @@ fn createApp(allocator: Allocator, io: Io, root: []const u8, increment: u8) !voi
     );
     const source = try std.fmt.allocPrint(
         allocator,
-        "use Vendor\n\nfunc main() {{\n    print(Vendor.value() + {d})\n}}\n",
+        "use Vendor.Value as Vendor\n\nfunc main() {{\n    print(Vendor.value() + {d})\n}}\n",
         .{increment},
     );
     try writeFile(allocator, io, root, "Main.sx", source);

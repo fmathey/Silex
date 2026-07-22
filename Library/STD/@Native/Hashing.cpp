@@ -1,6 +1,6 @@
 #include <cstdint>
 
-extern "C" std::uint64_t silexNative_STD_Collections_native_hash_str(
+extern "C" std::uint64_t silexNative_STD_Collections_Hashing_native_hash_str(
     const char* bytes,
     std::int64_t length
 ) {

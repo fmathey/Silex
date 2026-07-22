@@ -1,5 +1,4 @@
-use STD.Algorithms.map as map
-use STD.Algorithms.filter as filter
+use STD.Algorithms.Iteration as Algorithms
 use STD.Collections.Queue as Queue
 use STD.Iteration.Iterator as Iterator
 
@@ -33,8 +32,8 @@ func required_str(value:str?) str {
 
 func main() {
     var empty = Iterator<int>.empty()
-    assert(map<int, str>(empty, label).is_empty(), "map empty")
-    assert(filter<int>(empty, even).is_empty(), "filter empty")
+    assert(Algorithms.map<int, str>(empty, label).is_empty(), "map empty")
+    assert(Algorithms.filter<int>(empty, even).is_empty(), "filter empty")
 
     var queue = Queue<int>.create()
     queue.enqueue(1)
@@ -49,17 +48,17 @@ func main() {
         filter_calls++
         return value % 2 == 0
     }
-    var filtered = filter<int>(source, measured_even)
+    var filtered = Algorithms.filter<int>(source, measured_even)
     assert(filter_calls == 3, "filter calls once per remaining value")
     assert(source.remaining() == 3 && queue.count() == 4, "filter preserves sources")
     assert(required_int(filtered.next()) == 2, "filter first ordered value")
     assert(required_int(filtered.next()) == 4 && filtered.next() == null, "filter order and length")
 
-    var accepted = filter<int>(queue.iterator(), func(value:@int) bool {
+    var accepted = Algorithms.filter<int>(queue.iterator(), func(value:@int) bool {
         return true
     })
     assert(accepted.remaining() == 4, "filter accepts all")
-    var rejected = filter<int>(queue.iterator(), func(value:@int) bool {
+    var rejected = Algorithms.filter<int>(queue.iterator(), func(value:@int) bool {
         return false
     })
     assert(rejected.is_empty(), "filter rejects all")
@@ -69,7 +68,7 @@ func main() {
         transform_calls++
         return label(value)
     }
-    var mapped = map<int, str>(filter<int>(queue.iterator(), even), measured_label)
+    var mapped = Algorithms.map<int, str>(Algorithms.filter<int>(queue.iterator(), even), measured_label)
     assert(transform_calls == 2, "map calls once per filtered value")
     assert(required_str(mapped.next()) == "two", "map changes type and preserves order")
     assert(required_str(mapped.next()) == "four" && mapped.next() == null, "map result length")

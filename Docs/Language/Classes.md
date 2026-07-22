@@ -99,8 +99,9 @@ Session(token:"abc")         // rejected: named fields are closed
 ```
 
 A class without any `init` keeps its existing named field initializer,
-including `Type()` when its fields permit it. Structures do not have custom
-constructors.
+including `Type()` when its fields permit it. Structures use the same closure
+rule for their own custom constructors, with public visibility by default and
+without `protected` or `super`; see [structure constructors](Structures.md#constructors).
 
 ## Static methods
 

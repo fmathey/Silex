@@ -1,4 +1,4 @@
-use STD.Algorithms.map as map
+use STD.Algorithms.Iteration.map as map
 use STD.Iteration.Iterator as Iterator
 
 func wrong(value:@str) int {

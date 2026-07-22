@@ -35,6 +35,11 @@ const UnitSource = struct {
     path: []const u8,
 };
 
+const NamespaceLocation = struct {
+    sources: []const []const u8,
+    has_directory: bool,
+};
+
 const UnitTarget = struct {
     module_index: usize,
     source_index: usize,
@@ -249,8 +254,8 @@ pub const Loader = struct {
             if (std.mem.eql(u8, source.path, source_path)) return;
             return self.fail(position, try std.fmt.allocPrint(
                 self.allocator,
-                "module '{s}' has multiple source units named '{s}'",
-                .{ module_name, unit_name },
+                "namespace '{s}' has multiple source providers",
+                .{module_name},
             ));
         };
         try sources.append(self.allocator, .{
@@ -261,30 +266,28 @@ pub const Loader = struct {
 
     fn ensureCatalog(self: *Loader, module: *ModuleBuilder, position: Source.Position) !void {
         if (module.catalog_complete) return;
-        const directory_path = if (module.package_name) |name|
-            try packageModulePath(self.allocator, module.module_root, name, module.name)
-        else
-            try localModulePath(self.allocator, module.module_root, module.name);
-        var directory = Io.Dir.cwd().openDir(self.io, directory_path, .{ .iterate = true }) catch |err| switch (err) {
-            error.FileNotFound, error.NotDir => return self.moduleNotFound(position, module.name, directory_path, null),
-            else => |other| return other,
-        };
-        defer directory.close(self.io);
-        var names: std.ArrayList([]const u8) = .empty;
-        var iterator = directory.iterateAssumeFirstIteration();
-        while (try iterator.next(self.io)) |entry| {
-            if (entry.kind == .file and std.mem.endsWith(u8, entry.name, ".sx")) {
-                try names.append(self.allocator, try self.allocator.dupe(u8, entry.name));
-            }
+        const location = try namespaceLocation(
+            self.allocator,
+            self.io,
+            module.module_root,
+            module.package_name,
+            module.name,
+        );
+        if (!location.has_directory and location.sources.len == 0) {
+            const expected_path = if (module.package_name) |name|
+                try packageModulePath(self.allocator, module.module_root, name, module.name)
+            else
+                try localModulePath(self.allocator, module.module_root, module.name);
+            return self.moduleNotFound(position, module.name, expected_path, null);
         }
-        std.mem.sort([]const u8, names.items, {}, struct {
-            fn lessThan(_: void, left: []const u8, right: []const u8) bool {
-                return std.mem.lessThan(u8, left, right);
-            }
-        }.lessThan);
-        for (names.items) |name| try self.addAvailableSource(
+        if (location.sources.len > 1) return self.fail(position, try std.fmt.allocPrint(
+            self.allocator,
+            "namespace '{s}' has multiple source providers '{s}' and '{s}'",
+            .{ module.name, location.sources[0], location.sources[1] },
+        ));
+        if (location.sources.len == 1) try self.addAvailableSource(
             &module.available_sources,
-            try std.fs.path.join(self.allocator, &.{ directory_path, name }),
+            location.sources[0],
             position,
             module.name,
         );
@@ -389,17 +392,44 @@ pub const Loader = struct {
         current_module_index: usize,
     ) !Selection {
         if (try self.moduleExists(modules.items, project_root, canonical_path, loads_local_modules, package_index)) {
-            return .{ .module = try self.ensureNamedModule(
+            const module_index = try self.ensureNamedModule(
                 modules,
                 project_root,
                 canonical_path,
                 position,
                 loads_local_modules,
                 package_index,
-            ) };
+            );
+            try self.validateNamespaceDeclarationCollision(
+                modules,
+                project_root,
+                canonical_path,
+                position,
+                loads_local_modules,
+                package_index,
+            );
+            return .{ .module = module_index };
         }
 
         if (std.mem.indexOfScalar(u8, canonical_path, '.') == null) {
+            const current_name = modules.items[current_module_index].name;
+            if (parentModuleName(current_name)) |parent| {
+                const sibling_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ parent, canonical_path });
+                if (try self.moduleExists(
+                    modules.items,
+                    project_root,
+                    sibling_name,
+                    loads_local_modules,
+                    package_index,
+                )) return .{ .module = try self.ensureNamedModule(
+                    modules,
+                    project_root,
+                    sibling_name,
+                    position,
+                    loads_local_modules,
+                    package_index,
+                ) };
+            }
             if (self.package_graph.?.explicit and
                 self.package_graph.?.findPackage(canonical_path) != null and
                 self.package_graph.?.directDependency(package_index, canonical_path) == null)
@@ -407,7 +437,7 @@ pub const Loader = struct {
                 try self.transitiveVisibilityError(position, package_index, canonical_path);
                 unreachable;
             }
-            return self.resolveUnitOrDeclaration(modules, current_module_index, canonical_path, position, true);
+            return self.resolveDeclaration(modules, current_module_index, canonical_path, position, true, true);
         }
         var candidate = canonical_path;
         while (std.mem.lastIndexOfScalar(u8, candidate, '.')) |separator| {
@@ -423,13 +453,25 @@ pub const Loader = struct {
             );
             const remainder = canonical_path[candidate.len + 1 ..];
             if (std.mem.indexOfScalar(u8, remainder, '.') != null) continue;
-            return self.resolveUnitOrDeclaration(
+            const internal_access = modules.items[module_index].package_index ==
+                modules.items[current_module_index].package_index and
+                sameModuleParent(modules.items[module_index].name, modules.items[current_module_index].name);
+            return self.resolveDeclaration(
                 modules,
                 module_index,
                 remainder,
                 position,
+                module_index == current_module_index or internal_access,
                 module_index == current_module_index,
             );
+        }
+        const package_name = firstSegment(canonical_path);
+        if (self.package_graph.?.explicit and
+            self.package_graph.?.findPackage(package_name) != null and
+            self.package_graph.?.directDependency(package_index, package_name) == null)
+        {
+            try self.transitiveVisibilityError(position, package_index, package_name);
+            unreachable;
         }
         return self.fail(position, try std.fmt.allocPrint(
             self.allocator,
@@ -438,96 +480,84 @@ pub const Loader = struct {
         ));
     }
 
-    fn resolveUnitOrDeclaration(
+    fn validateNamespaceDeclarationCollision(
+        self: *Loader,
+        modules: *std.ArrayList(ModuleBuilder),
+        project_root: []const u8,
+        namespace: []const u8,
+        position: Source.Position,
+        loads_local_modules: bool,
+        package_index: usize,
+    ) !void {
+        const parent = parentModuleName(namespace) orelse return;
+        if (!try self.moduleExists(modules.items, project_root, parent, loads_local_modules, package_index)) return;
+        const parent_index = try self.ensureNamedModule(
+            modules,
+            project_root,
+            parent,
+            position,
+            loads_local_modules,
+            package_index,
+        );
+        try self.ensureCatalog(&modules.items[parent_index], position);
+        if (modules.items[parent_index].available_sources.items.len != 1) return;
+        const child = lastSegment(namespace);
+        if (!try self.unitDeclares(modules.items[parent_index].available_sources.items[0].path, child, false)) return;
+        return self.fail(position, try std.fmt.allocPrint(
+            self.allocator,
+            "namespace '{s}' conflicts with declaration '{s}' in namespace '{s}'",
+            .{ namespace, child, parent },
+        ));
+    }
+
+    fn resolveDeclaration(
         self: *Loader,
         modules: *std.ArrayList(ModuleBuilder),
         module_index: usize,
         name: []const u8,
         position: Source.Position,
-        same_module: bool,
+        private_access: bool,
+        allow_semantic_resolution: bool,
     ) !Selection {
-        if (!modules.items[module_index].catalog_complete) {
-            const module = &modules.items[module_index];
-            const directory_path = if (module.package_name) |package_name|
-                try packageModulePath(self.allocator, module.module_root, package_name, module.name)
-            else
-                try localModulePath(self.allocator, module.module_root, module.name);
-            const filename = try std.fmt.allocPrint(self.allocator, "{s}.sx", .{name});
-            const exact_path = try std.fs.path.join(self.allocator, &.{ directory_path, filename });
-            const stat = Io.Dir.cwd().statFile(self.io, exact_path, .{}) catch null;
-            if (stat != null and stat.?.kind == .file) {
-                try self.addAvailableSource(&module.available_sources, exact_path, position, module.name);
-                const source_index = module.available_sources.items.len - 1;
-                const homonymous = try self.unitDeclares(exact_path, name, !same_module);
-                return .{ .units = .{
-                    .items = try self.allocator.dupe(UnitTarget, &.{.{
-                        .module_index = module_index,
-                        .source_index = source_index,
-                    }}),
-                    .load_only = same_module or !homonymous,
-                } };
-            }
-        }
         try self.ensureCatalog(&modules.items[module_index], position);
-        const exact_unit = findUnit(modules.items[module_index].available_sources.items, name);
-        var declarations: std.ArrayList(UnitTarget) = .empty;
-        for (modules.items[module_index].available_sources.items, 0..) |unit, source_index| {
-            if (try self.unitDeclares(unit.path, name, !same_module)) try declarations.append(self.allocator, .{
+        if (modules.items[module_index].available_sources.items.len == 1 and
+            try self.unitDeclares(
+                modules.items[module_index].available_sources.items[0].path,
+                name,
+                !private_access,
+            )) return .{ .units = .{
+            .items = try self.allocator.dupe(UnitTarget, &.{.{
                 .module_index = module_index,
-                .source_index = source_index,
-            });
-        }
-        if (exact_unit) |source_index| {
-            for (declarations.items) |declaration| if (declaration.source_index != source_index) {
-                return self.fail(position, try std.fmt.allocPrint(
-                    self.allocator,
-                    "use target '{s}.{s}' is ambiguous between source unit '{s}' and a declaration from another unit",
-                    .{ modules.items[module_index].name, name, name },
-                ));
-            };
-            const homonymous = for (declarations.items) |declaration| {
-                if (declaration.source_index == source_index) break true;
-            } else false;
-            return .{ .units = .{
-                .items = try self.allocator.dupe(UnitTarget, &.{.{
-                    .module_index = module_index,
-                    .source_index = source_index,
-                }}),
-                .load_only = same_module or !homonymous,
-            } };
-        }
-        if (declarations.items.len != 0) return .{ .units = .{
-            .items = try declarations.toOwnedSlice(self.allocator),
+                .source_index = 0,
+            }}),
             .load_only = false,
         } };
-        if (same_module) return .{ .units = .{
+        if (allow_semantic_resolution) return .{ .units = .{
             .items = &.{},
             .load_only = false,
         } };
         return self.fail(position, try std.fmt.allocPrint(
             self.allocator,
-            "module '{s}' has no source unit or selectable declaration '{s}'",
+            "namespace '{s}' has no selectable declaration '{s}'",
             .{ modules.items[module_index].name, name },
         ));
     }
 
     fn unitDeclares(self: *Loader, source_path: []const u8, name: []const u8, public_only: bool) !bool {
         const source = self.readSource(source_path) catch return false;
-        if (public_only) {
-            var lines = std.mem.splitScalar(u8, source, '\n');
-            while (lines.next()) |source_line| {
-                const line = std.mem.trim(u8, source_line, " \t\r");
-                if (!std.mem.startsWith(u8, line, "public use ")) continue;
-                const declaration = line["public use ".len..];
-                const alias_marker = std.mem.indexOf(u8, declaration, " as ");
-                const exported_name = if (alias_marker) |index|
-                    std.mem.trim(u8, declaration[index + " as ".len ..], " \t\r")
-                else block: {
-                    const target_end = std.mem.indexOfAny(u8, declaration, " <\t\r") orelse declaration.len;
-                    break :block lastSegment(declaration[0..target_end]);
-                };
-                if (std.mem.eql(u8, exported_name, name)) return true;
-            }
+        var lines = std.mem.splitScalar(u8, source, '\n');
+        while (lines.next()) |source_line| {
+            const line = std.mem.trim(u8, source_line, " \t\r");
+            if (!std.mem.startsWith(u8, line, "public use ")) continue;
+            const declaration = line["public use ".len..];
+            const alias_marker = std.mem.indexOf(u8, declaration, " as ");
+            const exported_name = if (alias_marker) |index|
+                std.mem.trim(u8, declaration[index + " as ".len ..], " \t\r")
+            else block: {
+                const target_end = std.mem.indexOfAny(u8, declaration, " <\t\r") orelse declaration.len;
+                break :block lastSegment(declaration[0..target_end]);
+            };
+            if (std.mem.eql(u8, exported_name, name)) return true;
         }
         var lexer = LexerModule.Lexer.init(source);
         var depth: usize = 0;
@@ -728,7 +758,7 @@ pub const Loader = struct {
             }
 
             if (try canonicalAliasedPath(self.allocator, module_aliases, path.items)) |canonical| {
-                try self.selectLongestQualifiedTarget(
+                const roots = try self.selectLongestQualifiedTarget(
                     modules,
                     project_root,
                     canonical,
@@ -737,6 +767,8 @@ pub const Loader = struct {
                     package_index,
                     file.module_index,
                 );
+                try self.appendRoots(&self.file_states.items[file_index].use_edges, roots);
+                try self.appendRoots(&self.file_states.items[file_index].activation_roots, roots);
             }
             index = end + 1;
         }
@@ -751,7 +783,7 @@ pub const Loader = struct {
         loads_local_modules: bool,
         package_index: usize,
         current_module_index: usize,
-    ) !void {
+    ) ![]const usize {
         var candidate = canonical_path;
         while (true) {
             const selection = self.resolveSelection(
@@ -765,14 +797,13 @@ pub const Loader = struct {
             ) catch |err| switch (err) {
                 error.InvalidSource => {
                     self.diagnostic = null;
-                    const separator = std.mem.lastIndexOfScalar(u8, candidate, '.') orelse return;
+                    const separator = std.mem.lastIndexOfScalar(u8, candidate, '.') orelse return &.{};
                     candidate = candidate[0..separator];
                     continue;
                 },
                 else => |other| return other,
             };
-            _ = try self.selectSelection(modules, selection, position);
-            return;
+            return self.selectSelection(modules, selection, position);
         }
     }
 
@@ -790,16 +821,16 @@ pub const Loader = struct {
         }
         if (StandardLibrary.isReservedModule(module_name)) {
             const library_root = StandardLibrary.root(self.allocator, self.io) catch return false;
-            return isDirectory(self.io, try localModulePath(self.allocator, library_root, module_name));
+            return namespaceExists(self.allocator, self.io, library_root, null, module_name);
         }
         if (self.package_graph.?.explicit) return self.explicitModuleExists(project_root, module_name, package_index);
         if (loads_local_modules and
-            try isDirectory(self.io, try localModulePath(self.allocator, project_root, module_name)))
+            try namespaceExists(self.allocator, self.io, project_root, null, module_name))
         {
             return true;
         }
         const library_root = StandardLibrary.root(self.allocator, self.io) catch return false;
-        return isDirectory(self.io, try localModulePath(self.allocator, library_root, module_name));
+        return namespaceExists(self.allocator, self.io, library_root, null, module_name);
     }
 
     fn loadNamedModule(
@@ -813,13 +844,11 @@ pub const Loader = struct {
     ) !void {
         if (StandardLibrary.isReservedModule(module_name)) {
             if (loads_local_modules) {
-                const local_path = try localModulePath(self.allocator, project_root, module_name);
-                if (try isDirectory(self.io, local_path)) {
+                if (try namespaceExists(self.allocator, self.io, project_root, null, module_name)) {
                     const library_root = StandardLibrary.root(self.allocator, self.io) catch {
                         return self.loadDistributedModule(modules, module_name, position);
                     };
-                    const distributed_path = try localModulePath(self.allocator, library_root, module_name);
-                    if (try isDirectory(self.io, distributed_path)) {
+                    if (try namespaceExists(self.allocator, self.io, library_root, null, module_name)) {
                         return self.multipleProviders(position, module_name);
                     }
                 }
@@ -843,13 +872,12 @@ pub const Loader = struct {
         position: Source.Position,
     ) !void {
         const local_path = try localModulePath(self.allocator, project_root, module_name);
-        const has_local = try isDirectory(self.io, local_path);
+        const has_local = try namespaceExists(self.allocator, self.io, project_root, null, module_name);
         const library_root = StandardLibrary.root(self.allocator, self.io) catch |err| {
             if (has_local) return self.loadModule(modules, project_root, null, module_name, position, .local, 0);
             return err;
         };
-        const distributed_path = try localModulePath(self.allocator, library_root, module_name);
-        const has_distributed = try isDirectory(self.io, distributed_path);
+        const has_distributed = try namespaceExists(self.allocator, self.io, library_root, null, module_name);
         if (has_local and has_distributed) return self.multipleProviders(position, module_name);
         if (findModule(modules.items, module_name) != null and !has_distributed) return;
         if (has_local) return self.loadModule(modules, project_root, null, module_name, position, .local, 0);
@@ -877,8 +905,7 @@ pub const Loader = struct {
             );
             return self.fail(position, message);
         };
-        const directory_path = try localModulePath(self.allocator, library_root, module_name);
-        if (!try isDirectory(self.io, directory_path)) {
+        if (!try namespaceExists(self.allocator, self.io, library_root, null, module_name)) {
             if (findModule(modules.items, module_name) != null) return;
             const message = try std.fmt.allocPrint(self.allocator, "module '{s}' was not found", .{module_name});
             return self.fail(position, message);
@@ -905,15 +932,15 @@ pub const Loader = struct {
         const package = graph.packages[package_index];
         if (package.name) |name| {
             if (moduleBelongsToPackage(module_name, name)) {
-                return isDirectory(self.io, try packageModulePath(self.allocator, package.root, name, module_name));
+                return namespaceExists(self.allocator, self.io, package.root, name, module_name);
             }
         }
         if (graph.directDependency(package_index, firstSegment(module_name))) |dependency_index| {
             const dependency = graph.packages[dependency_index];
-            return isDirectory(self.io, try packageModulePath(self.allocator, dependency.root, dependency.name.?, module_name));
+            return namespaceExists(self.allocator, self.io, dependency.root, dependency.name.?, module_name);
         }
         if (package_index == 0) {
-            return isDirectory(self.io, try localModulePath(self.allocator, project_root, module_name));
+            return namespaceExists(self.allocator, self.io, project_root, null, module_name);
         }
         return false;
     }
@@ -946,7 +973,9 @@ pub const Loader = struct {
         if (package.name) |name| {
             if (moduleBelongsToPackage(module_name, name)) {
                 const path = try packageModulePath(self.allocator, package.root, name, module_name);
-                if (!try isDirectory(self.io, path)) return self.moduleNotFound(position, module_name, path, null);
+                if (!try namespaceExists(self.allocator, self.io, package.root, name, module_name)) {
+                    return self.moduleNotFound(position, module_name, path, null);
+                }
                 return self.loadModule(modules, package.root, name, module_name, position, .package, package_index);
             }
         }
@@ -956,11 +985,20 @@ pub const Loader = struct {
             try localModulePath(self.allocator, project_root, module_name)
         else
             null;
-        const has_local = if (local_path) |path| try isDirectory(self.io, path) else false;
+        const has_local = if (local_path != null)
+            try namespaceExists(self.allocator, self.io, project_root, null, module_name)
+        else
+            false;
         if (dependency_index) |index| {
             const dependency = graph.packages[index];
             const dependency_path = try packageModulePath(self.allocator, dependency.root, dependency.name.?, module_name);
-            const has_dependency = try isDirectory(self.io, dependency_path);
+            const has_dependency = try namespaceExists(
+                self.allocator,
+                self.io,
+                dependency.root,
+                dependency.name.?,
+                module_name,
+            );
             if (has_local and has_dependency) return self.multipleProviders(position, module_name);
             if (!has_dependency) return self.moduleNotFound(position, module_name, dependency_path, null);
             return self.loadModule(modules, dependency.root, dependency.name.?, module_name, position, .package, index);
@@ -1055,9 +1093,20 @@ pub const Loader = struct {
 
     fn finishActivationClosures(self: *Loader) !void {
         for (self.files.items, 0..) |*file, file_index| {
+            var dependency_modules: std.ArrayList(usize) = .empty;
+            for (self.file_states.items[file_index].use_edges.items) |dependency_file| {
+                const dependency_module = self.files.items[dependency_file].module_index;
+                if (dependency_module == file.module_index) continue;
+                var present = false;
+                for (dependency_modules.items) |existing| if (existing == dependency_module) {
+                    present = true;
+                    break;
+                };
+                if (!present) try dependency_modules.append(self.allocator, dependency_module);
+            }
+            file.dependency_modules = try dependency_modules.toOwnedSlice(self.allocator);
             var activated: std.ArrayList(usize) = .empty;
             for (self.file_states.items[file_index].activation_roots.items) |root| {
-                const activation_module = self.files.items[root].module_index;
                 var pending: std.ArrayList(usize) = .empty;
                 try pending.append(self.allocator, root);
                 while (pending.pop()) |current| {
@@ -1069,9 +1118,7 @@ pub const Loader = struct {
                     if (visited) continue;
                     try activated.append(self.allocator, current);
                     for (self.file_states.items[current].use_edges.items) |dependency| {
-                        if (self.files.items[dependency].module_index == activation_module) {
-                            try pending.append(self.allocator, dependency);
-                        }
+                        try pending.append(self.allocator, dependency);
                     }
                 }
             }
@@ -1199,6 +1246,17 @@ fn lastSegment(path: []const u8) []const u8 {
     return path[separator + 1 ..];
 }
 
+fn parentModuleName(path: []const u8) ?[]const u8 {
+    const separator = std.mem.lastIndexOfScalar(u8, path, '.') orelse return null;
+    return path[0..separator];
+}
+
+fn sameModuleParent(left: []const u8, right: []const u8) bool {
+    const left_parent = parentModuleName(left) orelse return false;
+    const right_parent = parentModuleName(right) orelse return false;
+    return std.mem.eql(u8, left_parent, right_parent);
+}
+
 fn firstSegment(path: []const u8) []const u8 {
     const separator = std.mem.indexOfScalar(u8, path, '.') orelse return path;
     return path[0..separator];
@@ -1230,6 +1288,87 @@ fn localModulePath(allocator: Allocator, root: []const u8, module_name: []const 
         if (character.* == '.') character.* = std.fs.path.sep;
     }
     return std.fs.path.join(allocator, &.{ root, relative_path });
+}
+
+fn namespaceLocation(
+    allocator: Allocator,
+    io: Io,
+    module_root: []const u8,
+    package_name: ?[]const u8,
+    module_name: []const u8,
+) !NamespaceLocation {
+    const relative_name = if (package_name) |name| block: {
+        std.debug.assert(moduleBelongsToPackage(module_name, name));
+        if (std.mem.eql(u8, module_name, name)) {
+            break :block "";
+        }
+        break :block module_name[name.len + 1 ..];
+    } else module_name;
+
+    if (relative_name.len == 0) return .{
+        .sources = &.{},
+        .has_directory = try isDirectory(io, module_root),
+    };
+
+    const directory_path = try localModulePath(allocator, module_root, relative_name);
+    var sources: std.ArrayList([]const u8) = .empty;
+    var has_compact_descendant = false;
+    var stem_start: usize = 0;
+    while (true) {
+        const prefix_name = if (stem_start == 0) "" else relative_name[0 .. stem_start - 1];
+        const stem = relative_name[stem_start..];
+        const physical_parent = if (prefix_name.len == 0)
+            module_root
+        else
+            try localModulePath(allocator, module_root, prefix_name);
+        const filename = try std.fmt.allocPrint(allocator, "{s}.sx", .{stem});
+        const source_path = try std.fs.path.join(allocator, &.{ physical_parent, filename });
+        if (try isFile(io, source_path)) try sources.append(allocator, source_path);
+        if (!has_compact_descendant) has_compact_descendant = try compactDescendantExists(io, physical_parent, stem);
+
+        const separator = std.mem.indexOfScalarPos(u8, relative_name, stem_start, '.') orelse break;
+        stem_start = separator + 1;
+    }
+    return .{
+        .sources = try sources.toOwnedSlice(allocator),
+        .has_directory = try isDirectory(io, directory_path) or has_compact_descendant,
+    };
+}
+
+fn compactDescendantExists(io: Io, directory_path: []const u8, stem: []const u8) !bool {
+    var directory = Io.Dir.cwd().openDir(io, directory_path, .{ .iterate = true }) catch |err| switch (err) {
+        error.FileNotFound, error.NotDir => return false,
+        else => |other| return other,
+    };
+    defer directory.close(io);
+    var iterator = directory.iterateAssumeFirstIteration();
+    while (try iterator.next(io)) |entry| {
+        if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".sx")) continue;
+        const source_stem = entry.name[0 .. entry.name.len - ".sx".len];
+        if (source_stem.len > stem.len and std.mem.startsWith(u8, source_stem, stem) and source_stem[stem.len] == '.') {
+            return true;
+        }
+    }
+    return false;
+}
+
+fn namespaceExists(
+    allocator: Allocator,
+    io: Io,
+    module_root: []const u8,
+    package_name: ?[]const u8,
+    module_name: []const u8,
+) !bool {
+    const location = try namespaceLocation(allocator, io, module_root, package_name, module_name);
+    return location.has_directory or location.sources.len != 0;
+}
+
+fn isFile(io: Io, path: []const u8) !bool {
+    const stat = Io.Dir.cwd().statFile(io, path, .{}) catch |err| switch (err) {
+        error.FileNotFound, error.NotDir => return false,
+        else => |other| return other,
+    };
+    return stat.kind == .file;
 }
 
 fn isDirectory(io: Io, path: []const u8) !bool {
@@ -1410,7 +1549,54 @@ test "qualified paths expand parent module aliases" {
     try std.testing.expect(try canonicalAliasedPath(std.testing.allocator, aliases, "stopwatch.start") == null);
 }
 
-test "source unit selection loads only its transitive sibling closure" {
+test "nested and dotted files provide the same logical namespace and compact parents" {
+    if (!build_options.run_source_graph_tests) return;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var temporary = std.testing.tmpDir(.{ .iterate = true });
+    defer temporary.cleanup();
+
+    try temporary.dir.createDirPath(std.testing.io, "Nested/STD/Console");
+    try temporary.dir.createDirPath(std.testing.io, "Dotted/STD");
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "Nested/STD/Console/Session.sx", .data = "" });
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "Dotted/STD/Console.Session.sx", .data = "" });
+    const temporary_root = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &temporary.sub_path });
+    const nested_root = try std.fs.path.join(allocator, &.{ temporary_root, "Nested" });
+    const dotted_root = try std.fs.path.join(allocator, &.{ temporary_root, "Dotted" });
+
+    const nested = try namespaceLocation(allocator, std.testing.io, nested_root, null, "STD.Console.Session");
+    const dotted = try namespaceLocation(allocator, std.testing.io, dotted_root, null, "STD.Console.Session");
+    try std.testing.expectEqual(@as(usize, 1), nested.sources.len);
+    try std.testing.expectEqual(@as(usize, 1), dotted.sources.len);
+    try std.testing.expect(try namespaceExists(allocator, std.testing.io, dotted_root, null, "STD.Console"));
+
+    try temporary.dir.createDir(std.testing.io, "Dotted/STD/Console", .default_dir);
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "Dotted/STD/Console/Session.sx", .data = "" });
+    const collision = try namespaceLocation(allocator, std.testing.io, dotted_root, null, "STD.Console.Session");
+    try std.testing.expectEqual(@as(usize, 2), collision.sources.len);
+}
+
+test "a file and directory can materialize the same namespace node" {
+    if (!build_options.run_source_graph_tests) return;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var temporary = std.testing.tmpDir(.{ .iterate = true });
+    defer temporary.cleanup();
+
+    try temporary.dir.createDirPath(std.testing.io, "STD/Algorithms");
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "STD/Algorithms.sx", .data = "" });
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "STD/Algorithms/Sort.sx", .data = "" });
+    const root = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &temporary.sub_path });
+    const parent = try namespaceLocation(allocator, std.testing.io, root, null, "STD.Algorithms");
+    const child = try namespaceLocation(allocator, std.testing.io, root, null, "STD.Algorithms.Sort");
+    try std.testing.expectEqual(@as(usize, 1), parent.sources.len);
+    try std.testing.expect(parent.has_directory);
+    try std.testing.expectEqual(@as(usize, 1), child.sources.len);
+}
+
+test "file namespace selection loads only its transitive sibling closure" {
     if (!build_options.run_source_graph_tests) return;
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -1421,7 +1607,7 @@ test "source unit selection loads only its transitive sibling closure" {
     try temporary.dir.writeFile(std.testing.io, .{
         .sub_path = "project.json",
         .data =
-        \\{"target":"App","modules":[
+        \\{"target":"App.Main","modules":[
         \\  {"name":"Lib","sources":["Alpha.sx","Internal.sx","AlphaExtensions.sx","Broken.sx"]},
         \\  {"name":"App","sources":["Main.sx"]}
         \\]}
@@ -1433,7 +1619,7 @@ test "source unit selection loads only its transitive sibling closure" {
     });
     try temporary.dir.writeFile(std.testing.io, .{
         .sub_path = "Alpha.sx",
-        .data = "use Internal\nuse AlphaExtensions\npub struct Alpha { static func value() int { return helper() } }\n",
+        .data = "use Internal\nuse AlphaExtensions\npub struct Alpha { static func value() int { return Internal.helper() } }\n",
     });
     try temporary.dir.writeFile(std.testing.io, .{
         .sub_path = "Internal.sx",
@@ -1461,7 +1647,7 @@ test "source unit selection loads only its transitive sibling closure" {
     try std.testing.expectEqualSlices(usize, &.{ 1, 3, 2 }, loaded.files[0].activated_files);
 }
 
-test "a differently named declaration selects its providing source unit" {
+test "a differently named declaration is not searched in a neighboring file" {
     if (!build_options.run_source_graph_tests) return;
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -1472,7 +1658,7 @@ test "a differently named declaration selects its providing source unit" {
     try temporary.dir.writeFile(std.testing.io, .{
         .sub_path = "project.json",
         .data =
-        \\{"target":"App","modules":[
+        \\{"target":"App.Main","modules":[
         \\  {"name":"Lib","sources":["API.sx","Neighbor.sx"]},
         \\  {"name":"App","sources":["Main.sx"]}
         \\]}
@@ -1494,13 +1680,11 @@ test "a differently named declaration selects its providing source unit" {
     var environ = EnvironMap.init(allocator);
     const project_path = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &temporary.sub_path, "project.json" });
     var loader = Loader.init(allocator, std.testing.io, &environ);
-    const loaded = try loader.load(project_path);
-
-    try std.testing.expectEqual(@as(usize, 2), loaded.files.len);
-    try std.testing.expectEqualStrings("API", loaded.files[1].unit_name);
+    try std.testing.expectError(error.InvalidSource, loader.load(project_path));
+    try std.testing.expect(std.mem.indexOf(u8, loader.diagnostic.?.message, "unknown use target 'Lib.Renamed'") != null);
 }
 
-test "a source unit and declaration from another unit are ambiguous" {
+test "a declaration in a neighboring file does not collide with a file namespace" {
     if (!build_options.run_source_graph_tests) return;
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -1511,7 +1695,7 @@ test "a source unit and declaration from another unit are ambiguous" {
     try temporary.dir.writeFile(std.testing.io, .{
         .sub_path = "project.json",
         .data =
-        \\{"target":"App","modules":[
+        \\{"target":"App.Main","modules":[
         \\  {"name":"Lib","sources":["Thing.sx","Other.sx"]},
         \\  {"name":"App","sources":["Main.sx"]}
         \\]}
@@ -1524,6 +1708,7 @@ test "a source unit and declaration from another unit are ambiguous" {
     var environ = EnvironMap.init(allocator);
     const project_path = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &temporary.sub_path, "project.json" });
     var loader = Loader.init(allocator, std.testing.io, &environ);
-    try std.testing.expectError(error.InvalidSource, loader.load(project_path));
-    try std.testing.expect(std.mem.indexOf(u8, loader.diagnostic.?.message, "is ambiguous") != null);
+    const loaded = try loader.load(project_path);
+    try std.testing.expectEqual(@as(usize, 2), loaded.files.len);
+    try std.testing.expectEqualStrings("Thing", loaded.files[1].unit_name);
 }

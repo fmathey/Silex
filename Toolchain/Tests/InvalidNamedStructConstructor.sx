@@ -1,0 +1,11 @@
+struct Value {
+    let number:int
+
+    init(number:int) {
+        self.number = number
+    }
+}
+
+func main() {
+    let value = Value(number:1)
+}

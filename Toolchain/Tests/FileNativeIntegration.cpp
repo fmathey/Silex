@@ -6,7 +6,7 @@
 
 namespace {
 
-SilexNative_STD_File_File* createFile(const std::string& path) {
+SilexNative_STD_File* createFile(const std::string& path) {
     SilexNative_STD_File_native_openResult result{};
     silexNative_STD_File_native_open(
         path.data(), static_cast<std::int64_t>(path.size()), 3, 5, false, &result

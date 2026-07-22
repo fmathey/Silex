@@ -1,29 +1,23 @@
-use STD.IO.Reader
-use STD.IO.Writer
-use STD.IO.copy
-use STD.IO.read_exact
-use STD.IO.read_to_end
-use STD.IO.write_all
-use STD.System.Error
-use STD.System.ErrorKind
+use STD.IO
+use STD.System
 
-struct Source:Reader {
+struct Source:IO.Reader {
     let bytes:uint8[]
     var offset:int
     let fragment:int
     let fail_at:int
     var calls:int
 
-    func read(buffer:&uint8[..]) Result<int, Error> {
+    func read(buffer:&uint8[..]) Result<int, System.Error> {
         if buffer.is_empty() {
-            return Result<int, Error>.success(0)
+            return Result<int, System.Error>.success(0)
         }
         self.calls++
         if self.offset == self.fail_at {
-            return Result<int, Error>.failure(injected_error("fake.read"))
+            return Result<int, System.Error>.failure(injected_error("fake.read"))
         }
         if self.offset == self.bytes.count() {
-            return Result<int, Error>.success(0)
+            return Result<int, System.Error>.success(0)
         }
         var count = self.bytes.count() - self.offset
         if count > buffer.count() {
@@ -38,29 +32,29 @@ struct Source:Reader {
             index++
         }
         self.offset += count
-        return Result<int, Error>.success(count)
+        return Result<int, System.Error>.success(count)
     }
 
     drop {}
 }
 
-struct Sink:Writer {
+struct Sink:IO.Writer {
     var bytes:uint8[]
     let fragment:int
     let fail_at:int
     let zero_at:int
     var calls:int
 
-    func write(buffer:@uint8[..]) Result<int, Error> {
+    func write(buffer:@uint8[..]) Result<int, System.Error> {
         if buffer.is_empty() {
-            return Result<int, Error>.success(0)
+            return Result<int, System.Error>.success(0)
         }
         self.calls++
         if self.bytes.count() == self.fail_at {
-            return Result<int, Error>.failure(injected_error("fake.write"))
+            return Result<int, System.Error>.failure(injected_error("fake.write"))
         }
         if self.bytes.count() == self.zero_at {
-            return Result<int, Error>.success(0)
+            return Result<int, System.Error>.success(0)
         }
         var count = buffer.count()
         if count > self.fragment {
@@ -72,7 +66,7 @@ struct Sink:Writer {
             self.bytes.append(byte)
             index++
         }
-        return Result<int, Error>.success(count)
+        return Result<int, System.Error>.success(count)
     }
 
     drop {}
@@ -95,28 +89,28 @@ func empty_source(fragment:int, fail_at:int) Source {
     return source(values, fragment, fail_at)
 }
 
-func injected_error(operation:str) Error {
-    return Error(
-        kind:ErrorKind.permission_denied(),
+func injected_error(operation:str) System.Error {
+    return System.Error(
+        kind:System.ErrorKind.permission_denied(),
         operation:operation,
         subject:null,
         detail:"injected failure"
     )
 }
 
-func read_exact_list<T:Reader>(reader:&T, buffer:&uint8[]) Result<void, Error> {
+func read_exact_list<T:IO.Reader>(reader:&T, buffer:&uint8[]) Result<void, System.Error> {
     var view = &buffer[0:buffer.count()]
-    return read_exact<T>(reader, view)
+    return IO.read_exact<T>(reader, view)
 }
 
-func read_once<T:Reader>(reader:&T, buffer:&uint8[]) Result<int, Error> {
+func read_once<T:IO.Reader>(reader:&T, buffer:&uint8[]) Result<int, System.Error> {
     var view = &buffer[0:buffer.count()]
     return reader.read(view)
 }
 
-func write_all_list<T:Writer>(writer:&T, buffer:@uint8[]) Result<void, Error> {
+func write_all_list<T:IO.Writer>(writer:&T, buffer:@uint8[]) Result<void, System.Error> {
     let view = @buffer[0:buffer.count()]
-    return write_all<T>(writer, view)
+    return IO.write_all<T>(writer, view)
 }
 
 func expect_read_exact_success() {
@@ -180,7 +174,7 @@ func expect_read_failures() {
     var position = 0
     while position <= 3 {
         var reader = source([1, 2, 3], 1, position)
-        match read_to_end<Source>(reader, 10) {
+        match IO.read_to_end<Source>(reader, 10) {
             success(unexpected_bytes) => {
                 panic("injected read unexpectedly succeeded")
             }
@@ -194,7 +188,7 @@ func expect_read_failures() {
 
 func expect_read_to_end() {
     var reader = source([1, 2, 3, 4, 5], 2, -1)
-    match read_to_end<Source>(reader, 5) {
+    match IO.read_to_end<Source>(reader, 5) {
         success(bytes) => {
             assert(
                 bytes.count() == 5 && bytes[0] == 1 && bytes[1] == 2 && bytes[2] == 3 &&
@@ -207,7 +201,7 @@ func expect_read_to_end() {
         }
     }
     var empty = empty_source(1, -1)
-    match read_to_end<Source>(empty, 0) {
+    match IO.read_to_end<Source>(empty, 0) {
         success(bytes) => {
             assert(bytes.is_empty(), "empty stream")
         }
@@ -216,7 +210,7 @@ func expect_read_to_end() {
         }
     }
     var limited = source([1, 2, 3], 3, -1)
-    match read_to_end<Source>(limited, 2) {
+    match IO.read_to_end<Source>(limited, 2) {
         success(bytes) => {
             panic("limit unexpectedly succeeded")
         }
@@ -230,7 +224,7 @@ func expect_read_to_end() {
         }
     }
     var invalid = empty_source(1, -1)
-    match read_to_end<Source>(invalid, -1) {
+    match IO.read_to_end<Source>(invalid, -1) {
         success(bytes) => {
             panic("negative limit unexpectedly succeeded")
         }
@@ -295,7 +289,7 @@ func expect_write_all() {
 func expect_copy() {
     var reader = source([10, 11, 12, 13, 14], 2, -1)
     var writer = sink(1, -1, -1)
-    match copy<Source, Sink>(reader, writer, 5) {
+    match IO.copy<Source, Sink>(reader, writer, 5) {
         success(count) => {
             assert(count == 5, "copy count")
         }
@@ -311,7 +305,7 @@ func expect_copy() {
 
     var limited_reader = source([1, 2, 3], 3, -1)
     var limited_writer = sink(3, -1, -1)
-    match copy<Source, Sink>(limited_reader, limited_writer, 2) {
+    match IO.copy<Source, Sink>(limited_reader, limited_writer, 2) {
         success(count) => {
             panic("copy limit unexpectedly succeeded")
         }
@@ -328,7 +322,7 @@ func expect_copy() {
 
     var invalid_reader = empty_source(1, -1)
     var invalid_writer = sink(1, -1, -1)
-    match copy<Source, Sink>(invalid_reader, invalid_writer, -1) {
+    match IO.copy<Source, Sink>(invalid_reader, invalid_writer, -1) {
         success(count) => {
             panic("negative copy limit unexpectedly succeeded")
         }

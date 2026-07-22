@@ -1,5 +1,5 @@
 {
-  "target": "App",
+  "target": "App.Item",
   "modules": [
     {
       "name": "App",

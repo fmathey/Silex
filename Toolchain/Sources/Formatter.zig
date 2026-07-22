@@ -21,7 +21,7 @@ const Piece = struct {
     leading: []const u8,
 };
 
-/// Formats one complete Silex source unit. The returned slice belongs to
+/// Formats one complete Silex source file. The returned slice belongs to
 /// `allocator`. A diagnostic message allocated for an invalid source belongs
 /// to it as well. Syntax is validated before any formatted text is returned.
 pub fn formatSource(allocator: Allocator, source: []const u8) FormatError!Result {
@@ -792,7 +792,7 @@ test "project validation precedes every write and check preserves files" {
     try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "Second.sx", .data = "func second() void {}\n" });
     try temporary.dir.writeFile(std.testing.io, .{
         .sub_path = "project.json",
-        .data = "{\"target\":\"App\",\"modules\":[{\"name\":\"App\",\"sources\":[\"First.sx\",\"Second.sx\"]}]}\n",
+        .data = "{\"target\":\"App.First\",\"modules\":[{\"name\":\"App\",\"sources\":[\"First.sx\",\"Second.sx\"]}]}\n",
     });
     const relative_root = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &temporary.sub_path });
     const absolute_root = try std.fs.path.resolve(allocator, &.{relative_root});

@@ -1,12 +1,12 @@
 {
-  "target": "Generic.App",
+  "target": "Generic.App.Main",
   "modules": [
     {
-      "name": "Generic.Core",
+      "name": "Generic",
       "sources": ["Core.sx"]
     },
     {
-      "name": "Generic.API",
+      "name": "Generic",
       "sources": ["API.sx"]
     },
     {

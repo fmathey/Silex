@@ -1,4 +1,5 @@
-use STD.Algorithms
+use STD.Algorithms.Random as Algorithms
+use STD.Algorithms.Sort.sort as sort
 use STD.Randomizer as Randomizer
 
 class Tracker {
@@ -126,7 +127,7 @@ func check_fisher_yates() {
 
     if true {
         var view = &values[1:5]
-        Algorithms.sort<int>(view, ascending)
+        sort<int>(view, ascending)
     }
     assert(values ==[90, 1, 2, 3, 4, 80], "shuffle preserves every element")
 
@@ -185,7 +186,7 @@ func exercise_noncopyable(tracker:Tracker) {
     }
     if true {
         var view = &tokens[0:tokens.count()]
-        Algorithms.sort<Token>(view, token_before)
+        sort<Token>(view, token_before)
     }
     assert(tokens[0].value == 1 && tokens[1].value == 2, "noncopyable values first half")
     assert(tokens[2].value == 3 && tokens[3].value == 4, "noncopyable values second half")

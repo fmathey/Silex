@@ -433,13 +433,13 @@ pub const Parser = struct {
             }
             if (is_override) return self.fail("'override' must declare a class method");
             if (self.current.tag == .keyword_init) {
-                if (!is_class) return self.fail("custom constructors are available only in classes");
                 const constructor_position = self.current.position;
                 try self.advance();
                 const parameters = try self.parseParameters();
                 var super_arguments: ?[]const *Ast.Expression = null;
                 var super_position: ?Source.Position = null;
                 if (self.current.tag == .colon) {
+                    if (!is_class) return self.fail("a struct constructor cannot call 'super'");
                     try self.advance();
                     if (self.current.tag != .keyword_super) return self.fail("expected 'super' after constructor ':'");
                     super_position = self.current.position;
@@ -2627,12 +2627,31 @@ test "reject unsupported protocol declaration forms" {
     }
 }
 
-test "reject constructors on structs" {
+test "parse visible overloaded struct constructors" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    var parser = Parser.init(arena.allocator(), "struct Value { init() {} } func main() {}");
+    var parser = Parser.init(arena.allocator(),
+        \\struct Value {
+        \\    let number:int
+        \\    init() { self.number = 0 }
+        \\    public init(number:int) { self.number = number }
+        \\    private init(number:int, doubled:bool) { self.number = number }
+        \\}
+        \\func main() {}
+    );
+    const program = try parser.parse();
+    try std.testing.expectEqual(@as(usize, 3), program.structures[0].constructors.len);
+    try std.testing.expectEqual(Ast.MemberVisibility.public_access, program.structures[0].constructors[0].visibility);
+    try std.testing.expectEqual(Ast.MemberVisibility.public_access, program.structures[0].constructors[1].visibility);
+    try std.testing.expectEqual(Ast.MemberVisibility.private_access, program.structures[0].constructors[2].visibility);
+}
+
+test "reject super call on struct constructor" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var parser = Parser.init(arena.allocator(), "struct Value { init() : super() {} } func main() {}");
     try std.testing.expectError(error.InvalidSource, parser.parse());
-    try std.testing.expectEqualStrings("custom constructors are available only in classes", parser.diagnostic.?.message);
+    try std.testing.expectEqualStrings("a struct constructor cannot call 'super'", parser.diagnostic.?.message);
 }
 
 test "parse struct visibility and reject protected members" {

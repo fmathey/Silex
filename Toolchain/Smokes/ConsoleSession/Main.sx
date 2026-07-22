@@ -1,6 +1,6 @@
 use STD.Console as Console
 
-func describe(event:Console.KeyEvent) str {
+func describe(event:Console.Session.KeyEvent) str {
     var modifiers = "-"
     if event.shift { modifiers = "S" }
     if event.control { modifiers += "C" } else { modifiers += "-" }
@@ -25,7 +25,7 @@ func describe(event:Console.KeyEvent) str {
     }
 }
 
-func function_number(event:Console.KeyEvent) int {
+func function_number(event:Console.Session.KeyEvent) int {
     return match event.key {
         function(number) => number
         else => 0

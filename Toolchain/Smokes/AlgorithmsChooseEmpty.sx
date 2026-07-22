@@ -1,4 +1,4 @@
-use STD.Algorithms
+use STD.Algorithms.Random as Algorithms
 use STD.Randomizer as Randomizer
 
 func is_negative(value:@int) bool {

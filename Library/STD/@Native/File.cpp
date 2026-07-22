@@ -16,7 +16,7 @@
 #include <unistd.h>
 #endif
 
-struct SilexNative_STD_File_File {
+struct SilexNative_STD_File {
 #if defined(_WIN32)
     HANDLE handle;
 #else
@@ -41,7 +41,7 @@ struct SilexNative_STD_File_NativeFailure {
         SilexNative_STD_File_NativeFailure failure_value;                           \
     }
 
-SILEX_FILE_RESULT(native_open, SilexNative_STD_File_File* success_value;);
+SILEX_FILE_RESULT(native_open, SilexNative_STD_File* success_value;);
 SILEX_FILE_RESULT(native_close, );
 SILEX_FILE_RESULT(native_read, std::int64_t success_value;);
 SILEX_FILE_RESULT(native_write, std::int64_t success_value;);
@@ -107,7 +107,7 @@ bool windowsPath(const char* bytes, std::int64_t length, std::wstring& output) {
     return true;
 }
 
-void closeDiscard(SilexNative_STD_File_File* file) {
+void closeDiscard(SilexNative_STD_File* file) {
     if (file == nullptr) return;
     CloseHandle(file->handle);
     delete file;
@@ -134,7 +134,7 @@ bool posixPath(const char* bytes, std::int64_t length, std::string& output) {
     return true;
 }
 
-void closeDiscard(SilexNative_STD_File_File* file) {
+void closeDiscard(SilexNative_STD_File* file) {
     if (file == nullptr) return;
     ::close(file->descriptor);
     delete file;
@@ -146,7 +146,7 @@ void closeDiscard(SilexNative_STD_File_File* file) {
 
 } // namespace
 
-extern "C" void silexNative_STD_File_discard_file(SilexNative_STD_File_File* file) {
+extern "C" void silexNative_STD_File_discard_file(SilexNative_STD_File* file) {
     closeDiscard(file);
 }
 
@@ -187,7 +187,7 @@ extern "C" void silexNative_STD_File_native_open(
         return;
     }
     output->tag = SilexNative_STD_File_native_openResultTag_success;
-    output->success_value = new SilexNative_STD_File_File{handle};
+    output->success_value = new SilexNative_STD_File{handle};
 #else
     std::string path;
     if (!posixPath(pathBytes, pathLength, path)) {
@@ -213,13 +213,13 @@ extern "C" void silexNative_STD_File_native_open(
         return;
     }
     output->tag = SilexNative_STD_File_native_openResultTag_success;
-    output->success_value = new SilexNative_STD_File_File{descriptor};
+    output->success_value = new SilexNative_STD_File{descriptor};
 #endif
     ++liveFiles;
 }
 
 extern "C" void silexNative_STD_File_native_close(
-    SilexNative_STD_File_File* file,
+    SilexNative_STD_File* file,
     SilexNative_STD_File_native_closeResult* output
 ) {
 #if defined(_WIN32)
@@ -241,7 +241,7 @@ extern "C" void silexNative_STD_File_native_close(
 }
 
 extern "C" void silexNative_STD_File_native_read(
-    SilexNative_STD_File_File* file,
+    SilexNative_STD_File* file,
     std::uint8_t* buffer,
     std::int64_t count,
     SilexNative_STD_File_native_readResult* output
@@ -270,7 +270,7 @@ extern "C" void silexNative_STD_File_native_read(
 }
 
 extern "C" void silexNative_STD_File_native_write(
-    SilexNative_STD_File_File* file,
+    SilexNative_STD_File* file,
     const std::uint8_t* buffer,
     std::int64_t count,
     SilexNative_STD_File_native_writeResult* output
@@ -299,7 +299,7 @@ extern "C" void silexNative_STD_File_native_write(
 }
 
 extern "C" void silexNative_STD_File_native_flush(
-    SilexNative_STD_File_File* file,
+    SilexNative_STD_File* file,
     SilexNative_STD_File_native_flushResult* output
 ) {
 #if defined(_WIN32)
@@ -317,7 +317,7 @@ extern "C" void silexNative_STD_File_native_flush(
 }
 
 extern "C" void silexNative_STD_File_native_seek(
-    SilexNative_STD_File_File* file,
+    SilexNative_STD_File* file,
     std::int64_t offset,
     std::int64_t from,
     SilexNative_STD_File_native_seekResult* output
@@ -350,7 +350,7 @@ extern "C" void silexNative_STD_File_native_seek(
 }
 
 extern "C" void silexNative_STD_File_native_position(
-    SilexNative_STD_File_File* file,
+    SilexNative_STD_File* file,
     SilexNative_STD_File_native_positionResult* output
 ) {
 #if defined(_WIN32)
@@ -378,7 +378,7 @@ extern "C" void silexNative_STD_File_native_position(
 }
 
 extern "C" void silexNative_STD_File_native_length(
-    SilexNative_STD_File_File* file,
+    SilexNative_STD_File* file,
     SilexNative_STD_File_native_lengthResult* output
 ) {
 #if defined(_WIN32)
@@ -406,7 +406,7 @@ extern "C" void silexNative_STD_File_native_length(
 }
 
 extern "C" void silexNative_STD_File_native_set_length(
-    SilexNative_STD_File_File* file,
+    SilexNative_STD_File* file,
     std::int64_t length,
     SilexNative_STD_File_native_set_lengthResult* output
 ) {

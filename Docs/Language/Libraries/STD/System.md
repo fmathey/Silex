@@ -1,8 +1,14 @@
 # System
 
 ```sx
-use STD.System.Error
-use STD.System.ErrorKind
+use STD.System
+
+let error = System.Error(
+    kind:System.ErrorKind.not_found(),
+    operation:"example",
+    subject:null,
+    detail:"missing"
+)
 ```
 
 `STD.System` defines the portable recoverable error shared by system APIs.

@@ -1,32 +1,26 @@
-use STD.Text.Normalization as Normalization
-use STD.Text.normalize as normalize
-use STD.Text.is_normalized as is_normalized
-use STD.Text.lowercase as lowercase
-use STD.Text.uppercase as uppercase
-use STD.Text.case_fold as case_fold
-use STD.Text.unicode_version as unicode_version
+use STD.Text
 
 func main() {
     let composed = "é"
     let decomposed = "é"
 
-    assert(normalize(decomposed, Normalization.nfc()) == composed, "NFC composition")
-    assert(normalize(composed, Normalization.nfd()) == decomposed, "NFD decomposition")
-    assert(normalize("ﬃ", Normalization.nfkc()) == "ffi", "NFKC compatibility")
-    assert(normalize("ﬃ", Normalization.nfkd()) == "ffi", "NFKD compatibility")
+    assert(Text.normalize(decomposed, Text.Normalization.nfc()) == composed, "NFC composition")
+    assert(Text.normalize(composed, Text.Normalization.nfd()) == decomposed, "NFD decomposition")
+    assert(Text.normalize("ﬃ", Text.Normalization.nfkc()) == "ffi", "NFKC compatibility")
+    assert(Text.normalize("ﬃ", Text.Normalization.nfkd()) == "ffi", "NFKD compatibility")
 
-    let normalized = normalize(decomposed, Normalization.nfc())
-    assert(normalize(normalized, Normalization.nfc()) == normalized, "normalization idempotence")
-    assert(is_normalized(composed, Normalization.nfc()), "NFC verdict")
-    assert(!is_normalized(decomposed, Normalization.nfc()), "non-NFC verdict")
+    let normalized = Text.normalize(decomposed, Text.Normalization.nfc())
+    assert(Text.normalize(normalized, Text.Normalization.nfc()) == normalized, "normalization idempotence")
+    assert(Text.is_normalized(composed, Text.Normalization.nfc()), "NFC verdict")
+    assert(!Text.is_normalized(decomposed, Text.Normalization.nfc()), "non-NFC verdict")
 
-    assert(lowercase("İ ΟΣ") == "i̇ ος", "full lowercase and final sigma")
-    assert(uppercase("Straße ﬃ") == "STRASSE FFI", "full uppercase expansions")
-    assert(case_fold("Straße") == case_fold("STRASSE"), "default case folding")
-    assert(case_fold("Ꭰꭰ") == "ᎠᎠ", "Cherokee case folding")
+    assert(Text.lowercase("İ ΟΣ") == "i̇ ος", "full lowercase and final sigma")
+    assert(Text.uppercase("Straße ﬃ") == "STRASSE FFI", "full uppercase expansions")
+    assert(Text.case_fold("Straße") == Text.case_fold("STRASSE"), "default case folding")
+    assert(Text.case_fold("Ꭰꭰ") == "ᎠᎠ", "Cherokee case folding")
 
-    assert(normalize("", Normalization.nfc()) == "", "empty normalization")
-    assert(lowercase("A\0B") == "a\0b", "embedded null casing")
-    assert(normalize("͸", Normalization.nfc()) == "͸", "unassigned scalar preservation")
-    assert(unicode_version() == "17.0.0", "pinned Unicode version")
+    assert(Text.normalize("", Text.Normalization.nfc()) == "", "empty normalization")
+    assert(Text.lowercase("A\0B") == "a\0b", "embedded null casing")
+    assert(Text.normalize("͸", Text.Normalization.nfc()) == "͸", "unassigned scalar preservation")
+    assert(Text.unicode_version() == "17.0.0", "pinned Unicode version")
 }

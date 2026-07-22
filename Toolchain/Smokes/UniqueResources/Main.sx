@@ -123,19 +123,19 @@ func generic_read<T>(value:@T) int {
     return 1
 }
 
-func constrained_read<T:Resources.Readable>(value:@T) int {
+func constrained_read<T:Resources.Resource.Readable>(value:@T) int {
     return value.value()
 }
 
-func propagated(label:int) Result<Resources.Resource,Resources.OpenError> {
-    let resource = try Resources.open_result(label, true)
-    return Result<Resources.Resource,Resources.OpenError>.success(move resource)
+func propagated(label:int) Result<Resources.Resource,Resources.Resource.OpenError> {
+    let resource = try Resources.Resource.open_result(label, true)
+    return Result<Resources.Resource,Resources.Resource.OpenError>.success(move resource)
 }
 
-func propagated_named(label:int) Result<Resources.Resource,Resources.OpenError> {
-    let result = Resources.open_result(label, true)
+func propagated_named(label:int) Result<Resources.Resource,Resources.Resource.OpenError> {
+    let result = Resources.Resource.open_result(label, true)
     let resource = try move result
-    return Result<Resources.Resource,Resources.OpenError>.success(move resource)
+    return Result<Resources.Resource,Resources.Resource.OpenError>.success(move resource)
 }
 
 func composition() {
@@ -193,19 +193,19 @@ func composition() {
         failure(error) => { print("unexpected") }
     }
 
-    let mapped = map_error<Resources.Resource,Resources.OpenError,str>(
-        Resources.open_result(108, true),
-        func(error:Resources.OpenError) str { return "open error" }
+    let mapped = map_error<Resources.Resource,Resources.Resource.OpenError,str>(
+        Resources.Resource.open_result(108, true),
+        func(error:Resources.Resource.OpenError) str { return "open error" }
     )
     match move mapped {
         success(var value) => { consume(move value) }
         failure(error) => { print(error) }
     }
 
-    let named_result = Resources.open_result(114, true)
-    let mapped_named = map_error<Resources.Resource,Resources.OpenError,str>(
+    let named_result = Resources.Resource.open_result(114, true)
+    let mapped_named = map_error<Resources.Resource,Resources.Resource.OpenError,str>(
         move named_result,
-        func(error:Resources.OpenError) str { return "open error" }
+        func(error:Resources.Resource.OpenError) str { return "open error" }
     )
     match move mapped_named {
         success(var value) => { consume(move value) }
@@ -269,7 +269,7 @@ func transfers() {
 }
 
 func main() {
-    Resources.internal_access(1)
+    Resources.Internal.internal_access(1)
     lexical_scopes()
     early_return()
     loop_exits()
@@ -287,11 +287,11 @@ func main() {
     transfers()
     borrows()
     composition()
-    match Resources.incomplete_initialization(60, false) {
+    match Resources.Resource.incomplete_initialization(60, false) {
         success => { print("unexpected") }
         failure(error) => { print(error) }
     }
-    match Resources.incomplete_initialization(61, true) {
+    match Resources.Resource.incomplete_initialization(61, true) {
         success => { print("complete success") }
         failure(error) => { print("unexpected") }
     }

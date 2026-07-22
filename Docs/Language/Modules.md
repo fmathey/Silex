@@ -1,24 +1,37 @@
 # Modules
 
-A module is a logical node in a hierarchy. Each `.sx` file assigned directly
-to it is a source unit whose name is the exact filename without `.sx`. Files
-assigned to the same module share their enums, protocols, structures, classes,
-and functions, and directories below it provide its submodules. A file does
-not contain a `module` declaration.
+A namespace is a logical node in a hierarchy, and every `.sx` file provides
+exactly one namespace. Its directories supply the leading segments and its
+filename without `.sx` supplies the final segment: `STD/Random.sx` provides
+`STD.Random`, while `STD/Algorithms/Sort.sx` provides
+`STD.Algorithms.Sort`. A file does not contain a `module` declaration.
 
-A source unit is selectable but does not add a namespace segment. For example,
-`STD/Time/Stopwatch.sx` is the unit `STD.Time.Stopwatch`, while its public
-`Stopwatch` structure remains named `STD.Time.Stopwatch` rather than
-`STD.Time.Stopwatch.Stopwatch`. Private declarations in the file remain private
-to `STD.Time`. Manifest modules use the basename of each `sources` path by the
-same rule and reject duplicate unit names.
+A filename stem may compact several logical segments with dots.
+`STD/Console.Session.sx` and `STD/Console/Session.sx` therefore both spell
+`STD.Console.Session`. They cannot coexist in one graph: two physical files
+for the same namespace are duplicate providers. New files, documentation and
+editor suggestions use the nested form `STD/Console/Session.sx`.
 
-When compiling an entry file without a manifest, a directory defines a local
-module by the same path rule as the installed standard library: `STD/` provides
-`STD`, and `STD/Time/` provides `STD.Time`. A directory remains a module when
-it contains no direct `.sx` source and only groups submodules. Only `.sx` files
-directly inside a directory contribute declarations to that module, so
-`STD/Randomizer.sx` declares `STD.Randomizer` directly in `STD`.
+A file and a directory may materialize the same node. `Algorithms.sx` contains
+the direct declarations of `Algorithms`, while `Algorithms/Sort.sx` contains
+those of `Algorithms.Sort`. A directory with no homonymous file is a pure
+grouping namespace and loads no descendants by itself. There is no implicit
+`Index.sx`, `Module.sx`, or other index filename.
+
+A top-level enum, protocol, structure, class, function, or transparent type
+alias whose name equals the last namespace segment is its principal
+declaration. Its canonical name is the namespace itself:
+
+```sx
+// STD/Randomizer.sx
+public class Randomizer {
+}
+```
+
+The class is `STD.Randomizer`, not `STD.Randomizer.Randomizer`. Other
+declarations are children of the file namespace. Thus `Kind`, `Value`, and
+`parse` in `STD/JSON.sx` are `STD.JSON.Kind`, `STD.JSON.Value`, and
+`STD.JSON.parse`.
 
 A directory whose name starts with `@` is infrastructure rather than a Silex
 module. Automatic module discovery and completion skip that directory and its
@@ -30,8 +43,8 @@ module. A leading `_` has no special meaning and remains available for ordinary
 modules, including a future private-module convention.
 
 The distributed library is installed with Silex. Its currently available
-public root is `STD`; it declares `STD.Randomizer` directly and provides
-`STD.Time` as a submodule.
+public root is `STD`; `STD/Randomizer.sx` provides `STD.Randomizer`, and
+`STD/Time/` provides the grouping namespace `STD.Time`.
 The root names `STD` and `Silex` are reserved for distributed modules, so they
 must not be listed as dependencies in a manifest. Distributed modules work
 from a single entry file and from a JSON project manifest. If a local module
@@ -53,54 +66,62 @@ func create_stopwatch() Stopwatch {
 }
 ```
 
-`use` names a dependency and makes a selected module available through its last
-path segment or an explicit alias. It does not recursively load every submodule.
-A fully qualified reference under that module use resolves the longest module
-prefix and then selects the required source unit or declaration. Thus `use STD`
-permits `STD.Time.Stopwatch()`
-and loads `Stopwatch.sx` and its explicit dependencies on demand.
+`use` names a dependency and makes a selected namespace available through its
+last path segment or an explicit alias. It does not recursively load every
+child namespace. A fully qualified reference under that use resolves the
+longest file namespace and loads that file and the transitive closure of its
+explicit dependencies. Thus `use STD` permits `STD.Time.Stopwatch()` and loads
+`STD/Time/Stopwatch.sx` on demand.
 The same rule applies through a module alias such as `Standard.Time.Stopwatch`
 after `use STD as Standard`.
 
-A direct module `use` also activates the used module's public extension methods
-and protocol conformances in that source file. This activation is not
-transitive; see [Type extensions](Extensions.md#visibility-and-uses).
+A direct namespace or declaration `use` also activates public extensions and
+protocol conformances in that file's transitive dependency closure; see
+[Type extensions](Extensions.md#visibility-and-uses).
 
-A non-public `use` can name a module, a source unit, or a declaration and can
-establish that exact dependency. Thus
-`use STD.Time as Time` selects every direct unit of that module, while
-`use STD.Time.Stopwatch` selects only `Stopwatch.sx` and introduces its public
-homonymous structure. Selecting a unit with no homonymous declaration, such as
-`use STD.Time.Internal`, only loads it; it creates no fictitious `Internal`
-type or value. A declaration whose name differs from its file selects the unit
-that provides it. A path which is simultaneously a unit and a declaration from
-another unit is ambiguous and rejected.
+A non-public `use` can name a namespace or one of its declarations. Selecting
+`STD.Time.Stopwatch` loads exactly `Stopwatch.sx` and, because the file has a
+public principal structure, binds both the namespace and the type under
+`Stopwatch`. Selecting `STD.Time.Internal` loads its namespace but creates no
+fictitious type when the file has no principal declaration. A precise
+declaration remains selectable, such as `use STD.JSON.Value as Value`.
 
-Inside a source unit, an unqualified `use` can select a sibling unit or a
-declaration from the same module:
+When a file consumes several declarations from one API, the canonical style
+selects its namespace once and keeps those declarations qualified:
+
+```sx
+use STD.Subprocess
+use STD.System.Error as Error
+
+func launch(command:Subprocess.Command) Result<Subprocess.Output, Error> {
+    return Subprocess.run(command)
+}
+```
+
+A declaration-specific `use` remains appropriate when the file deliberately
+introduces one local name, especially with an explanatory alias such as
+`use STD.System.Error as Error`. It is not the default way to enumerate every
+type and function of one namespace.
+
+Inside a file, an unqualified `use` may select a sibling namespace with the
+same logical parent:
 
 ```sx
 use Internal
 
 public struct Stopwatch {
+    static func elapsed() float {
+        return Internal.seconds_between(0, 1)
+    }
 }
 ```
 
-The loader opens each selected unit once and follows its `use` directives to a
-stable transitive closure. Neighboring units outside that closure are not
-parsed or added to the program. Cycles between units of one module are allowed
-and loaded as one closure; module and package cycles retain their existing
-errors. A module alias can qualify another `use`, as in `use STD as Standard`
-followed by `use Standard.Randomizer as Randomizer`.
-
-Loading and activation are distinct. A file directly using one unit activates
-the public extensions and protocol conformances in that unit and in the
-same-module units reached through its `use` closure. A dependency that crosses
-into another module or package is compiled but does not activate that other
-module's extensions in the original consumer. Selecting a complete module
-activates all its direct units. Activation stays local to the file containing
-the explicit `use`; dependency aliases never propagate back to its
-consumer.
+The selected sibling's private declarations are available only to that direct
+consumer and remain qualified by its namespace. This private access is not
+transitive. Files with the same parent may form a cycle and are loaded as one
+stable closure; cycles across different logical parents and package cycles are
+errors. Neighboring files outside the closure are not parsed or added to the
+program. Dependency aliases never propagate back to a consumer.
 
 ## Transparent type aliases
 
@@ -148,16 +169,16 @@ exposes the type outside its module, while only its `public` members are accessi
 outside the class. See [Classes](Classes.md).
 
 A public structure that declares `drop` exposes its type and methods but keeps
-its fields and named aggregate initializer private to its declaring module.
-Every source unit assigned to that module may use the storage directly; a type
-extension retains external-caller rights and may not. See
+its fields and named aggregate initializer private to its declaring file. A
+sibling file in the same package may also use the storage after directly using
+that namespace; this right does not propagate. A type extension retains
+external-caller rights and may not access the storage. See
 [unique resource structures](Structures.md#unique-resource-structures).
 
-Duplicate providers, missing modules, dependency cycles, ambiguous aliases, and
-access to private declarations are compile-time errors. Dependencies and type
-extensions are never implicitly transitive. A project manifest can define this
-module layout explicitly; parent modules of its dotted module names are inferred
-even when they have no sources of their own. See
+Duplicate providers, missing namespaces, forbidden dependency cycles,
+ambiguous aliases, and access to private declarations are compile-time errors.
+A project manifest can define this layout explicitly; parent namespaces are
+inferred even when they have no sources of their own. See
 [Installation and command-line use](../Installation.md).
 
 The modules and public APIs currently provided under `STD` are documented in
@@ -184,8 +205,8 @@ Library/STD/
 │   ├── Randomizer.cpp
 │   ├── Session.cpp
 │   └── Time.cpp
+├── Console.sx
 ├── Console/
-│   ├── Console.sx
 │   └── Session.sx
 ├── Randomizer.sx
 └── Time/
@@ -194,7 +215,7 @@ Library/STD/
     └── Stopwatch.sx
 ```
 
-`Randomizer.sx` and `Internal.sx` declare private `native func` entries and
+`Randomizer.sx` and `Time/Internal.sx` declare private `native func` entries and
 expose ordinary Silex types around them. The single native runtime is owned by
 `STD/@Module.json`; each of its four private C++ units includes the generated
 root interface directly:
@@ -203,9 +224,10 @@ root interface directly:
 #include <SilexNative/STD.h>
 ```
 
-`STD.native_seed` becomes `silexNative_STD_native_seed`, and
-`STD.Time.native_monotonic_microseconds` becomes
-`silexNative_STD_Time_native_monotonic_microseconds`.
+`STD.Randomizer.native_seed` becomes
+`silexNative_STD_Randomizer_native_seed`, and
+`STD.Time.Internal.native_monotonic_microseconds` becomes
+`silexNative_STD_Time_Internal_native_monotonic_microseconds`.
 
 `Console.sx` uses `public native func` directly when its public Silex signature is
 the complete native contract. Scalar and string operations include `write`,
@@ -339,9 +361,9 @@ can then replace this starting point with any explicit source layout;
 
 ## Local packages
 
-A directory remains an implicit module when it only contains Silex sources or
-submodule directories. It needs no manifest, and neighboring local modules keep
-their existing filesystem resolution.
+A directory remains an implicit grouping namespace when it contains Silex
+files or child directories. It needs no manifest; every contained `.sx` file
+still contributes its own final namespace segment.
 
 A directory consumed as an external dependency is a declared package. Its
 `@Module.json` names the root module, gives it a Semantic Version, and may list

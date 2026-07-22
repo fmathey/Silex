@@ -1,16 +1,17 @@
 # Algorithms
 
-Import one generic algorithm directly with:
+The algorithms are split by responsibility. Import sorting with:
 
 ```sx
-use STD.Algorithms.sort
+use STD.Algorithms.Sort.sort
 ```
 
-Or select the complete module, including sorting and random collection
-algorithms, with:
+Search and transformation functions live in `STD.Algorithms.Iteration`, while
+borrowed random selection and shuffling live in `STD.Algorithms.Random`:
 
 ```sx
-use STD.Algorithms
+use STD.Algorithms.Iteration.find
+use STD.Algorithms.Random as RandomAlgorithms
 ```
 
 ## Search and quantification
@@ -113,12 +114,12 @@ remain unchanged.
 Both operations accept noncopyable elements because `choose` borrows and
 `shuffle` uses only `swap`. `Randomizer` is a class, so passing it normally
 advances the same shared generator state as direct calls to `get_int`.
-Selecting `STD.Algorithms` also activates the two method façades. They delegate
+Selecting `STD.Algorithms.Random` also activates the two method façades. They delegate
 to the functions above and advance the same generator state; the free
 `Algorithms.*` forms remain the canonical implementation and API reference.
 
 ```sx
-use STD.Algorithms
+use STD.Algorithms.Random as Algorithms
 use STD.Randomizer as Randomizer
 
 func show(value:@int) {

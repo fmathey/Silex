@@ -1,0 +1,5 @@
+use Common.Base as Common
+
+public func value() int {
+    return Common.base() + 1
+}

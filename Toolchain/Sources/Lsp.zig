@@ -6,8 +6,10 @@ const Frontend = @import("Frontend.zig");
 const LexerModule = @import("Lexer.zig");
 const Lint = @import("Lint.zig");
 const ModuleDiscovery = @import("ModuleDiscovery.zig");
+const ModuleManifest = @import("ModuleManifest.zig");
 const ParserModule = @import("Parser.zig");
 const ProjectModule = @import("Project.zig");
+const Semantic = @import("Semantic.zig");
 const Source = @import("Source.zig");
 const StandardLibrary = @import("StandardLibrary.zig");
 const SourceGraph = @import("SourceGraph.zig");
@@ -20,7 +22,6 @@ const protocol_version = "2.0";
 const max_message_size = 16 * 1024 * 1024;
 const completion_trigger_characters = [_][]const u8{"."};
 const module_analysis_directory = ".silex-lsp";
-const module_analysis_filename = "Module.sx";
 
 const Document = struct {
     uri: []const u8,
@@ -132,6 +133,7 @@ const QualifiedCompletionContext = struct {
 const ModuleExportScope = enum {
     public_api,
     use_path,
+    qualified_expression,
 };
 
 const Position = struct {
@@ -683,13 +685,12 @@ const Server = struct {
 
     fn moduleAnalysisInputForDocument(self: *Server, document_path: []const u8) !?[]const u8 {
         const module_directory = std.fs.path.dirname(document_path) orelse return null;
-        const manifest_directory = try self.moduleManifestDirectory(module_directory) orelse return null;
-        const root = std.fs.path.dirname(manifest_directory) orelse return null;
-        _ = try moduleNameFromDirectories(self.allocator, root, module_directory) orelse return null;
+        const root = try self.moduleAnalysisRootForDocument(document_path) orelse return null;
+        _ = try moduleNameFromSource(self.allocator, root, document_path) orelse return null;
         return try std.fs.path.join(self.allocator, &.{
             module_directory,
             module_analysis_directory,
-            module_analysis_filename,
+            std.fs.path.basename(document_path),
         });
     }
 
@@ -697,32 +698,15 @@ const Server = struct {
         if (!moduleAnalysisInput(input_path)) return null;
         const analysis_directory = std.fs.path.dirname(input_path) orelse return null;
         const module_directory = std.fs.path.dirname(analysis_directory) orelse return null;
-        const manifest_directory = try self.moduleManifestDirectory(module_directory) orelse return null;
-        const root = std.fs.path.dirname(manifest_directory) orelse return null;
-        const module_name = try moduleNameFromDirectories(self.allocator, root, module_directory) orelse return null;
-
-        var directory = try Io.Dir.cwd().openDir(self.io, module_directory, .{ .iterate = true });
-        defer directory.close(self.io);
-        var names: std.ArrayList([]const u8) = .empty;
-        var iterator = directory.iterateAssumeFirstIteration();
-        while (try iterator.next(self.io)) |entry| {
-            if (entry.kind == .file and std.mem.endsWith(u8, entry.name, ".sx")) {
-                try names.append(self.allocator, try self.allocator.dupe(u8, entry.name));
-            }
-        }
-        std.mem.sort([]const u8, names.items, {}, struct {
-            fn lessThan(_: void, left: []const u8, right: []const u8) bool {
-                return std.mem.lessThan(u8, left, right);
-            }
-        }.lessThan);
-        var module_sources: std.ArrayList([]const u8) = .empty;
-        for (names.items) |name| try module_sources.append(
-            self.allocator,
-            try std.fs.path.join(self.allocator, &.{ module_directory, name }),
-        );
+        const source_path = try std.fs.path.join(self.allocator, &.{
+            module_directory,
+            std.fs.path.basename(input_path),
+        });
+        const root = try self.moduleAnalysisRootForDocument(source_path) orelse return null;
+        const module_name = try moduleNameFromSource(self.allocator, root, source_path) orelse return null;
         const modules = try self.allocator.dupe(ProjectModule.Module, &.{.{
             .name = module_name,
-            .sources = try module_sources.toOwnedSlice(self.allocator),
+            .sources = try self.allocator.dupe([]const u8, &.{source_path}),
         }});
         return .{
             .root = root,
@@ -733,6 +717,69 @@ const Server = struct {
                 .single_file = false,
             },
         };
+    }
+
+    fn moduleAnalysisRootForDocument(self: *Server, document_path: []const u8) !?[]const u8 {
+        const module_directory = std.fs.path.dirname(document_path) orelse return null;
+        if (try self.moduleManifestDirectory(module_directory)) |manifest_directory| {
+            const manifest_path = try std.fs.path.join(self.allocator, &.{ manifest_directory, ModuleManifest.filename });
+            const manifest = ModuleManifest.load(self.allocator, self.io, manifest_path) catch {
+                return std.fs.path.dirname(manifest_directory);
+            };
+            if (manifest.name != null or
+                StandardLibrary.isReservedModule(std.fs.path.basename(manifest_directory)))
+            {
+                return std.fs.path.dirname(manifest_directory);
+            }
+            return manifest_directory;
+        }
+        if (self.configured_project) |input_path| {
+            if (singleSourceRootForDocument(input_path, document_path)) |root| return root;
+        }
+        var selected: ?[]const u8 = null;
+        for (self.projects.items) |project| {
+            const root = singleSourceRootForDocument(project.input_path, document_path) orelse continue;
+            if (selected == null or root.len > selected.?.len) selected = root;
+        }
+        if (selected) |root| return root;
+        return self.discoverSingleSourceRoot(document_path);
+    }
+
+    fn discoverSingleSourceRoot(self: *Server, document_path: []const u8) !?[]const u8 {
+        const workspace = self.workspaceForPath(document_path) orelse return null;
+        var directory = std.fs.path.dirname(document_path) orelse return null;
+        while (true) {
+            var opened = Io.Dir.cwd().openDir(self.io, directory, .{ .iterate = true }) catch null;
+            if (opened) |*folder| {
+                defer folder.close(self.io);
+                var iterator = folder.iterateAssumeFirstIteration();
+                while (try iterator.next(self.io)) |entry| {
+                    if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".sx")) continue;
+                    const candidate = try std.fs.path.join(self.allocator, &.{ directory, entry.name });
+                    if (std.mem.eql(u8, candidate, document_path)) continue;
+                    const source = self.openDocumentSource(candidate) orelse
+                        Io.Dir.cwd().readFileAlloc(
+                            self.io,
+                            candidate,
+                            self.allocator,
+                            .limited(1024 * 1024),
+                        ) catch continue;
+                    if (sourceDefinesMain(self.allocator, source)) return directory;
+                }
+            }
+            if (std.mem.eql(u8, directory, workspace)) break;
+            const parent = std.fs.path.dirname(directory) orelse break;
+            if (std.mem.eql(u8, parent, directory) or !pathWithin(parent, workspace)) break;
+            directory = parent;
+        }
+        return null;
+    }
+
+    fn openDocumentSource(self: *const Server, path: []const u8) ?[]const u8 {
+        for (self.documents.items) |document| {
+            if (std.mem.eql(u8, document.path, path)) return document.text;
+        }
+        return null;
     }
 
     fn moduleManifestDirectory(self: *Server, start: []const u8) !?[]const u8 {
@@ -1058,20 +1105,57 @@ const Server = struct {
         if (useCompletionPrefix(document.text, normalized)) |prefix| {
             return useCompletionItems(self.allocator, self.io, uri, document.text, prefix);
         }
+        const cursor = byteOffsetAtEncodedPosition(document.text, requested, self.position_encoding) orelse
+            return self.allocator.alloc(CompletionItem, 0);
+        var namespace_items: []const CompletionItem = &.{};
+        var namespace_qualified = false;
+        if (qualifiedCompletionPrefix(document.text, cursor)) |context| {
+            const module_path = try usedModulePath(self.allocator, document.text, context.qualifier) orelse context.qualifier;
+            namespace_qualified = try completionNamespaceExists(self.allocator, self.io, uri, module_path);
+            const exports = try moduleExportCompletionItems(
+                self.allocator,
+                self.io,
+                uri,
+                module_path,
+                context,
+                .qualified_expression,
+            );
+            namespace_items = try unqualifiedModuleCompletionItems(self.allocator, exports);
+        }
 
-        const project = self.projectForDocument(document) orelse return self.allocator.dupe(CompletionItem, &language_completions);
+        const project = self.projectForDocument(document) orelse return if (namespace_qualified)
+            namespace_items
+        else
+            self.allocator.dupe(CompletionItem, &language_completions);
+        var recovered_snapshot: ?Frontend.Snapshot = null;
         const snapshot = if (project.current) |*current|
             current
         else if (project.last_success) |*previous| fallback: {
-            if (!self.fallbackAllowed(project, document.path)) return self.allocator.dupe(CompletionItem, &language_completions);
+            if (!self.fallbackAllowed(project, document.path)) return if (namespace_qualified)
+                namespace_items
+            else
+                self.allocator.dupe(CompletionItem, &language_completions);
             break :fallback previous;
-        } else return self.allocator.dupe(CompletionItem, &language_completions);
-        const file = snapshotFile(snapshot, document.path) orelse return self.allocator.dupe(CompletionItem, &language_completions);
-        const cursor = byteOffsetAtEncodedPosition(document.text, requested, self.position_encoding) orelse
-            return self.allocator.alloc(CompletionItem, 0);
+        } else recovery: {
+            recovered_snapshot = try self.completionRecoverySnapshot(project.input_path, document, cursor);
+            if (recovered_snapshot) |*recovered| break :recovery recovered;
+            return if (namespace_qualified)
+                namespace_items
+            else
+                self.allocator.dupe(CompletionItem, &language_completions);
+        };
+        const file = snapshotFile(snapshot, document.path) orelse return if (namespace_qualified)
+            namespace_items
+        else
+            self.allocator.dupe(CompletionItem, &language_completions);
+
+        if (try self.initializerFieldCompletionItems(snapshot, file, document.text, cursor)) |fields| {
+            return fields;
+        }
 
         if (try self.completionOwner(snapshot, file, document.text, cursor)) |owner| {
             var members: std.ArrayList(CompletionItem) = .empty;
+            try members.appendSlice(self.allocator, namespace_items);
             for (snapshot.index.symbols) |symbol| {
                 if (!std.mem.eql(u8, symbol.owner, owner.key) or symbol.is_static != owner.static) continue;
                 if (!symbolVisibleFromFile(snapshot, file, symbol)) continue;
@@ -1080,6 +1164,7 @@ const Server = struct {
             }
             return members.toOwnedSlice(self.allocator);
         }
+        if (namespace_qualified) return namespace_items;
 
         var items: std.ArrayList(CompletionItem) = .empty;
         try items.appendSlice(self.allocator, &language_completions);
@@ -1095,6 +1180,71 @@ const Server = struct {
             if (!containsCompletion(items.items, symbol.name)) try items.append(self.allocator, completionItemForSymbol(symbol));
         }
         return items.toOwnedSlice(self.allocator);
+    }
+
+    fn initializerFieldCompletionItems(
+        self: *Server,
+        snapshot: *const Frontend.Snapshot,
+        file: usize,
+        source: []const u8,
+        cursor: usize,
+    ) !?[]const CompletionItem {
+        const opening = try enclosingParenthesisAt(self.allocator, source, cursor) orelse return null;
+        const callee = signatureCalleeAt(source, opening + 1) orelse return null;
+        const argument_context = try namedArgumentContext(self.allocator, source, opening + 1, cursor) orelse return null;
+        if (argument_context.current_has_colon or argument_context.current_is_value) return null;
+
+        const owner = try initializerTypeSymbol(self.allocator, snapshot, file, source, callee) orelse return null;
+        var structure: ?Semantic.Structure = null;
+        for (snapshot.program.structures) |candidate| {
+            if (std.mem.eql(u8, candidate.generated_name, owner.key)) {
+                structure = candidate;
+                break;
+            }
+        }
+        const value = structure orelse return null;
+        if (value.is_native_resource or value.constructors.len != 0 or
+            (value.is_class and !value.implicit_constructor_available))
+        {
+            return null;
+        }
+        if (value.is_owner and snapshot.files[file].module_index != snapshot.files[owner.definition.file].module_index) {
+            return try self.allocator.alloc(CompletionItem, 0);
+        }
+
+        var items: std.ArrayList(CompletionItem) = .empty;
+        const owner_context = completionInsideOwnerCallable(snapshot, file, source, cursor, owner.key);
+        for (snapshot.index.symbols) |symbol| {
+            if (symbol.kind != .field or symbol.is_static or !std.mem.eql(u8, symbol.owner, owner.key)) continue;
+            if (symbol.visibility != null and symbol.visibility.? != .public_access and !owner_context) continue;
+            if (containsName(argument_context.supplied, symbol.name)) continue;
+            try items.append(self.allocator, .{
+                .label = symbol.name,
+                .kind = 5,
+                .detail = symbol.detail,
+                .insertText = try std.fmt.allocPrint(self.allocator, "{s}:", .{symbol.name}),
+                .filterText = symbol.name,
+            });
+        }
+        return try items.toOwnedSlice(self.allocator);
+    }
+
+    fn completionRecoverySnapshot(
+        self: *Server,
+        input_path: []const u8,
+        document: *const Document,
+        cursor: usize,
+    ) !?Frontend.Snapshot {
+        const repaired = try blankLineAt(self.allocator, document.text, cursor);
+        var overlays: std.ArrayList(Frontend.Overlay) = .empty;
+        for (self.documents.items) |open_document| try overlays.append(self.allocator, .{
+            .path = open_document.path,
+            .text = if (std.mem.eql(u8, open_document.path, document.path)) repaired else open_document.text,
+        });
+        return switch (try self.analyzeInput(input_path, overlays.items)) {
+            .success => |snapshot| snapshot,
+            .failure => null,
+        };
     }
 
     const CompletionOwner = struct { key: []const u8, static: bool };
@@ -1116,8 +1266,10 @@ const Server = struct {
         while (start > 0 and isIdentifierContinue(source[start - 1])) start -= 1;
         if (start == end) return null;
         const position = sourcePositionAtByteOffset(source, file, start);
-        const occurrence = snapshot.index.occurrenceAt(file, position.line, position.column) orelse return null;
-        const receiver = snapshot.index.symbol(occurrence.symbol);
+        const receiver = if (snapshot.index.occurrenceAt(file, position.line, position.column)) |occurrence|
+            snapshot.index.symbol(occurrence.symbol)
+        else
+            fallbackCompletionReceiver(snapshot, file, source, start, end) orelse return null;
         if (receiver.kind == .type or receiver.kind == .enumeration) return .{ .key = receiver.key, .static = true };
         const type_name = detailTypeName(receiver.detail) orelse return null;
         for (snapshot.index.symbols) |symbol| {
@@ -1391,9 +1543,39 @@ fn manifestDeclares(allocator: Allocator, io: Io, manifest_path: []const u8, doc
 }
 
 fn moduleAnalysisInput(path: []const u8) bool {
-    if (!std.mem.eql(u8, std.fs.path.basename(path), module_analysis_filename)) return false;
+    if (!std.mem.endsWith(u8, std.fs.path.basename(path), ".sx")) return false;
     const directory = std.fs.path.dirname(path) orelse return false;
     return std.mem.eql(u8, std.fs.path.basename(directory), module_analysis_directory);
+}
+
+fn singleSourceRootForDocument(input_path: []const u8, document_path: []const u8) ?[]const u8 {
+    if (!std.mem.endsWith(u8, input_path, ".sx") or moduleAnalysisInput(input_path)) return null;
+    if (std.mem.eql(u8, input_path, document_path)) return null;
+    const root = std.fs.path.dirname(input_path) orelse return null;
+    return if (pathWithin(document_path, root)) root else null;
+}
+
+fn sourceDefinesMain(allocator: Allocator, source: []const u8) bool {
+    var parser = ParserModule.Parser.init(allocator, source);
+    const program = parser.parse() catch return false;
+    for (program.functions) |function| {
+        if (std.mem.eql(u8, function.name, "main")) return true;
+    }
+    return false;
+}
+
+fn moduleNameFromSource(
+    allocator: Allocator,
+    root: []const u8,
+    source_path: []const u8,
+) !?[]const u8 {
+    if (!std.mem.endsWith(u8, source_path, ".sx")) return null;
+    const directory = std.fs.path.dirname(source_path) orelse return null;
+    const parent = try moduleNameFromDirectories(allocator, root, directory) orelse return null;
+    const filename = std.fs.path.basename(source_path);
+    const stem = filename[0 .. filename.len - ".sx".len];
+    if (!ModuleDiscovery.isModuleName(stem)) return null;
+    return try std.fmt.allocPrint(allocator, "{s}.{s}", .{ parent, stem });
 }
 
 fn moduleNameFromDirectories(
@@ -1482,6 +1664,86 @@ fn detailTypeName(detail: []const u8) ?[]const u8 {
     const optional = std.mem.indexOfScalar(u8, value, '?') orelse value.len;
     value = value[0..@min(generic, @min(collection, optional))];
     return if (value.len == 0) null else value;
+}
+
+fn blankLineAt(allocator: Allocator, source: []const u8, cursor: usize) ![]const u8 {
+    const bounded_cursor = @min(cursor, source.len);
+    const line_start = if (std.mem.lastIndexOfScalar(u8, source[0..bounded_cursor], '\n')) |newline|
+        newline + 1
+    else
+        0;
+    const line_end = std.mem.indexOfScalarPos(u8, source, bounded_cursor, '\n') orelse source.len;
+    const repaired = try allocator.dupe(u8, source);
+    for (repaired[line_start..line_end]) |*character| {
+        if (character.* != '\r' and character.* != '\t') character.* = ' ';
+    }
+    return repaired;
+}
+
+fn fallbackCompletionReceiver(
+    snapshot: *const Frontend.Snapshot,
+    file: usize,
+    source: []const u8,
+    start: usize,
+    end: usize,
+) ?SymbolIndex.Symbol {
+    const callable = callableNameAt(source, start) orelse return null;
+    const receiver_name = source[start..end];
+    var matched: ?SymbolIndex.Symbol = null;
+    for (snapshot.index.symbols) |symbol| {
+        if ((symbol.kind != .parameter and symbol.kind != .variable and symbol.kind != .binding) or
+            symbol.definition.file != file or !std.mem.eql(u8, symbol.name, receiver_name))
+        {
+            continue;
+        }
+        const snapshot_source = snapshot.source_contents[file];
+        const definition_offset = sourceByteOffset(snapshot_source, symbol.definition);
+        const symbol_callable = callableNameAt(snapshot_source, definition_offset) orelse continue;
+        if (!std.mem.eql(u8, symbol_callable, callable)) continue;
+        if (matched != null) return null;
+        matched = symbol;
+    }
+    return matched;
+}
+
+fn callableNameAt(source: []const u8, byte_offset: usize) ?[]const u8 {
+    var lexer = LexerModule.Lexer.init(source);
+    var depth: usize = 0;
+    var active_name: ?[]const u8 = null;
+    var active_depth: usize = 0;
+    var pending_name: ?[]const u8 = null;
+    var expects_name = false;
+    while (true) {
+        const token = lexer.next() catch return null;
+        if (token.tag == .end or token.start >= byte_offset) break;
+        switch (token.tag) {
+            .keyword_func => {
+                expects_name = true;
+                pending_name = null;
+            },
+            .identifier => if (expects_name) {
+                pending_name = token.lexeme;
+                expects_name = false;
+            },
+            .left_brace => {
+                depth += 1;
+                if (pending_name) |name| {
+                    active_name = name;
+                    active_depth = depth;
+                    pending_name = null;
+                }
+                expects_name = false;
+            },
+            .right_brace => {
+                if (active_name != null and active_depth == depth) active_name = null;
+                depth -|= 1;
+                expects_name = false;
+            },
+            .left_parenthesis => expects_name = false,
+            else => {},
+        }
+    }
+    return active_name orelse pending_name;
 }
 
 fn signatureParameters(allocator: Allocator, label: []const u8) ![]const SignatureParameter {
@@ -1679,6 +1941,186 @@ fn sourceDiagnosticByteOffset(source: []const u8, position: Source.Position) usi
 
 const SignatureCallee = struct { name: []const u8, start: usize };
 
+const NamedArgumentContext = struct {
+    supplied: []const []const u8,
+    current_has_colon: bool,
+    current_is_value: bool,
+};
+
+fn enclosingParenthesisAt(allocator: Allocator, source: []const u8, cursor: usize) !?usize {
+    var openings: std.ArrayList(usize) = .empty;
+    var lexer = LexerModule.Lexer.init(source);
+    while (true) {
+        const token = lexer.next() catch return null;
+        if (token.tag == .end or token.start >= @min(cursor, source.len)) break;
+        switch (token.tag) {
+            .left_parenthesis => try openings.append(allocator, token.start),
+            .right_parenthesis => {
+                if (openings.items.len != 0) _ = openings.pop();
+            },
+            else => {},
+        }
+    }
+    return if (openings.items.len == 0) null else openings.items[openings.items.len - 1];
+}
+
+fn namedArgumentContext(
+    allocator: Allocator,
+    source: []const u8,
+    arguments_start: usize,
+    cursor: usize,
+) !?NamedArgumentContext {
+    if (arguments_start > cursor or cursor > source.len) return null;
+    var supplied: std.ArrayList([]const u8) = .empty;
+    var lexer = LexerModule.Lexer.init(source[arguments_start..cursor]);
+    var parentheses: usize = 0;
+    var brackets: usize = 0;
+    var braces: usize = 0;
+    var current_name: ?[]const u8 = null;
+    var current_has_colon = false;
+    var current_is_value = false;
+    while (true) {
+        const token = lexer.next() catch return null;
+        if (token.tag == .end) break;
+        const top_level = parentheses == 0 and brackets == 0 and braces == 0;
+        if (top_level) switch (token.tag) {
+            .identifier => {
+                if (current_name == null and !current_has_colon and !current_is_value)
+                    current_name = token.lexeme
+                else if (!current_has_colon)
+                    current_is_value = true;
+            },
+            .colon => {
+                if (current_name) |name| {
+                    try supplied.append(allocator, name);
+                    current_has_colon = true;
+                    current_is_value = false;
+                } else {
+                    current_is_value = true;
+                }
+            },
+            .comma => {
+                current_name = null;
+                current_has_colon = false;
+                current_is_value = false;
+            },
+            .left_parenthesis => {
+                current_is_value = true;
+                parentheses += 1;
+                continue;
+            },
+            .left_bracket => {
+                current_is_value = true;
+                brackets += 1;
+                continue;
+            },
+            .left_brace => {
+                current_is_value = true;
+                braces += 1;
+                continue;
+            },
+            else => if (!current_has_colon) {
+                current_is_value = true;
+            },
+        };
+        switch (token.tag) {
+            .left_parenthesis => parentheses += 1,
+            .right_parenthesis => parentheses -|= 1,
+            .left_bracket => brackets += 1,
+            .right_bracket => brackets -|= 1,
+            .left_brace => braces += 1,
+            .right_brace => braces -|= 1,
+            else => {},
+        }
+    }
+    return .{
+        .supplied = try supplied.toOwnedSlice(allocator),
+        .current_has_colon = current_has_colon,
+        .current_is_value = current_is_value,
+    };
+}
+
+fn initializerTypeSymbol(
+    allocator: Allocator,
+    snapshot: *const Frontend.Snapshot,
+    file: usize,
+    source: []const u8,
+    callee: SignatureCallee,
+) !?SymbolIndex.Symbol {
+    const position = sourcePositionAtByteOffset(source, file, callee.start);
+    if (snapshot.index.occurrenceAt(file, position.line, position.column)) |occurrence| {
+        const symbol = snapshot.index.symbol(occurrence.symbol);
+        if (symbol.kind == .type and std.mem.eql(u8, symbol.name, callee.name) and
+            symbolVisibleFromFile(snapshot, file, symbol))
+        {
+            return symbol;
+        }
+    }
+
+    const qualifier = calleeQualifierAt(source, callee.start);
+    const module_path = if (qualifier) |value|
+        try usedModulePath(allocator, source, value) orelse value
+    else
+        null;
+    var matched: ?SymbolIndex.Symbol = null;
+    for (snapshot.index.symbols) |symbol| {
+        if (symbol.kind != .type or !std.mem.eql(u8, symbol.name, callee.name) or
+            !symbolVisibleFromFile(snapshot, file, symbol))
+        {
+            continue;
+        }
+        if (module_path) |module| {
+            if (!std.mem.eql(u8, symbol.module_name, module) and
+                !principalModuleMatches(symbol.module_name, module, callee.name))
+            {
+                continue;
+            }
+        }
+        if (matched != null and !std.mem.eql(u8, matched.?.key, symbol.key)) return null;
+        matched = symbol;
+    }
+    return matched;
+}
+
+fn calleeQualifierAt(source: []const u8, callee_start: usize) ?[]const u8 {
+    var end = @min(callee_start, source.len);
+    while (end > 0 and std.ascii.isWhitespace(source[end - 1])) end -= 1;
+    if (end == 0 or source[end - 1] != '.') return null;
+    const qualifier_end = end - 1;
+    var start = qualifier_end;
+    while (start > 0 and (isIdentifierContinue(source[start - 1]) or source[start - 1] == '.')) start -= 1;
+    return if (start == qualifier_end) null else source[start..qualifier_end];
+}
+
+fn principalModuleMatches(module_name: []const u8, qualifier: []const u8, type_name: []const u8) bool {
+    return module_name.len == qualifier.len + 1 + type_name.len and
+        std.mem.startsWith(u8, module_name, qualifier) and module_name[qualifier.len] == '.' and
+        std.mem.eql(u8, module_name[qualifier.len + 1 ..], type_name);
+}
+
+fn containsName(names: []const []const u8, expected: []const u8) bool {
+    for (names) |name| if (std.mem.eql(u8, name, expected)) return true;
+    return false;
+}
+
+fn completionInsideOwnerCallable(
+    snapshot: *const Frontend.Snapshot,
+    file: usize,
+    source: []const u8,
+    cursor: usize,
+    owner: []const u8,
+) bool {
+    const callable = callableNameAt(source, cursor) orelse return false;
+    for (snapshot.index.symbols) |symbol| {
+        if (symbol.kind == .method and symbol.definition.file == file and
+            std.mem.eql(u8, symbol.owner, owner) and std.mem.eql(u8, symbol.name, callable))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 fn signatureCalleeAt(source: []const u8, cursor: usize) ?SignatureCallee {
     var index = @min(cursor, source.len);
     while (index > 0 and source[index - 1] != '(') index -= 1;
@@ -1804,9 +2246,34 @@ fn pathHasModuleQualifier(path: []const u8, qualifier: []const u8) bool {
         path[qualifier.len] == '.';
 }
 
+fn qualifiedCompletionPrefix(source: []const u8, cursor: usize) ?QualifiedCompletionContext {
+    var prefix_start = @min(cursor, source.len);
+    while (prefix_start > 0 and isIdentifierContinue(source[prefix_start - 1])) prefix_start -= 1;
+    if (prefix_start == 0 or source[prefix_start - 1] != '.') return null;
+    const qualifier_end = prefix_start - 1;
+    var qualifier_start = qualifier_end;
+    while (qualifier_start > 0) {
+        const character = source[qualifier_start - 1];
+        if (!isIdentifierContinue(character) and character != '.') break;
+        qualifier_start -= 1;
+    }
+    const qualifier = source[qualifier_start..qualifier_end];
+    if (!ModuleDiscovery.isModuleName(qualifier)) return null;
+    return .{
+        .qualifier = qualifier,
+        .prefix = source[prefix_start..@min(cursor, source.len)],
+        .type_only = false,
+    };
+}
+
 fn lastPathSegment(path: []const u8) []const u8 {
     const separator = std.mem.lastIndexOfScalar(u8, path, '.') orelse return path;
     return path[separator + 1 ..];
+}
+
+fn firstPathSegment(path: []const u8) []const u8 {
+    const separator = std.mem.indexOfScalar(u8, path, '.') orelse return path;
+    return path[0..separator];
 }
 
 fn moduleExportCompletionItems(
@@ -1823,43 +2290,49 @@ fn moduleExportCompletionItems(
         return try allocator.alloc(CompletionItem, 0);
     const module_root = try moduleCompletionRoot(allocator, io, project_root, module_path) orelse
         return try allocator.alloc(CompletionItem, 0);
-    const module_directory = try moduleDirectoryPath(allocator, module_root, module_path);
-
-    var directory = Io.Dir.cwd().openDir(io, module_directory, .{ .iterate = true }) catch
-        return try allocator.alloc(CompletionItem, 0);
-    defer directory.close(io);
-
     var items: std.ArrayList(CompletionItem) = .empty;
-    var source_names: std.ArrayList([]const u8) = .empty;
-    var iterator = directory.iterateAssumeFirstIteration();
-    while (iterator.next(io) catch null) |entry| {
-        if (entry.kind == .file and std.mem.endsWith(u8, entry.name, ".sx")) {
-            try source_names.append(allocator, try allocator.dupe(u8, entry.name));
-        } else if (entry.kind == .directory and ModuleDiscovery.isDirectoryName(entry.name) and
-            std.mem.startsWith(u8, entry.name, context.prefix))
-        {
-            try appendModuleExportCompletion(
-                allocator,
-                &items,
-                context.qualifier,
-                entry.name,
-                9,
-                "Silex submodule",
-            );
+    const module_directory = try moduleDirectoryPath(allocator, module_root, module_path);
+    if (scope == .use_path or scope == .qualified_expression) {
+        var directory = Io.Dir.cwd().openDir(io, module_directory, .{ .iterate = true }) catch null;
+        if (directory) |*opened| {
+            defer opened.close(io);
+            var iterator = opened.iterateAssumeFirstIteration();
+            while (iterator.next(io) catch null) |entry| {
+                const child_name = if (entry.kind == .directory and ModuleDiscovery.isDirectoryName(entry.name))
+                    entry.name
+                else if (entry.kind == .file and std.mem.endsWith(u8, entry.name, ".sx")) block: {
+                    const stem = entry.name[0 .. entry.name.len - ".sx".len];
+                    if (!ModuleDiscovery.isModuleName(stem)) continue;
+                    break :block firstPathSegment(stem);
+                } else continue;
+                if (!std.mem.startsWith(u8, child_name, context.prefix)) continue;
+                if (scope == .qualified_expression) {
+                    const child_path = try std.fmt.allocPrint(allocator, "{s}.{s}", .{ module_path, child_name });
+                    if (!try namespaceHasPublicApiOrChildren(allocator, io, module_root, child_path)) continue;
+                }
+                try appendModuleExportCompletion(
+                    allocator,
+                    &items,
+                    context.qualifier,
+                    child_name,
+                    9,
+                    "Silex child namespace",
+                );
+            }
         }
+        try appendCompactChildCompletions(
+            allocator,
+            io,
+            module_root,
+            module_path,
+            context,
+            scope,
+            &items,
+        );
     }
 
-    for (source_names.items) |source_name| {
-        const unit_name = source_name[0 .. source_name.len - ".sx".len];
-        if (scope == .use_path and std.mem.startsWith(u8, unit_name, context.prefix)) try appendModuleExportCompletion(
-            allocator,
-            &items,
-            context.qualifier,
-            unit_name,
-            9,
-            "Silex source unit",
-        );
-        const module_source_path = try std.fs.path.join(allocator, &.{ module_directory, source_name });
+    const module_sources = try namespaceSourcePaths(allocator, io, module_root, module_path);
+    for (module_sources) |module_source_path| {
         const module_source = Io.Dir.cwd().readFileAlloc(
             io,
             module_source_path,
@@ -1870,6 +2343,7 @@ fn moduleExportCompletionItems(
         const program = parser.parse() catch continue;
 
         for (program.structures) |structure| {
+            if (std.mem.eql(u8, structure.name, lastPathSegment(module_path))) continue;
             if (!structure.is_public or !std.mem.startsWith(u8, structure.name, context.prefix)) continue;
             try appendModuleExportCompletion(
                 allocator,
@@ -1881,6 +2355,7 @@ fn moduleExportCompletionItems(
             );
         }
         for (program.enums) |enumeration| {
+            if (std.mem.eql(u8, enumeration.name, lastPathSegment(module_path))) continue;
             if (!enumeration.is_public or !std.mem.startsWith(u8, enumeration.name, context.prefix)) continue;
             try appendModuleExportCompletion(
                 allocator,
@@ -1892,6 +2367,7 @@ fn moduleExportCompletionItems(
             );
         }
         for (program.protocols) |protocol| {
+            if (std.mem.eql(u8, protocol.name, lastPathSegment(module_path))) continue;
             if (!protocol.is_public or !std.mem.startsWith(u8, protocol.name, context.prefix)) continue;
             try appendModuleExportCompletion(
                 allocator,
@@ -1917,6 +2393,7 @@ fn moduleExportCompletionItems(
         }
         if (!context.type_only) {
             for (program.functions) |function| {
+                if (std.mem.eql(u8, function.name, lastPathSegment(module_path))) continue;
                 if (!function.is_public or !std.mem.startsWith(u8, function.name, context.prefix)) continue;
                 try appendModuleExportCompletion(
                     allocator,
@@ -1949,11 +2426,142 @@ fn moduleCompletionRoot(
     };
     if (StandardLibrary.isReservedModule(module_path)) return library_root;
 
-    const local_directory = try moduleDirectoryPath(allocator, project_root, module_path);
-    if (try lspDirectoryExists(io, local_directory)) return project_root;
-    const distributed_directory = try moduleDirectoryPath(allocator, library_root, module_path);
-    if (try lspDirectoryExists(io, distributed_directory)) return library_root;
+    if (try lspNamespaceExists(allocator, io, project_root, module_path)) return project_root;
+    if (try lspNamespaceExists(allocator, io, library_root, module_path)) return library_root;
     return project_root;
+}
+
+fn completionNamespaceExists(
+    allocator: Allocator,
+    io: Io,
+    uri: []const u8,
+    module_path: []const u8,
+) !bool {
+    const source_path = try filePathFromUri(allocator, uri) orelse return false;
+    const project_root = std.fs.path.dirname(source_path) orelse return false;
+    const root = try moduleCompletionRoot(allocator, io, project_root, module_path) orelse return false;
+    return lspNamespaceExists(allocator, io, root, module_path);
+}
+
+fn lspNamespaceExists(allocator: Allocator, io: Io, root: []const u8, module_path: []const u8) !bool {
+    const directory = try moduleDirectoryPath(allocator, root, module_path);
+    if (try lspDirectoryExists(io, directory)) return true;
+    if ((try namespaceSourcePaths(allocator, io, root, module_path)).len != 0) return true;
+    return lspCompactDescendantExists(allocator, io, root, module_path);
+}
+
+fn lspCompactDescendantExists(allocator: Allocator, io: Io, root: []const u8, module_path: []const u8) !bool {
+    var stem_start: usize = 0;
+    while (true) {
+        const prefix = if (stem_start == 0) "" else module_path[0 .. stem_start - 1];
+        const stem = module_path[stem_start..];
+        const physical_parent = if (prefix.len == 0) root else try moduleDirectoryPath(allocator, root, prefix);
+        var directory = Io.Dir.cwd().openDir(io, physical_parent, .{ .iterate = true }) catch null;
+        if (directory) |*opened| {
+            defer opened.close(io);
+            var iterator = opened.iterateAssumeFirstIteration();
+            while (iterator.next(io) catch null) |entry| {
+                if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".sx")) continue;
+                const source_stem = entry.name[0 .. entry.name.len - ".sx".len];
+                if (source_stem.len > stem.len and std.mem.startsWith(u8, source_stem, stem) and source_stem[stem.len] == '.') {
+                    return true;
+                }
+            }
+        }
+        const separator = std.mem.indexOfScalarPos(u8, module_path, stem_start, '.') orelse break;
+        stem_start = separator + 1;
+    }
+    return false;
+}
+
+fn appendCompactChildCompletions(
+    allocator: Allocator,
+    io: Io,
+    root: []const u8,
+    module_path: []const u8,
+    context: QualifiedCompletionContext,
+    scope: ModuleExportScope,
+    items: *std.ArrayList(CompletionItem),
+) !void {
+    var stem_start: usize = 0;
+    while (true) {
+        const prefix = if (stem_start == 0) "" else module_path[0 .. stem_start - 1];
+        const stem = module_path[stem_start..];
+        const physical_parent = if (prefix.len == 0) root else try moduleDirectoryPath(allocator, root, prefix);
+        var directory = Io.Dir.cwd().openDir(io, physical_parent, .{ .iterate = true }) catch null;
+        if (directory) |*opened| {
+            defer opened.close(io);
+            var iterator = opened.iterateAssumeFirstIteration();
+            while (iterator.next(io) catch null) |entry| {
+                if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".sx")) continue;
+                const source_stem = entry.name[0 .. entry.name.len - ".sx".len];
+                if (source_stem.len <= stem.len or !std.mem.startsWith(u8, source_stem, stem) or source_stem[stem.len] != '.') continue;
+                const child_name = firstPathSegment(source_stem[stem.len + 1 ..]);
+                if (!std.mem.startsWith(u8, child_name, context.prefix)) continue;
+                if (scope == .qualified_expression) {
+                    const child_path = try std.fmt.allocPrint(allocator, "{s}.{s}", .{ module_path, child_name });
+                    if (!try namespaceHasPublicApiOrChildren(allocator, io, root, child_path)) continue;
+                }
+                try appendModuleExportCompletion(
+                    allocator,
+                    items,
+                    context.qualifier,
+                    child_name,
+                    9,
+                    "Silex child namespace",
+                );
+            }
+        }
+        const separator = std.mem.indexOfScalarPos(u8, module_path, stem_start, '.') orelse break;
+        stem_start = separator + 1;
+    }
+}
+
+fn namespaceHasPublicApiOrChildren(
+    allocator: Allocator,
+    io: Io,
+    root: []const u8,
+    module_path: []const u8,
+) !bool {
+    const directory = try moduleDirectoryPath(allocator, root, module_path);
+    if (try lspDirectoryExists(io, directory)) return true;
+    if (try lspCompactDescendantExists(allocator, io, root, module_path)) return true;
+    const sources = try namespaceSourcePaths(allocator, io, root, module_path);
+    for (sources) |source_path| {
+        const source = Io.Dir.cwd().readFileAlloc(io, source_path, allocator, .limited(max_message_size)) catch continue;
+        var parser = ParserModule.Parser.init(allocator, source);
+        const program = parser.parse() catch continue;
+        for (program.structures) |structure| if (structure.is_public) return true;
+        for (program.enums) |enumeration| if (enumeration.is_public) return true;
+        for (program.protocols) |protocol| if (protocol.is_public) return true;
+        for (program.functions) |function| if (function.is_public) return true;
+        for (program.uses) |use_value| if (use_value.is_public) return true;
+    }
+    return false;
+}
+
+fn namespaceSourcePaths(
+    allocator: Allocator,
+    io: Io,
+    root: []const u8,
+    module_path: []const u8,
+) ![]const []const u8 {
+    var sources: std.ArrayList([]const u8) = .empty;
+    var stem_start: usize = 0;
+    while (true) {
+        const prefix = if (stem_start == 0) "" else module_path[0 .. stem_start - 1];
+        const stem = module_path[stem_start..];
+        const filename = try std.fmt.allocPrint(allocator, "{s}.sx", .{stem});
+        const source_path = if (prefix.len == 0)
+            try std.fs.path.join(allocator, &.{ root, filename })
+        else
+            try std.fs.path.join(allocator, &.{ try moduleDirectoryPath(allocator, root, prefix), filename });
+        const stat = Io.Dir.cwd().statFile(io, source_path, .{}) catch null;
+        if (stat != null and stat.?.kind == .file) try sources.append(allocator, source_path);
+        const separator = std.mem.indexOfScalarPos(u8, module_path, stem_start, '.') orelse break;
+        stem_start = separator + 1;
+    }
+    return sources.toOwnedSlice(allocator);
 }
 
 fn lspDirectoryExists(io: Io, path: []const u8) !bool {
@@ -1982,6 +2590,23 @@ fn appendModuleExportCompletion(
         .insertText = name,
         .filterText = name,
     });
+}
+
+fn unqualifiedModuleCompletionItems(
+    allocator: Allocator,
+    qualified: []const CompletionItem,
+) ![]const CompletionItem {
+    var items: std.ArrayList(CompletionItem) = .empty;
+    for (qualified) |candidate| {
+        const name = candidate.insertText orelse lastPathSegment(candidate.label);
+        if (containsCompletion(items.items, name)) continue;
+        var item = candidate;
+        item.label = name;
+        item.insertText = name;
+        item.filterText = name;
+        try items.append(allocator, item);
+    }
+    return items.toOwnedSlice(allocator);
 }
 
 fn moduleDirectoryPath(allocator: Allocator, root: []const u8, module_path: []const u8) ![]const u8 {
@@ -2075,19 +2700,37 @@ fn collectModules(
     defer directory.close(io);
 
     var child_directories: std.ArrayList([]const u8) = .empty;
+    var source_stems: std.ArrayList([]const u8) = .empty;
     var iterator = directory.iterateAssumeFirstIteration();
     while (iterator.next(io) catch null) |entry| {
         if (entry.kind == .directory and ModuleDiscovery.isDirectoryName(entry.name)) {
             try child_directories.append(allocator, try allocator.dupe(u8, entry.name));
+        } else if (entry.kind == .file and std.mem.endsWith(u8, entry.name, ".sx")) {
+            const stem = entry.name[0 .. entry.name.len - ".sx".len];
+            if (ModuleDiscovery.isModuleName(stem)) try source_stems.append(allocator, try allocator.dupe(u8, stem));
         }
     }
 
     if (module_name.len > 0 and std.mem.startsWith(u8, module_name, prefix)) {
-        try items.append(allocator, .{
+        if (!containsCompletion(items.items, module_name)) try items.append(allocator, .{
             .label = module_name,
             .kind = 9,
             .detail = detail,
         });
+    }
+
+    for (source_stems.items) |stem| {
+        const source_module = if (module_name.len == 0)
+            stem
+        else
+            try std.fmt.allocPrint(allocator, "{s}.{s}", .{ module_name, stem });
+        if (std.mem.startsWith(u8, source_module, prefix) and !containsCompletion(items.items, source_module)) {
+            try items.append(allocator, .{
+                .label = source_module,
+                .kind = 9,
+                .detail = detail,
+            });
+        }
     }
 
     for (child_directories.items) |child_name| {
@@ -2672,7 +3315,7 @@ test "fresh LSP restart analyzes named module sources without requiring main" {
     var server = Server.init(allocator, std.testing.io, &environ_map);
 
     const cases = [_][]const u8{
-        "../Library/STD/IO/IO.sx",
+        "../Library/STD/IO.sx",
         "../Library/STD/Console/Session.sx",
         "../Library/STD/Time/Clock.sx",
     };
@@ -2698,16 +3341,460 @@ test "fresh LSP restart analyzes named module sources without requiring main" {
     }
 }
 
+test "fresh LSP restart analyzes local module sources from the nearest single-source root" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var environ_map = std.process.Environ.Map.init(allocator);
+    var server = Server.init(allocator, std.testing.io, &environ_map);
+    var temporary = std.testing.tmpDir(.{ .iterate = true });
+    defer temporary.cleanup();
+
+    try temporary.dir.createDirPath(std.testing.io, "Workspace/Sandbox/Math");
+    try temporary.dir.writeFile(std.testing.io, .{
+        .sub_path = "Workspace/Sandbox/Main.sx",
+        .data = "func main() {}\n",
+    });
+    try temporary.dir.writeFile(std.testing.io, .{
+        .sub_path = "Workspace/Sandbox/Math/Vec3.sx",
+        .data = "struct Vec3 {\n    var x:float\n}\n",
+    });
+
+    const temporary_root = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &temporary.sub_path });
+    const workspace = try SourceGraph.canonicalPath(
+        allocator,
+        std.testing.io,
+        try std.fs.path.join(allocator, &.{ temporary_root, "Workspace" }),
+    );
+    const main_path = try SourceGraph.canonicalPath(
+        allocator,
+        std.testing.io,
+        try std.fs.path.join(allocator, &.{ temporary_root, "Workspace/Sandbox/Main.sx" }),
+    );
+    const source_path = try SourceGraph.canonicalPath(
+        allocator,
+        std.testing.io,
+        try std.fs.path.join(allocator, &.{ temporary_root, "Workspace/Sandbox/Math/Vec3.sx" }),
+    );
+    try server.workspace_roots.append(allocator, workspace);
+
+    try std.testing.expectEqualStrings(main_path, (try server.inputForDocument(main_path)).?);
+    const input_path = (try server.inputForDocument(source_path)).?;
+    try std.testing.expect(moduleAnalysisInput(input_path));
+    const outcome = try server.analyzeInput(input_path, &.{});
+    const snapshot = switch (outcome) {
+        .success => |value| value,
+        .failure => return error.TestUnexpectedResult,
+    };
+    try std.testing.expect(snapshotFile(&snapshot, source_path) != null);
+    try std.testing.expectEqualStrings("Math.Vec3", snapshot.project.modules[snapshot.project.target_module].name);
+}
+
+test "application module manifest keeps the local module root" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var environ_map = std.process.Environ.Map.init(allocator);
+    var server = Server.init(allocator, std.testing.io, &environ_map);
+    var temporary = std.testing.tmpDir(.{ .iterate = true });
+    defer temporary.cleanup();
+
+    try temporary.dir.createDirPath(std.testing.io, "Sandbox/Math");
+    try temporary.dir.writeFile(std.testing.io, .{
+        .sub_path = "Sandbox/@Module.json",
+        .data = "{\"dependencies\":{}}\n",
+    });
+    try temporary.dir.writeFile(std.testing.io, .{
+        .sub_path = "Sandbox/Math/Vec3.sx",
+        .data = "struct Vec3 {}\n",
+    });
+
+    const temporary_root = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &temporary.sub_path });
+    const workspace = try SourceGraph.canonicalPath(allocator, std.testing.io, temporary_root);
+    const source_path = try SourceGraph.canonicalPath(
+        allocator,
+        std.testing.io,
+        try std.fs.path.join(allocator, &.{ temporary_root, "Sandbox/Math/Vec3.sx" }),
+    );
+    try server.workspace_roots.append(allocator, workspace);
+
+    const input_path = (try server.inputForDocument(source_path)).?;
+    try std.testing.expect(moduleAnalysisInput(input_path));
+    const context = (try server.moduleAnalysisProject(input_path)).?;
+    try std.testing.expectEqualStrings("Math.Vec3", context.project.modules[context.project.target_module].name);
+}
+
+test "qualified completion lists local namespace children while the source is incomplete" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var environ_map = std.process.Environ.Map.init(allocator);
+    var server = Server.init(allocator, std.testing.io, &environ_map);
+    var temporary = std.testing.tmpDir(.{ .iterate = true });
+    defer temporary.cleanup();
+
+    try temporary.dir.createDir(std.testing.io, "Math", .default_dir);
+    try temporary.dir.createDir(std.testing.io, "Hidden", .default_dir);
+    try temporary.dir.writeFile(std.testing.io, .{
+        .sub_path = "Math/Vec3.sx",
+        .data = "public struct Vec3 {}\n",
+    });
+    try temporary.dir.writeFile(std.testing.io, .{
+        .sub_path = "Hidden/Secret.sx",
+        .data = "struct Secret {}\n",
+    });
+    const source = "use Math\nuse Hidden\n\nfunc main() {\n    var v = Math.\n    var secret = Hidden.\n}\n";
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "Main.sx", .data = source });
+    const relative_root = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &temporary.sub_path });
+    const main_path = try SourceGraph.canonicalPath(
+        allocator,
+        std.testing.io,
+        try std.fs.path.join(allocator, &.{ relative_root, "Main.sx" }),
+    );
+    const uri = try uriFromPath(allocator, main_path);
+    try server.workspace_roots.append(allocator, try SourceGraph.canonicalPath(allocator, std.testing.io, relative_root));
+    try server.setDocument(uri, source, 1);
+
+    const cursor = (std.mem.indexOf(u8, source, "Math.") orelse return error.TestUnexpectedResult) + "Math.".len;
+    const position = encodedPositionAtByteOffset(source, cursor, .utf16).?;
+    const request = try testRequestParams(allocator, uri, position, "");
+    const completions = try server.completion(request);
+    try std.testing.expect(containsCompletion(completions, "Vec3"));
+    try std.testing.expect(!containsCompletion(completions, "Secret"));
+    try std.testing.expect(!containsCompletion(completions, "func"));
+    for (completions) |completion| {
+        if (!std.mem.eql(u8, completion.label, "Vec3")) continue;
+        try std.testing.expectEqualStrings("Vec3", completion.insertText.?);
+        try std.testing.expectEqualStrings("Vec3", completion.filterText.?);
+        break;
+    } else return error.TestUnexpectedResult;
+
+    const hidden_cursor = (std.mem.indexOf(u8, source, "Hidden.") orelse return error.TestUnexpectedResult) + "Hidden.".len;
+    const hidden_position = encodedPositionAtByteOffset(source, hidden_cursor, .utf16).?;
+    const hidden_request = try testRequestParams(allocator, uri, hidden_position, "");
+    const hidden_completions = try server.completion(hidden_request);
+    try std.testing.expectEqual(@as(usize, 0), hidden_completions.len);
+}
+
+test "member completion resolves a variable on a line added after the last snapshot" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var environ_map = std.process.Environ.Map.init(allocator);
+    var server = Server.init(allocator, std.testing.io, &environ_map);
+    var temporary = std.testing.tmpDir(.{ .iterate = true });
+    defer temporary.cleanup();
+
+    try temporary.dir.createDir(std.testing.io, "Math", .default_dir);
+    try temporary.dir.writeFile(std.testing.io, .{
+        .sub_path = "Math/Vec3.sx",
+        .data = "public struct Vec3 {\n    var x:float\n    var y:float\n    var z:float\n\n    public func sum() float {\n        return self.x + self.y + self.z\n    }\n}\n",
+    });
+    const valid_source = "use Math\n\nfunc main() {\n    var v = Math.Vec3()\n}\n";
+    const incomplete_source = "use Math\n\nfunc main() {\n    var v = Math.Vec3()\n\n    print(v.)\n}\n";
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "Main.sx", .data = valid_source });
+    const relative_root = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &temporary.sub_path });
+    const main_path = try SourceGraph.canonicalPath(
+        allocator,
+        std.testing.io,
+        try std.fs.path.join(allocator, &.{ relative_root, "Main.sx" }),
+    );
+    const uri = try uriFromPath(allocator, main_path);
+    const snapshot = switch (try Frontend.analyze(
+        allocator,
+        std.testing.io,
+        &environ_map,
+        main_path,
+        .editor,
+        &.{},
+    )) {
+        .success => |value| value,
+        .failure => return error.TestUnexpectedResult,
+    };
+    try server.workspace_roots.append(allocator, try SourceGraph.canonicalPath(allocator, std.testing.io, relative_root));
+    try server.setDocument(uri, incomplete_source, 2);
+    try server.projects.append(allocator, .{
+        .input_path = main_path,
+        .last_success = snapshot,
+        .last_versions = try allocator.dupe(VersionStamp, &.{.{ .path = main_path, .version = 1 }}),
+    });
+
+    const cursor = (std.mem.indexOf(u8, incomplete_source, "v.") orelse return error.TestUnexpectedResult) + "v.".len;
+    const position = encodedPositionAtByteOffset(incomplete_source, cursor, .utf16).?;
+    const request = try testRequestParams(allocator, uri, position, "");
+    const completions = try server.completion(request);
+    try std.testing.expect(containsCompletion(completions, "x"));
+    try std.testing.expect(containsCompletion(completions, "y"));
+    try std.testing.expect(containsCompletion(completions, "z"));
+    try std.testing.expect(containsCompletion(completions, "sum"));
+    try std.testing.expect(!containsCompletion(completions, "func"));
+
+    const failed_outcome = try Frontend.analyze(
+        allocator,
+        std.testing.io,
+        &environ_map,
+        main_path,
+        .editor,
+        &.{.{ .path = main_path, .text = incomplete_source }},
+    );
+    server.projects.items[0].last_success = null;
+    server.projects.items[0].last_versions = &.{};
+    server.projects.items[0].failure = switch (failed_outcome) {
+        .success => return error.TestUnexpectedResult,
+        .failure => |failure| failure,
+    };
+    const cold_completions = try server.completion(request);
+    try std.testing.expect(containsCompletion(cold_completions, "x"));
+    try std.testing.expect(containsCompletion(cold_completions, "y"));
+    try std.testing.expect(containsCompletion(cold_completions, "z"));
+    try std.testing.expect(containsCompletion(cold_completions, "sum"));
+    try std.testing.expect(!containsCompletion(cold_completions, "func"));
+}
+
+test "initializer completion proposes remaining public fields from the resolved type" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var environ_map = std.process.Environ.Map.init(allocator);
+    var server = Server.init(allocator, std.testing.io, &environ_map);
+    var temporary = std.testing.tmpDir(.{ .iterate = true });
+    defer temporary.cleanup();
+
+    try temporary.dir.createDir(std.testing.io, "Math", .default_dir);
+    try temporary.dir.writeFile(std.testing.io, .{
+        .sub_path = "Math/Vec3.sx",
+        .data =
+        \\public struct Vec3 {
+        \\    var x:float
+        \\    var y:float
+        \\    var z:float
+        \\}
+        \\public struct Test {
+        \\    var foo:str
+        \\}
+        ,
+    });
+    const valid_source =
+        \\use Math
+        \\
+        \\func main() {
+        \\    var vector = Math.Vec3(x:1, y:2, z:3)
+        \\    var test = Math.Vec3.Test(foo:"ok")
+        \\    print(vector.x)
+        \\    print(test.foo)
+        \\}
+    ;
+    const incomplete_source =
+        \\use Math
+        \\
+        \\func main() {
+        \\    var vector = Math.Vec3(
+        \\        x:1,
+        \\        y
+        \\    )
+        \\    var test = Math.Vec3.Test(f
+        \\    print(vector.x)
+        \\    print(test.foo)
+        \\}
+    ;
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "Main.sx", .data = valid_source });
+    const relative_root = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &temporary.sub_path });
+    const main_path = try SourceGraph.canonicalPath(
+        allocator,
+        std.testing.io,
+        try std.fs.path.join(allocator, &.{ relative_root, "Main.sx" }),
+    );
+    const uri = try uriFromPath(allocator, main_path);
+    const snapshot = switch (try Frontend.analyze(
+        allocator,
+        std.testing.io,
+        &environ_map,
+        main_path,
+        .editor,
+        &.{},
+    )) {
+        .success => |value| value,
+        .failure => return error.TestUnexpectedResult,
+    };
+    try server.workspace_roots.append(allocator, try SourceGraph.canonicalPath(allocator, std.testing.io, relative_root));
+    try server.setDocument(uri, incomplete_source, 2);
+    try server.projects.append(allocator, .{
+        .input_path = main_path,
+        .last_success = snapshot,
+        .last_versions = try allocator.dupe(VersionStamp, &.{.{ .path = main_path, .version = 1 }}),
+    });
+
+    const vector_marker = "        y\n    )";
+    const vector_cursor = (std.mem.indexOf(u8, incomplete_source, vector_marker) orelse return error.TestUnexpectedResult) + "        y".len;
+    const vector_position = encodedPositionAtByteOffset(incomplete_source, vector_cursor, .utf16).?;
+    const vector_request = try testRequestParams(allocator, uri, vector_position, "");
+    const vector_completions = try server.completion(vector_request);
+    try std.testing.expect(!containsCompletion(vector_completions, "x"));
+    try std.testing.expect(containsCompletion(vector_completions, "y"));
+    try std.testing.expect(containsCompletion(vector_completions, "z"));
+    try std.testing.expect(!containsCompletion(vector_completions, "func"));
+    for (vector_completions) |completion| {
+        if (!std.mem.eql(u8, completion.label, "y")) continue;
+        try std.testing.expectEqualStrings("y:", completion.insertText.?);
+        try std.testing.expectEqualStrings("y", completion.filterText.?);
+        break;
+    } else return error.TestUnexpectedResult;
+
+    const test_cursor = (std.mem.indexOf(u8, incomplete_source, "Test(f") orelse return error.TestUnexpectedResult) + "Test(f".len;
+    const test_position = encodedPositionAtByteOffset(incomplete_source, test_cursor, .utf16).?;
+    const test_request = try testRequestParams(allocator, uri, test_position, "");
+    const test_completions = try server.completion(test_request);
+    try std.testing.expectEqual(@as(usize, 1), test_completions.len);
+    try std.testing.expectEqualStrings("foo", test_completions[0].label);
+    try std.testing.expectEqualStrings("foo:", test_completions[0].insertText.?);
+}
+
+test "struct constructor completion closes fields and exposes overload signatures" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var environ_map = std.process.Environ.Map.init(allocator);
+    var server = Server.init(allocator, std.testing.io, &environ_map);
+    var temporary = std.testing.tmpDir(.{ .iterate = true });
+    defer temporary.cleanup();
+
+    const source =
+        \\public struct Point {
+        \\    private let x:int
+        \\    private let y:int
+        \\    init(value:int) { self.x = value; self.y = value }
+        \\    public init(x:int, y:int) { self.x = x; self.y = y }
+        \\}
+        \\func main() { let point = Point(1, 2); assert(point == point, "point") }
+    ;
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "Main.sx", .data = source });
+    const relative_root = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &temporary.sub_path });
+    const main_path = try SourceGraph.canonicalPath(
+        allocator,
+        std.testing.io,
+        try std.fs.path.join(allocator, &.{ relative_root, "Main.sx" }),
+    );
+    const uri = try uriFromPath(allocator, main_path);
+    const snapshot = switch (try Frontend.analyze(
+        allocator,
+        std.testing.io,
+        &environ_map,
+        main_path,
+        .editor,
+        &.{},
+    )) {
+        .success => |value| value,
+        .failure => return error.TestUnexpectedResult,
+    };
+    try server.workspace_roots.append(allocator, try SourceGraph.canonicalPath(allocator, std.testing.io, relative_root));
+    try server.setDocument(uri, source, 1);
+    try server.projects.append(allocator, .{
+        .input_path = main_path,
+        .current = snapshot,
+        .last_success = snapshot,
+        .last_versions = try allocator.dupe(VersionStamp, &.{.{ .path = main_path, .version = 1 }}),
+    });
+
+    const completion_cursor = (std.mem.indexOf(u8, source, "Point(1") orelse return error.TestUnexpectedResult) + "Point(".len;
+    const completion_position = encodedPositionAtByteOffset(source, completion_cursor, .utf16).?;
+    const completion_request = try testRequestParams(allocator, uri, completion_position, "");
+    const completions = try server.completion(completion_request);
+    for (completions) |completion| {
+        if (!std.mem.eql(u8, completion.label, "x") and !std.mem.eql(u8, completion.label, "y")) continue;
+        try std.testing.expect(completion.insertText == null or !std.mem.endsWith(u8, completion.insertText.?, ":"));
+    }
+
+    const signature_cursor = completion_cursor + 1;
+    const signature_position = encodedPositionAtByteOffset(source, signature_cursor, .utf16).?;
+    const signature_request = try testRequestParams(allocator, uri, signature_position, "");
+    const signatures = try server.signatureHelp(signature_request);
+    try std.testing.expectEqual(@as(usize, 2), signatures.signatures.len);
+    try std.testing.expectEqualStrings("init Point(value:int)", signatures.signatures[0].label);
+    try std.testing.expectEqualStrings("init Point(x:int, y:int)", signatures.signatures[1].label);
+}
+
+test "module completion separates file declarations from child namespaces and expands dotted stems" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var temporary = std.testing.tmpDir(.{ .iterate = true });
+    defer temporary.cleanup();
+
+    try temporary.dir.createDir(std.testing.io, "Library", .default_dir);
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "Main.sx", .data = "func main() {}\n" });
+    try temporary.dir.writeFile(std.testing.io, .{
+        .sub_path = "Library.sx",
+        .data = "public struct Extra {}\npublic func root_value() int { return 1 }\n",
+    });
+    try temporary.dir.writeFile(std.testing.io, .{
+        .sub_path = "Library/Child.sx",
+        .data = "public func child_value() int { return 2 }\n",
+    });
+    try temporary.dir.writeFile(std.testing.io, .{
+        .sub_path = "Library/Compact.Session.sx",
+        .data = "public func compact_value() int { return 3 }\n",
+    });
+
+    const relative_root = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &temporary.sub_path });
+    const main_path = try SourceGraph.canonicalPath(
+        allocator,
+        std.testing.io,
+        try std.fs.path.join(allocator, &.{ relative_root, "Main.sx" }),
+    );
+    const uri = try uriFromPath(allocator, main_path);
+    const root_items = try moduleExportCompletionItems(
+        allocator,
+        std.testing.io,
+        uri,
+        "Library",
+        .{ .qualifier = "Library", .prefix = "", .type_only = false },
+        .use_path,
+    );
+    try std.testing.expect(containsCompletion(root_items, "Library.Child"));
+    try std.testing.expect(containsCompletion(root_items, "Library.Compact"));
+    try std.testing.expect(containsCompletion(root_items, "Library.Extra"));
+    try std.testing.expect(containsCompletion(root_items, "Library.root_value"));
+    try std.testing.expect(!containsCompletion(root_items, "Library.child_value"));
+
+    const compact_items = try moduleExportCompletionItems(
+        allocator,
+        std.testing.io,
+        uri,
+        "Library.Compact",
+        .{ .qualifier = "Library.Compact", .prefix = "", .type_only = false },
+        .use_path,
+    );
+    try std.testing.expect(containsCompletion(compact_items, "Library.Compact.Session"));
+
+    const session_items = try moduleExportCompletionItems(
+        allocator,
+        std.testing.io,
+        uri,
+        "Library.Compact.Session",
+        .{ .qualifier = "Library.Compact.Session", .prefix = "", .type_only = false },
+        .use_path,
+    );
+    try std.testing.expect(containsCompletion(session_items, "Library.Compact.Session.compact_value"));
+}
+
 test "opening a loaded distributed source keeps its application project input" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
     var environ_map = std.process.Environ.Map.init(allocator);
     var server = Server.init(allocator, std.testing.io, &environ_map);
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
 
-    const input_path = try SourceGraph.canonicalPath(allocator, std.testing.io, "../../Sandbox/Main.sx");
-    const workspace_path = try SourceGraph.canonicalPath(allocator, std.testing.io, "../../Sandbox");
-    const main_source = try Io.Dir.cwd().readFileAlloc(std.testing.io, input_path, allocator, .limited(1024 * 1024));
+    const main_source = "use STD.Console\n\nfunc main() {}\n";
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "Main.sx", .data = main_source });
+    const relative_root = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &temporary.sub_path });
+    const workspace_path = try SourceGraph.canonicalPath(allocator, std.testing.io, relative_root);
+    const input_path = try SourceGraph.canonicalPath(
+        allocator,
+        std.testing.io,
+        try std.fs.path.join(allocator, &.{ relative_root, "Main.sx" }),
+    );
     const main_uri = try uriFromPath(allocator, input_path);
     try server.workspace_roots.append(allocator, workspace_path);
     try server.setDocument(main_uri, main_source, 1);
@@ -2733,7 +3820,7 @@ test "opening a loaded distributed source keeps its application project input" {
 
     var console_file: ?usize = null;
     for (snapshot.source_paths, 0..) |path, file| {
-        if (std.mem.endsWith(u8, path, "/STD/Console/Console.sx")) {
+        if (std.mem.endsWith(u8, path, "/STD/Console.sx")) {
             console_file = file;
             break;
         }

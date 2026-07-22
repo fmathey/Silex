@@ -547,7 +547,7 @@ pub fn build(b: *std.Build) void {
     invalid_native_function_command.addArgs(&.{ "compile", "Tests/InvalidNativeFunction.sx" });
     invalid_native_function_command.expectExitCode(1);
     invalid_native_function_command.expectStdErrEqual(
-        "Tests/InvalidNativeFunction.sx:1:1: error: native functions are only available in a named module with @Module.json native configuration\n",
+        "Tests/InvalidNativeFunction.sx:1:1: error: native functions require module 'InvalidNativeFunction' or one of its parents to declare @Module.json native configuration\n",
     );
 
     const legacy_module_manifest_command = b.addRunArtifact(executable);
@@ -811,6 +811,21 @@ pub fn build(b: *std.Build) void {
     invalid_missing_class_constructor_command.expectExitCode(1);
     invalid_missing_class_constructor_command.expectStdErrEqual("Tests/InvalidMissingClassConstructor.sx:10:19: error: no compatible constructor for 'Session'; visible constructors: Session(str)\n");
 
+    const invalid_named_struct_constructor_command = b.addRunArtifact(executable);
+    invalid_named_struct_constructor_command.addArgs(&.{ "compile", "Tests/InvalidNamedStructConstructor.sx" });
+    invalid_named_struct_constructor_command.expectExitCode(1);
+    invalid_named_struct_constructor_command.expectStdErrEqual("Tests/InvalidNamedStructConstructor.sx:10:17: error: struct 'Value' declares custom constructors and cannot use a named field initializer\n");
+
+    const invalid_private_struct_constructor_command = b.addRunArtifact(executable);
+    invalid_private_struct_constructor_command.addArgs(&.{ "compile", "Tests/InvalidPrivateStructConstructor.sx" });
+    invalid_private_struct_constructor_command.expectExitCode(1);
+    invalid_private_struct_constructor_command.expectStdErrEqual("Tests/InvalidPrivateStructConstructor.sx:10:18: error: constructor of struct 'Secret' is private\n");
+
+    const invalid_missing_struct_constructor_field_command = b.addRunArtifact(executable);
+    invalid_missing_struct_constructor_field_command.addArgs(&.{ "compile", "Tests/InvalidMissingStructConstructorField.sx" });
+    invalid_missing_struct_constructor_field_command.expectExitCode(1);
+    invalid_missing_struct_constructor_field_command.expectStdErrEqual("Tests/InvalidMissingStructConstructorField.sx:4:5: error: constructor of struct 'Value' leaves field 'number' without a value\n");
+
     const invalid_inheritance_cycle_command = b.addRunArtifact(executable);
     invalid_inheritance_cycle_command.addArgs(&.{ "compile", "Tests/InvalidInheritanceCycle.sx" });
     invalid_inheritance_cycle_command.expectExitCode(1);
@@ -839,10 +854,7 @@ pub fn build(b: *std.Build) void {
 
     const extension_visibility_command = b.addRunArtifact(executable);
     extension_visibility_command.addArgs(&.{ "compile", "Tests/ExtensionVisibility/silex.json" });
-    extension_visibility_command.expectExitCode(1);
-    extension_visibility_command.expectStdErrEqual(
-        "Tests/ExtensionVisibility/Main.sx:7:13: error: struct 'ExtensionVisibility.Core.Counter' has no method 'keep<int>'\n",
-    );
+    extension_visibility_command.expectExitCode(0);
 
     const generic_extension_private_command = b.addRunArtifact(executable);
     generic_extension_private_command.addArgs(&.{ "compile", "Tests/GenericExtensionPrivate/silex.json" });
@@ -860,10 +872,7 @@ pub fn build(b: *std.Build) void {
 
     const extension_conformance_visibility_command = b.addRunArtifact(executable);
     extension_conformance_visibility_command.addArgs(&.{ "compile", "Tests/ExtensionConformanceVisibility/silex.json" });
-    extension_conformance_visibility_command.expectExitCode(1);
-    extension_conformance_visibility_command.expectStdErrEqual(
-        "Tests/ExtensionConformanceVisibility/Main.sx:6:34: error: expected 'ExtensionConformanceVisibility.Core.Drawable', found 'ExtensionConformanceVisibility.Types.Sprite'\n",
-    );
+    extension_conformance_visibility_command.expectExitCode(0);
 
     const extension_conformance_conflict_command = b.addRunArtifact(executable);
     extension_conformance_conflict_command.addArgs(&.{ "compile", "Tests/ExtensionConformanceConflict/silex.json" });
@@ -1906,14 +1915,49 @@ pub fn build(b: *std.Build) void {
     multiple_module_providers_command.addArgs(&.{ "compile", "Tests/Modules/MultipleProviders/project.json" });
     multiple_module_providers_command.expectExitCode(1);
     multiple_module_providers_command.expectStdErrEqual(
-        "silex: module 'Lib' has multiple providers\n",
+        "silex: namespace 'Lib.Item' has multiple source providers\n",
     );
 
     const duplicate_source_units_command = b.addRunArtifact(executable);
     duplicate_source_units_command.addArgs(&.{ "compile", "Tests/Modules/DuplicateUnits/project.json" });
     duplicate_source_units_command.expectExitCode(1);
     duplicate_source_units_command.expectStdErrEqual(
-        "silex: module 'App' has multiple source units named 'Item'\n",
+        "silex: namespace 'App.Item' has multiple source providers\n",
+    );
+
+    const duplicate_namespace_spelling_command = b.addRunArtifact(executable);
+    duplicate_namespace_spelling_command.addArgs(&.{ "compile", "Tests/Namespaces/Duplicate/Main.sx" });
+    duplicate_namespace_spelling_command.expectExitCode(1);
+    duplicate_namespace_spelling_command.expectStdErrMatch(
+        "namespace 'Library.Console.Session' has multiple source providers",
+    );
+
+    const namespace_declaration_collision_command = b.addRunArtifact(executable);
+    namespace_declaration_collision_command.addArgs(&.{ "compile", "Tests/Namespaces/DeclarationCollision/Main.sx" });
+    namespace_declaration_collision_command.expectExitCode(1);
+    namespace_declaration_collision_command.expectStdErrMatch(
+        "namespace 'Library.Child' conflicts with declaration 'Child' in namespace 'Library'",
+    );
+
+    const namespace_static_collision_command = b.addRunArtifact(executable);
+    namespace_static_collision_command.addArgs(&.{ "compile", "Tests/Namespaces/StaticCollision/Main.sx" });
+    namespace_static_collision_command.expectExitCode(1);
+    namespace_static_collision_command.expectStdErrMatch(
+        "static member 'Child' of principal declaration 'Library' collides with namespace or declaration 'Library.Child'",
+    );
+
+    const namespace_enum_collision_command = b.addRunArtifact(executable);
+    namespace_enum_collision_command.addArgs(&.{ "compile", "Tests/Namespaces/EnumCollision/Main.sx" });
+    namespace_enum_collision_command.expectExitCode(1);
+    namespace_enum_collision_command.expectStdErrMatch(
+        "static member 'Child' of principal declaration 'Library' collides with namespace or declaration 'Library.Child'",
+    );
+
+    const invalid_namespace_stem_command = b.addRunArtifact(executable);
+    invalid_namespace_stem_command.addArgs(&.{ "compile", "Tests/Namespaces/InvalidStem/Bad..Name.sx" });
+    invalid_namespace_stem_command.expectExitCode(1);
+    invalid_namespace_stem_command.expectStdErrMatch(
+        "source filename 'Bad..Name.sx' does not form a valid namespace",
     );
 
     const unknown_module_path_command = b.addRunArtifact(executable);
@@ -2271,7 +2315,7 @@ pub fn build(b: *std.Build) void {
     invalid_iterator_map_callback_command.addArgs(&.{ "compile", "Tests/InvalidIteratorMapCallback.sx" });
     invalid_iterator_map_callback_command.expectExitCode(1);
     invalid_iterator_map_callback_command.expectStdErrEqual(
-        "Tests/InvalidIteratorMapCallback.sx:10:18: error: no compatible signature for function 'STD.Algorithms.map<int, int>'; visible signatures: map<int, int>(STD.Iteration.Iterator<int>, func(@int) int)\n",
+        "Tests/InvalidIteratorMapCallback.sx:10:18: error: no compatible signature for function 'STD.Algorithms.Iteration.map<int, int>'; visible signatures: map<int, int>(STD.Iteration.Iterator<int>, func(@int) int)\n",
     );
 
     const test_step = b.step("test", "Run the toolchain tests");
@@ -2381,6 +2425,9 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&invalid_let_class_iteration_command.step);
     test_step.dependOn(&invalid_class_default_variable_command.step);
     test_step.dependOn(&invalid_missing_class_constructor_command.step);
+    test_step.dependOn(&invalid_named_struct_constructor_command.step);
+    test_step.dependOn(&invalid_private_struct_constructor_command.step);
+    test_step.dependOn(&invalid_missing_struct_constructor_field_command.step);
     test_step.dependOn(&invalid_inheritance_cycle_command.step);
     test_step.dependOn(&unique_resource_initializer_visibility_command.step);
     test_step.dependOn(&unique_resource_field_visibility_command.step);
@@ -2536,6 +2583,12 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&removed_import_command.step);
     test_step.dependOn(&module_alias_collision_command.step);
     test_step.dependOn(&multiple_module_providers_command.step);
+    test_step.dependOn(&duplicate_source_units_command.step);
+    test_step.dependOn(&duplicate_namespace_spelling_command.step);
+    test_step.dependOn(&namespace_declaration_collision_command.step);
+    test_step.dependOn(&namespace_static_collision_command.step);
+    test_step.dependOn(&namespace_enum_collision_command.step);
+    test_step.dependOn(&invalid_namespace_stem_command.step);
     test_step.dependOn(&unknown_module_path_command.step);
     test_step.dependOn(&unknown_qualified_descendant_command.step);
     test_step.dependOn(&public_module_use_command.step);
@@ -2620,8 +2673,13 @@ pub fn build(b: *std.Build) void {
     classes_command.addArgs(&.{ "run", "Smokes/Classes.sx" });
     classes_command.expectStdOutEqual(hostText(b, "classes\n"));
 
+    const struct_constructors_command = b.addRunArtifact(executable);
+    struct_constructors_command.step.dependOn(&classes_command.step);
+    struct_constructors_command.addArgs(&.{ "run", "Smokes/StructConstructors.sx" });
+    struct_constructors_command.expectStdOutEqual(hostText(b, "owner\nstruct constructors\n"));
+
     const drop_command = b.addRunArtifact(executable);
-    drop_command.step.dependOn(&classes_command.step);
+    drop_command.step.dependOn(&struct_constructors_command.step);
     drop_command.addArgs(&.{ "run", "Smokes/Drop.sx" });
     drop_command.expectStdOutEqual(hostText(b, "held\nsingle\ncycle\ncycle\nchild\nbase\ndrop\n"));
 
@@ -3036,9 +3094,14 @@ pub fn build(b: *std.Build) void {
     source_units_command.addArgs(&.{ "run", "Smokes/SourceUnits/silex.json" });
     source_units_command.expectStdOutEqual(hostText(b, "42\n"));
 
+    const file_namespaces_command = b.addRunArtifact(executable);
+    file_namespaces_command.step.dependOn(&source_units_command.step);
+    file_namespaces_command.addArgs(&.{ "run", "Smokes/FileNamespaces/Main.sx" });
+    file_namespaces_command.expectStdOutEqual(hostText(b, "42\n"));
+
     const standard_library_output = "1065361344\n1152851127339773951\n508277857751731680\n6637030065269067181\n7345633470618427510\n8792660973527785782\n1082269761\n1152992998833853505\n1954144627577988649\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n1301891922867780472\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n";
     const standard_library_command = b.addRunArtifact(executable);
-    standard_library_command.step.dependOn(&source_units_command.step);
+    standard_library_command.step.dependOn(&file_namespaces_command.step);
     standard_library_command.addArgs(&.{ "run", "Smokes/StandardLibrary/Main.sx" });
     standard_library_command.expectStdOutEqual(hostText(
         b,
@@ -3323,7 +3386,7 @@ pub fn build(b: *std.Build) void {
     });
     console_session_noninteractive_command.expectExitCode(1);
     console_session_noninteractive_command.expectStdErrEqual(
-        "runtime error: native function 'STD.Console.native_session_create' failed: " ++
+        "runtime error: native function 'STD.Console.Session.native_session_create' failed: " ++
             "Console.Session.create failed: standard input and output must be interactive\n",
     );
 

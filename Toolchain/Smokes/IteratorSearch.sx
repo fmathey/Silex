@@ -1,15 +1,9 @@
-use STD.Algorithms.any as any
-use STD.Algorithms.all as all
-use STD.Algorithms.count_where as count_where
-use STD.Algorithms.find as find
-use STD.Algorithms.contains as contains
-use STD.Iteration.iterate as iterate
+use STD.Algorithms.Iteration as Algorithms
+use STD.Iteration.Iterator as Iteration
 use STD.Collections.Queue as Queue
 use STD.Collections.Stack as Stack
 use STD.Collections.Dictionary as Dictionary
-use STD.Collections.Entry as Entry
-use STD.Collections.hash_int as hash_int
-use STD.Collections.equal_int as equal_int
+use STD.Collections.Hashing
 
 func is_even(value:@int) bool {
     return value % 2 == 0
@@ -28,22 +22,22 @@ func required(value:int?) int {
 
 func main() {
     var empty_list:int[] = []
-    var empty = iterate<int>(empty_list)
-    assert(!any<int>(empty, is_even), "any empty")
-    assert(all<int>(empty, less_than_ten), "all empty")
-    assert(count_where<int>(empty, is_even) == 0, "count empty")
-    assert(find<int>(empty, is_even) == null, "find empty")
-    assert(!contains<int>(empty, 1, equal_int), "contains empty")
+    var empty = Iteration.iterate<int>(empty_list)
+    assert(!Algorithms.any<int>(empty, is_even), "any empty")
+    assert(Algorithms.all<int>(empty, less_than_ten), "all empty")
+    assert(Algorithms.count_where<int>(empty, is_even) == 0, "count empty")
+    assert(Algorithms.find<int>(empty, is_even) == null, "find empty")
+    assert(!Algorithms.contains<int>(empty, 1, Hashing.equal_int), "contains empty")
 
     var values:int[] = [1, 2, 3, 4, 5]
-    var iterator = iterate<int>(values)
+    var iterator = Iteration.iterate<int>(values)
     iterator.next()
     var calls = 0
     var after_three = func(value:@int) bool {
         calls++
         return value > 3
     }
-    assert(any<int>(iterator, after_three), "any middle match")
+    assert(Algorithms.any<int>(iterator, after_three), "any middle match")
     assert(calls == 3, "any short circuits")
     assert(iterator.remaining() == 4, "algorithm preserves caller cursor")
 
@@ -52,7 +46,7 @@ func main() {
         calls++
         return value < 4
     }
-    assert(!all<int>(iterator, below_four), "all middle rejection")
+    assert(!Algorithms.all<int>(iterator, below_four), "all middle rejection")
     assert(calls == 3, "all short circuits")
 
     calls = 0
@@ -60,41 +54,41 @@ func main() {
         calls++
         return value % 2 == 0
     }
-    assert(count_where<int>(iterator, counted) == 2 && calls == 4, "count full traversal")
+    assert(Algorithms.count_where<int>(iterator, counted) == 2 && calls == 4, "count full traversal")
 
     calls = 0
     var equals_four = func(value:@int) bool {
         calls++
         return value == 4
     }
-    assert(required(find<int>(iterator, equals_four)) == 4 && calls == 3, "find first ordered match")
+    assert(required(Algorithms.find<int>(iterator, equals_four)) == 4 && calls == 3, "find first ordered match")
 
     calls = 0
     var measured_equal = func(left:@int, right:@int) bool {
         calls++
         return left == right
     }
-    assert(contains<int>(iterator, 5, measured_equal) && calls == 4, "contains ordered equality")
+    assert(Algorithms.contains<int>(iterator, 5, measured_equal) && calls == 4, "contains ordered equality")
 
     var queue = Queue<int>.create()
     queue.enqueue(2)
     queue.enqueue(3)
-    assert(any<int>(queue.iterator(), is_even), "search queue snapshot")
+    assert(Algorithms.any<int>(queue.iterator(), is_even), "search queue snapshot")
 
     var stack = Stack<int>.create()
     stack.push(8)
     stack.push(11)
-    assert(!all<int>(stack.iterator(), less_than_ten), "quantify stack snapshot")
+    assert(!Algorithms.all<int>(stack.iterator(), less_than_ten), "quantify stack snapshot")
 
-    var dictionary = Dictionary<int, int>.create(hash_int, equal_int)
+    var dictionary = Dictionary<int, int>.create(Hashing.hash_int, Hashing.equal_int)
     dictionary.insert(1, 10)
     dictionary.insert(2, 20)
     var entries = dictionary.iterator()
     var entry_calls = 0
-    var value_twenty = func(entry:@Entry<int, int>) bool {
+    var value_twenty = func(entry:@Dictionary.Entry<int, int>) bool {
         entry_calls++
         return entry.value == 20
     }
-    assert(any<Entry<int, int>>(entries, value_twenty), "search dictionary entries")
+    assert(Algorithms.any<Dictionary.Entry<int, int>>(entries, value_twenty), "search dictionary entries")
     assert(entry_calls <= 2, "dictionary search short circuits")
 }

@@ -5,15 +5,15 @@ semantics. A dictionary is created with hashing and equality callbacks:
 
 ```sx
 use STD.Collections.Dictionary as Dictionary
-use STD.Collections.hash_str as hash_str
-use STD.Collections.equal_str as equal_str
+use STD.Collections.Hashing
 
-var ports = Dictionary<str, int>.create(hash_str, equal_str)
+var ports = Dictionary<str, int>.create(Hashing.hash_str, Hashing.equal_str)
 ports.insert("http", 80)
 ports.insert("https", 443)
 ```
 
-The module publishes `Entry<Key, Value>` and `Dictionary<Key, Value>` with
+The file namespace publishes `Dictionary<Key, Value>` as its principal type
+and `STD.Collections.Dictionary.Entry<Key, Value>` as a child declaration, with
 `create`, `count`, `capacity`, `is_empty`, `contains_key`, `at`, `insert`,
 `remove`, `take_entry`, `reserve`, and `clear`. Keys and values must
 be recursively copyable. Copying a dictionary copies its logical state; later
@@ -45,6 +45,6 @@ removal are O(1) on average and O(n) in the worst case. Growth is amortized;
 Iteration order is not defined.
 
 Negative capacities passed to `create` or `reserve` panic. The associated
-`STD.Collections.Hashing` module publishes deterministic `hash_*` and
+`STD.Collections.Hashing` namespace publishes deterministic `hash_*` and
 `equal_*` callbacks for `bool`, `int`, `uint`, and `str`. String hashing uses
 the UTF-8 bytes; equality is exactly `==`.

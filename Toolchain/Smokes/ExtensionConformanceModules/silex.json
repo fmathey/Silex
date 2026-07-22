@@ -1,16 +1,16 @@
 {
-  "target": "ExtensionConformanceChecks.App",
+  "target": "ExtensionConformanceChecks.App.Main",
   "modules": [
     {
-      "name": "ExtensionConformanceChecks.Core",
+      "name": "ExtensionConformanceChecks",
       "sources": ["Core.sx"]
     },
     {
-      "name": "ExtensionConformanceChecks.Types",
+      "name": "ExtensionConformanceChecks",
       "sources": ["Types.sx"]
     },
     {
-      "name": "ExtensionConformanceChecks.Conformances",
+      "name": "ExtensionConformanceChecks",
       "sources": ["Conformances.sx"]
     },
     {

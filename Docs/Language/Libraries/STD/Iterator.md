@@ -30,7 +30,7 @@ order. `Dictionary.iterator()` returns `Entry<Key, Value>` values and
 construction takes O(n) time and storage. Later source mutations do not affect
 the iterator.
 
-`STD.Iteration.iterate` snapshots either a borrowed list or a borrowed
+`STD.Iteration.Iterator.iterate` snapshots either a borrowed list or a borrowed
 contiguous view. Fixed arrays require an explicit complete view, for example
 `let view = @values[0:values.count()]` followed by `iterate<int>(view)`. This
 API does not extend `for` and does not provide lazy or mutable-reference

@@ -1,6 +1,6 @@
 use STD.Collections.Dictionary as Dictionary
-use STD.Collections.hash_int as hash_int
-use STD.Collections.equal_int as equal_int
+use STD.Collections.Hashing.hash_int as hash_int
+use STD.Collections.Hashing.equal_int as equal_int
 
 func equals(value:@int, expected:int) bool {
     return value == expected

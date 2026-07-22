@@ -1,11 +1,5 @@
-use STD.Text.Encoding.Kind as Kind
-use STD.Text.Encoding.Error as EncodingError
-use STD.Text.Encoding.encode as encode
-use STD.Text.Encoding.encode_with_bom as encode_with_bom
-use STD.Text.Encoding.decode as decode
-use STD.Text.Encoding.detect_bom as detect_bom
-use STD.File.read_all as file_read_all
-use STD.File.write_all as file_write_all
+use STD.Text.Encoding
+use STD.File as Files
 use STD.System.Error as SystemError
 
 func file_bytes(result:Result<uint8[], SystemError>) uint8[] {
@@ -22,16 +16,16 @@ func file_written(result:Result<void, SystemError>) {
     }
 }
 
-func decoded(result:Result<str, EncodingError>) str {
+func decoded(result:Result<str, Encoding.Error>) str {
     match result {
         success(text) => { return text }
         failure(error) => { panic("expected valid encoding") }
     }
 }
 
-func expect_error(bytes:uint8[], encoding:Kind, expected_kind:int, expected_offset:int) {
+func expect_error(bytes:uint8[], encoding:Encoding.Kind, expected_kind:int, expected_offset:int) {
     let view = @bytes[0:bytes.count()]
-    match decode(view, encoding) {
+    match Encoding.decode(view, encoding) {
         success(text) => { panic("expected encoding error") }
         failure(error) => {
             let kind = match error.kind {
@@ -45,52 +39,52 @@ func expect_error(bytes:uint8[], encoding:Kind, expected_kind:int, expected_offs
     }
 }
 
-func verify_round_trip(text:str, encoding:Kind) {
-    let encoded = encode(text, encoding)
+func verify_round_trip(text:str, encoding:Encoding.Kind) {
+    let encoded = Encoding.encode(text, encoding)
     let encoded_view = @encoded[0:encoded.count()]
-    assert(decoded(decode(encoded_view, encoding)) == text, "BOM-less round trip")
+    assert(decoded(Encoding.decode(encoded_view, encoding)) == text, "BOM-less round trip")
 
-    let marked = encode_with_bom(text, encoding)
+    let marked = Encoding.encode_with_bom(text, encoding)
     let marked_view = @marked[0:marked.count()]
-    assert(decoded(decode(marked_view, encoding)) == text, "BOM round trip")
+    assert(decoded(Encoding.decode(marked_view, encoding)) == text, "BOM round trip")
 }
 
 func main() {
     let text = "A\0é𝄞"
-    verify_round_trip(text, Kind.utf8())
-    verify_round_trip(text, Kind.utf16_little_endian())
-    verify_round_trip(text, Kind.utf16_big_endian())
-    verify_round_trip(text, Kind.utf32_little_endian())
-    verify_round_trip(text, Kind.utf32_big_endian())
+    verify_round_trip(text, Encoding.Kind.utf8())
+    verify_round_trip(text, Encoding.Kind.utf16_little_endian())
+    verify_round_trip(text, Encoding.Kind.utf16_big_endian())
+    verify_round_trip(text, Encoding.Kind.utf32_little_endian())
+    verify_round_trip(text, Encoding.Kind.utf32_big_endian())
 
     let utf16_le:uint8[] = [65, 0, 52, 216, 30, 221]
     let utf16_be:uint8[] = [0, 65, 216, 52, 221, 30]
     let utf32_le:uint8[] = [65, 0, 0, 0, 30, 209, 1, 0]
     let utf32_be:uint8[] = [0, 0, 0, 65, 0, 1, 209, 30]
-    assert(encode("A𝄞", Kind.utf16_little_endian()) == utf16_le, "UTF-16 LE vector")
-    assert(encode("A𝄞", Kind.utf16_big_endian()) == utf16_be, "UTF-16 BE vector")
-    assert(encode("A𝄞", Kind.utf32_little_endian()) == utf32_le, "UTF-32 LE vector")
-    assert(encode("A𝄞", Kind.utf32_big_endian()) == utf32_be, "UTF-32 BE vector")
+    assert(Encoding.encode("A𝄞", Encoding.Kind.utf16_little_endian()) == utf16_le, "UTF-16 LE vector")
+    assert(Encoding.encode("A𝄞", Encoding.Kind.utf16_big_endian()) == utf16_be, "UTF-16 BE vector")
+    assert(Encoding.encode("A𝄞", Encoding.Kind.utf32_little_endian()) == utf32_le, "UTF-32 LE vector")
+    assert(Encoding.encode("A𝄞", Encoding.Kind.utf32_big_endian()) == utf32_be, "UTF-32 BE vector")
     let utf8_bom:uint8[] = [239, 187, 191]
     let utf16_le_bom:uint8[] = [255, 254]
     let utf16_be_bom:uint8[] = [254, 255]
     let utf32_le_bom:uint8[] = [255, 254, 0, 0]
     let utf32_be_bom:uint8[] = [0, 0, 254, 255]
-    assert(encode_with_bom("", Kind.utf8()) == utf8_bom, "UTF-8 BOM")
-    assert(encode_with_bom("", Kind.utf16_little_endian()) == utf16_le_bom, "UTF-16 LE BOM")
-    assert(encode_with_bom("", Kind.utf16_big_endian()) == utf16_be_bom, "UTF-16 BE BOM")
-    assert(encode_with_bom("", Kind.utf32_little_endian()) == utf32_le_bom, "UTF-32 LE BOM")
-    assert(encode_with_bom("", Kind.utf32_big_endian()) == utf32_be_bom, "UTF-32 BE BOM")
+    assert(Encoding.encode_with_bom("", Encoding.Kind.utf8()) == utf8_bom, "UTF-8 BOM")
+    assert(Encoding.encode_with_bom("", Encoding.Kind.utf16_little_endian()) == utf16_le_bom, "UTF-16 LE BOM")
+    assert(Encoding.encode_with_bom("", Encoding.Kind.utf16_big_endian()) == utf16_be_bom, "UTF-16 BE BOM")
+    assert(Encoding.encode_with_bom("", Encoding.Kind.utf32_little_endian()) == utf32_le_bom, "UTF-32 LE BOM")
+    assert(Encoding.encode_with_bom("", Encoding.Kind.utf32_big_endian()) == utf32_be_bom, "UTF-32 BE BOM")
 
     let complete = "\0퟿􏿿"
-    verify_round_trip(complete, Kind.utf8())
-    verify_round_trip(complete, Kind.utf16_little_endian())
-    verify_round_trip(complete, Kind.utf16_big_endian())
-    verify_round_trip(complete, Kind.utf32_little_endian())
-    verify_round_trip(complete, Kind.utf32_big_endian())
+    verify_round_trip(complete, Encoding.Kind.utf8())
+    verify_round_trip(complete, Encoding.Kind.utf16_little_endian())
+    verify_round_trip(complete, Encoding.Kind.utf16_big_endian())
+    verify_round_trip(complete, Encoding.Kind.utf32_little_endian())
+    verify_round_trip(complete, Encoding.Kind.utf32_big_endian())
 
     let utf32_le_bom_view = @utf32_le_bom[0:utf32_le_bom.count()]
-    if let detected = detect_bom(utf32_le_bom_view) {
+    if let detected = Encoding.detect_bom(utf32_le_bom_view) {
         match detected {
             utf32_little_endian => {}
             else => { panic("expected longest UTF-32 BOM") }
@@ -100,10 +94,10 @@ func main() {
     }
     let incomplete_bom:uint8[] = [239, 187]
     let incomplete_bom_view = @incomplete_bom[0:incomplete_bom.count()]
-    assert(detect_bom(incomplete_bom_view) == null, "no incomplete BOM")
+    assert(Encoding.detect_bom(incomplete_bom_view) == null, "no incomplete BOM")
     let no_bom:uint8[] = [65, 0, 66, 0]
     let no_bom_view = @no_bom[0:no_bom.count()]
-    assert(detect_bom(no_bom_view) == null, "no heuristic detection")
+    assert(Encoding.detect_bom(no_bom_view) == null, "no heuristic detection")
 
     let incomplete_utf16:uint8[] = [65]
     let marked_incomplete_utf16:uint8[] = [255, 254, 65]
@@ -114,29 +108,29 @@ func main() {
     let utf32_out_of_range:uint8[] = [0, 0, 17, 0]
     let opposite_utf16:uint8[] = [254, 255, 0, 65]
     let truncated_utf8:uint8[] = [226, 130]
-    expect_error(incomplete_utf16, Kind.utf16_little_endian(), 1, 0)
-    expect_error(marked_incomplete_utf16, Kind.utf16_little_endian(), 1, 2)
-    expect_error(lone_high, Kind.utf16_little_endian(), 2, 0)
-    expect_error(lone_low, Kind.utf16_little_endian(), 2, 0)
-    expect_error(invalid_pair, Kind.utf16_little_endian(), 2, 0)
-    expect_error(utf32_surrogate, Kind.utf32_little_endian(), 2, 0)
-    expect_error(utf32_out_of_range, Kind.utf32_little_endian(), 2, 0)
-    assert(decoded(decode(utf32_le_bom_view, Kind.utf16_little_endian())) == "\0", "explicit UTF-16 BOM wins ambiguous prefix")
-    expect_error(opposite_utf16, Kind.utf16_little_endian(), 3, 0)
-    expect_error(truncated_utf8, Kind.utf8(), 2, 0)
+    expect_error(incomplete_utf16, Encoding.Kind.utf16_little_endian(), 1, 0)
+    expect_error(marked_incomplete_utf16, Encoding.Kind.utf16_little_endian(), 1, 2)
+    expect_error(lone_high, Encoding.Kind.utf16_little_endian(), 2, 0)
+    expect_error(lone_low, Encoding.Kind.utf16_little_endian(), 2, 0)
+    expect_error(invalid_pair, Encoding.Kind.utf16_little_endian(), 2, 0)
+    expect_error(utf32_surrogate, Encoding.Kind.utf32_little_endian(), 2, 0)
+    expect_error(utf32_out_of_range, Encoding.Kind.utf32_little_endian(), 2, 0)
+    assert(decoded(Encoding.decode(utf32_le_bom_view, Encoding.Kind.utf16_little_endian())) == "\0", "explicit UTF-16 BOM wins ambiguous prefix")
+    expect_error(opposite_utf16, Encoding.Kind.utf16_little_endian(), 3, 0)
+    expect_error(truncated_utf8, Encoding.Kind.utf8(), 2, 0)
 
     let file_path = ".silex/encoding-smoke.bin"
     let disk_text = "mémoire 𝄞"
-    let disk_encoded = encode_with_bom(disk_text, Kind.utf16_little_endian())
+    let disk_encoded = Encoding.encode_with_bom(disk_text, Encoding.Kind.utf16_little_endian())
     let disk_encoded_view = @disk_encoded[0:disk_encoded.count()]
-    file_written(file_write_all(file_path, disk_encoded_view))
-    let disk_bytes = file_bytes(file_read_all(file_path, 1024))
+    file_written(Files.write_all(file_path, disk_encoded_view))
+    let disk_bytes = file_bytes(Files.read_all(file_path, 1024))
     let disk_bytes_view = @disk_bytes[0:disk_bytes.count()]
-    let modified = decoded(decode(disk_bytes_view, Kind.utf16_little_endian())) + " !"
-    let rewritten = encode_with_bom(modified, Kind.utf32_big_endian())
+    let modified = decoded(Encoding.decode(disk_bytes_view, Encoding.Kind.utf16_little_endian())) + " !"
+    let rewritten = Encoding.encode_with_bom(modified, Encoding.Kind.utf32_big_endian())
     let rewritten_view = @rewritten[0:rewritten.count()]
-    file_written(file_write_all(file_path, rewritten_view))
-    let final_bytes = file_bytes(file_read_all(file_path, 1024))
+    file_written(Files.write_all(file_path, rewritten_view))
+    let final_bytes = file_bytes(Files.read_all(file_path, 1024))
     let final_view = @final_bytes[0:final_bytes.count()]
-    assert(decoded(decode(final_view, Kind.utf32_big_endian())) == "mémoire 𝄞 !", "file encoding workflow")
+    assert(decoded(Encoding.decode(final_view, Encoding.Kind.utf32_big_endian())) == "mémoire 𝄞 !", "file encoding workflow")
 }

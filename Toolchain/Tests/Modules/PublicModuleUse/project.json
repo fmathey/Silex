@@ -1,7 +1,7 @@
 {
-  "target": "App",
+  "target": "App.Main",
   "modules": [
     { "name": "App", "sources": ["Main.sx"] },
-    { "name": "Lib.Child", "sources": ["Child.sx"] }
+    { "name": "Lib", "sources": ["Child.sx"] }
   ]
 }

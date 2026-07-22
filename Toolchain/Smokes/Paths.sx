@@ -1,12 +1,4 @@
-use STD.Path.Path
-use STD.Path.extension
-use STD.Path.is_absolute
-use STD.Path.join
-use STD.Path.name
-use STD.Path.normalize
-use STD.Path.parent
-use STD.Path.stem
-use STD.Path.validate
+use STD.Path
 use STD.System.Error
 
 func required_path(result:Result<Path, Error>) Path {
@@ -49,21 +41,21 @@ func required_bool(result:Result<bool, Error>) bool {
 }
 
 func main() {
-    let normalized:Path = required_path(normalize("projects//Silex/./Library/../Main.sx"))
+    let normalized:Path = required_path(Path.normalize("projects//Silex/./Library/../Main.sx"))
     assert(normalized == "projects/Silex/Main.sx", "relative normalization")
-    assert(required_path(normalize("../../src")) == "../../src", "relative parents")
+    assert(required_path(Path.normalize("../../src")) == "../../src", "relative parents")
     assert(
-        required_path(join("projects/Silex", "../Sandbox/Main.sx")) == "projects/Sandbox/Main.sx",
+        required_path(Path.join("projects/Silex", "../Sandbox/Main.sx")) == "projects/Sandbox/Main.sx",
         "join"
     )
-    assert(optional_text(parent("projects/Silex/Main.sx")) == "projects/Silex", "parent")
-    assert(optional_text(name("archive.tar.gz")) == "archive.tar.gz", "name")
-    assert(optional_text(stem("archive.tar.gz")) == "archive.tar", "stem")
-    assert(optional_text(extension("archive.tar.gz")) == "gz", "extension")
-    assert(optional_text(stem(".profile")) == ".profile", "hidden stem")
-    assert(optional_text(extension(".profile")) == null, "hidden extension")
-    assert(!required_bool(is_absolute("tmp")), "relative path")
-    match validate("bad\0path") {
+    assert(optional_text(Path.parent("projects/Silex/Main.sx")) == "projects/Silex", "parent")
+    assert(optional_text(Path.name("archive.tar.gz")) == "archive.tar.gz", "name")
+    assert(optional_text(Path.stem("archive.tar.gz")) == "archive.tar", "stem")
+    assert(optional_text(Path.extension("archive.tar.gz")) == "gz", "extension")
+    assert(optional_text(Path.stem(".profile")) == ".profile", "hidden stem")
+    assert(optional_text(Path.extension(".profile")) == null, "hidden extension")
+    assert(!required_bool(Path.is_absolute("tmp")), "relative path")
+    match Path.validate("bad\0path") {
         success => {
             panic("null byte was accepted")
         }

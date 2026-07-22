@@ -1,32 +1,24 @@
-use STD.Network.Endpoint as Endpoint
-use STD.Network.Family as Family
-use STD.Network.IpAddress as IpAddress
-use STD.Network.UDP as UDP
-use STD.Network.UDP.bind as bind
-use STD.Network.UDP.close as close
-use STD.Network.UDP.local_endpoint as local_endpoint
-use STD.Network.UDP.open as open
-use STD.Network.UDP.receive_from as receive_from
-use STD.Network.UDP.send_to as send_to
+use STD.Network
+use STD.Network.UDP
 use STD.System.Error as Error
 
 func main() {
-    let loopback=Endpoint(address:IpAddress.ipv4([127,0,0,1]),port:0,scope_id:0)
+    let loopback=Network.Endpoint(address:Network.IpAddress.ipv4([127,0,0,1]),port:0,scope_id:0)
     let options=UDP.Options(read_timeout_milliseconds:100,write_timeout_milliseconds:100)
-    var receiver=bound(bind(loopback,options))
-    let destination=endpoint(local_endpoint(receiver))
-    var sender=bound(open(Family.ipv4(),options))
+    var receiver=bound(UDP.bind(loopback,options))
+    let destination=endpoint(UDP.local_endpoint(receiver))
+    var sender=bound(UDP.open(Network.Family.ipv4(),options))
 
     let empty:uint8[]=[]
     let empty_view=@empty[0:0]
-    require(send_to(sender,empty_view,destination))
+    require(UDP.send_to(sender,empty_view,destination))
     var empty_buffer:uint8[]=[]
     let empty_receive=received(receive_once(receiver,empty_buffer))
     assert(empty_receive.count==0&&!empty_receive.truncated,"empty UDP datagram")
 
     let short:uint8[]=[1,2,3]
     let short_view=@short[0:3]
-    require(send_to(sender,short_view,destination))
+    require(UDP.send_to(sender,short_view,destination))
     var two:uint8[]=[0,0]
     let truncated=received(receive_once(receiver,two))
     assert(truncated.count==2&&truncated.truncated,"truncated UDP datagram")
@@ -34,19 +26,19 @@ func main() {
 
     let exact:uint8[]=[4,5,6,7]
     let exact_view=@exact[0:4]
-    require(send_to(sender,exact_view,destination))
+    require(UDP.send_to(sender,exact_view,destination))
     var four:uint8[]=[0,0,0,0]
     let exact_receive=received(receive_once(receiver,four))
     assert(exact_receive.count==4&&!exact_receive.truncated&&four==exact,"exact UDP datagram")
 
     let following:uint8[]=[9]
     let following_view=@following[0:1]
-    require(send_to(sender,following_view,destination))
+    require(UDP.send_to(sender,following_view,destination))
     var one:uint8[]=[0]
     let following_receive=received(receive_once(receiver,one))
     assert(following_receive.count==1&&!following_receive.truncated&&one[0]==9,"truncation consumes one datagram")
 
-    let sender_endpoint=endpoint(local_endpoint(sender))
+    let sender_endpoint=endpoint(UDP.local_endpoint(sender))
     assert(sender_endpoint.port>0&&following_receive.sender.port==sender_endpoint.port,"UDP sender endpoint")
     match receive_once(receiver,one) {
         success(value)=>{panic("expected UDP timeout")}
@@ -58,15 +50,15 @@ func main() {
         }
     }
 
-    require(close(move sender))
-    require(close(move receiver))
+    require(UDP.close(move sender))
+    require(UDP.close(move receiver))
 
-    match open(Family.any(),options) {
+    match UDP.open(Network.Family.any(),options) {
         success(socket)=>{panic("Family.any must be rejected")}
         failure(error)=>{}
     }
     let invalid=UDP.Options(read_timeout_milliseconds:-1,write_timeout_milliseconds:null)
-    match bind(loopback,invalid) {
+    match UDP.bind(loopback,invalid) {
         success(socket)=>{panic("negative timeout must be rejected")}
         failure(error)=>{}
     }
@@ -79,7 +71,7 @@ func bound(result:Result<UDP.Socket,Error>) UDP.Socket {
     }
 }
 
-func endpoint(result:Result<Endpoint,Error>) Endpoint {
+func endpoint(result:Result<Network.Endpoint,Error>) Network.Endpoint {
     match result {
         success(value)=>{return value}
         failure(error)=>{panic(error.detail)}
@@ -95,7 +87,7 @@ func received(result:Result<UDP.Receive,Error>) UDP.Receive {
 
 func receive_once(socket:&UDP.Socket,buffer:&uint8[]) Result<UDP.Receive,Error> {
     var view=&buffer[0:buffer.count()]
-    return receive_from(socket,view)
+    return UDP.receive_from(socket,view)
 }
 
 func require(result:Result<void,Error>) {

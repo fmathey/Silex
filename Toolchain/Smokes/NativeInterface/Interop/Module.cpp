@@ -3,11 +3,11 @@
 #include <cstdlib>
 #include <cstring>
 
-extern "C" int64_t silexNative_Interop_Api_native_add(int64_t left, int64_t right) {
+extern "C" int64_t silexNative_Interop_Api_First_native_add(int64_t left, int64_t right) {
     return left + right;
 }
 
-extern "C" void silexNative_Interop_Api_native_echo(
+extern "C" void silexNative_Interop_Api_First_native_echo(
     const char* value_bytes,
     int64_t value_length,
     char** output_bytes,
@@ -20,7 +20,7 @@ extern "C" void silexNative_Interop_Api_native_echo(
     *output_length = value_length;
 }
 
-extern "C" bool silexNative_Interop_Api_native_ready(void) {
+extern "C" bool silexNative_Interop_Api_Second_native_ready(void) {
     return true;
 }
 

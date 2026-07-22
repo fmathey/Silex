@@ -1,0 +1,7 @@
+use Library
+use Library.Nested.Session as NestedSession
+use Library.Compact.Session as CompactSession
+
+func main() {
+    print(Library() + NestedSession.value() + CompactSession.value())
+}

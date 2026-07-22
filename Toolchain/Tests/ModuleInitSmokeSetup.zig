@@ -13,7 +13,7 @@ pub fn main(init: std.process.Init) !void {
 
     const main_path = try std.fs.path.join(allocator, &.{ args[2], "Main.sx" });
     const module_directory = try std.fs.path.join(allocator, &.{ args[2], "Answer" });
-    const silex_path = try std.fs.path.join(allocator, &.{ module_directory, "Runtime.sx" });
+    const silex_path = try std.fs.path.join(allocator, &.{ args[2], "Answer.sx" });
     const native_path = try std.fs.path.join(allocator, &.{ module_directory, "@Native", "Module.cpp" });
     try std.Io.Dir.cwd().writeFile(init.io, .{
         .sub_path = main_path,

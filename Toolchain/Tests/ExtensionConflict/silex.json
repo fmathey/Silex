@@ -1,9 +1,9 @@
 {
-  "target": "ExtensionConflict.App",
+  "target": "ExtensionConflict.App.Main",
   "modules": [
-    { "name": "ExtensionConflict.Core", "sources": ["Core.sx"] },
-    { "name": "ExtensionConflict.First", "sources": ["First.sx"] },
-    { "name": "ExtensionConflict.Second", "sources": ["Second.sx"] },
+    { "name": "ExtensionConflict", "sources": ["Core.sx"] },
+    { "name": "ExtensionConflict", "sources": ["First.sx"] },
+    { "name": "ExtensionConflict", "sources": ["Second.sx"] },
     { "name": "ExtensionConflict.App", "sources": ["Main.sx"] }
   ]
 }

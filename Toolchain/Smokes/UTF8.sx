@@ -1,10 +1,6 @@
-use STD.Text.UTF8.bytes as utf8_bytes
-use STD.Text.UTF8.decode as utf8_decode
-use STD.Text.UTF8.scalars as utf8_scalars
-use STD.Text.UTF8.from_scalars as utf8_from_scalars
-use STD.Text.UTF8.DecodeError as DecodeError
+use STD.Text.UTF8
 
-func decoded(result:Result<str, DecodeError>) str {
+func decoded(result:Result<str, UTF8.DecodeError>) str {
     match result {
         success(text) => { return text }
         failure(error) => { panic("expected valid UTF-8") }
@@ -13,7 +9,7 @@ func decoded(result:Result<str, DecodeError>) str {
 
 func assert_decode_error(values:uint8[], expected_kind:int, expected_offset:int) {
     let view = @values[0:values.count()]
-    match utf8_decode(view) {
+    match UTF8.decode(view) {
         success(text) => { panic("expected invalid UTF-8") }
         failure(error) => {
             let kind = match error.kind {
@@ -32,24 +28,24 @@ func assert_decode_error(values:uint8[], expected_kind:int, expected_offset:int)
 
 func main() {
     let text = "A\0é𝄞é"
-    let encoded = utf8_bytes(text)
+    let encoded = UTF8.bytes(text)
     let expected_bytes:uint8[] = [65, 0, 195, 169, 240, 157, 132, 158, 101, 204, 129]
     assert(encoded == expected_bytes, "exact UTF-8 bytes")
     let encoded_view = @encoded[0:encoded.count()]
-    assert(decoded(utf8_decode(encoded_view)) == text, "UTF-8 byte round trip")
+    assert(decoded(UTF8.decode(encoded_view)) == text, "UTF-8 byte round trip")
 
-    let values = utf8_scalars(text)
+    let values = UTF8.scalars(text)
     let expected_scalars:uint32[] = [65, 0, 233, 119070, 101, 769]
     assert(values == expected_scalars, "scalar sequence")
     let values_view = @values[0:values.count()]
-    match utf8_from_scalars(values_view) {
+    match UTF8.from_scalars(values_view) {
         success(round_trip) => { assert(round_trip == text, "scalar round trip") }
         failure(error) => { panic("expected valid scalars") }
     }
 
     let invalid:uint8[] = [226, 40, 161]
     let invalid_view = @invalid[0:invalid.count()]
-    match utf8_decode(invalid_view) {
+    match UTF8.decode(invalid_view) {
         success(value) => { panic("expected invalid continuation") }
         failure(error) => {
             match error.kind {
@@ -62,7 +58,7 @@ func main() {
 
     let overlong:uint8[] = [192, 128]
     let overlong_view = @overlong[0:overlong.count()]
-    match utf8_decode(overlong_view) {
+    match UTF8.decode(overlong_view) {
         success(value) => { panic("expected overlong sequence") }
         failure(error) => {
             match error.kind {
@@ -74,7 +70,7 @@ func main() {
 
     let surrogate:uint32[] = [65, 55296]
     let surrogate_view = @surrogate[0:surrogate.count()]
-    match utf8_from_scalars(surrogate_view) {
+    match UTF8.from_scalars(surrogate_view) {
         success(value) => { panic("expected invalid scalar") }
         failure(error) => {
             match error.kind {
@@ -96,7 +92,7 @@ func main() {
 
     let out_of_range:uint32[] = [1114112]
     let out_of_range_view = @out_of_range[0:out_of_range.count()]
-    match utf8_from_scalars(out_of_range_view) {
+    match UTF8.from_scalars(out_of_range_view) {
         success(value) => { panic("expected out-of-range scalar") }
         failure(error) => {
             match error.kind {

@@ -1,6 +1,0 @@
-use Foundation.Math
-use Utility
-
-public func answer() int {
-    return Utility.base() + Math.one() + 2
-}

@@ -40,9 +40,9 @@ that inherits it is loaded.
 ## Projects and manifests
 
 For a small program, pass its entry source file directly. Its directory is the
-local project root: each subdirectory is a module, including a parent that only
-contains submodules, and the `.sx` files directly inside that directory belong
-to it. Using a parent does not recursively load all of its descendants. A
+local project root: each `.sx` file provides the namespace formed by its
+subdirectories and filename stem. A parent directory may remain a pure
+grouping namespace, and using it does not recursively load its descendants. A
 directory beginning with `@` is reserved for non-module infrastructure and is
 skipped by automatic module discovery; explicit native source and include paths
 may still point into it. A project can therefore use `@Native/`, `@Docs/`, or
@@ -53,14 +53,14 @@ or when the project needs to assign files to modules explicitly:
 
 ```json
 {
-  "target": "Example.App",
+  "target": "Example.App.Main",
   "modules": [
     {
       "name": "Example.App",
       "sources": ["Main.sx", "Commands.sx"]
     },
     {
-      "name": "NK.Window",
+      "name": "NK",
       "sources": ["Window.sx"]
     }
   ]
@@ -73,20 +73,21 @@ Run it as an input to `compile` or `run`:
 silex run path/to/project.json
 ```
 
-`target` is the name of the module that supplies `main`. Every entry in
-`modules` has a logical `name` and a non-empty list of `sources`, whose paths
-are relative to the manifest. A source belongs to one module only, and each
-module name has one provider. Files in the same module share their declarations.
-Every dotted module name also makes its parent names available as source-less
-modules: declaring `NK.Window` makes `NK` importable without an artificial
-source entry. A module can discover `@Module.json` from the directory matching
-its logical name relative to the project manifest, such as `Math/@Module.json`
-for `Math`. The project manifest format is currently JSON.
+`target` is the exact file namespace that supplies `main`. Every `modules`
+entry has a logical prefix in `name` and a non-empty list of `sources`, whose
+paths are relative to the manifest. Each source appends its filename stem to
+that prefix: the example provides `Example.App.Main`,
+`Example.App.Commands`, and `NK.Window`. A dotted stem appends several
+segments; an empty prefix assigns root-level files. Two sources that produce
+the same namespace are rejected. Parent namespaces are inferred without an
+artificial source entry. A namespace discovers `@Module.json` from its logical
+directory and then its ancestors, such as `Math/@Module.json` for `Math` and
+its descendants. The project manifest format is currently JSON.
 
 ## Editor project selection
 
 The Zed extension starts `silex lsp` and uses the same project front-end as the
-compiler. Unsaved text from every open source unit takes priority over the
+compiler. Unsaved text from every open source file takes priority over the
 corresponding file on disk, so a diagnostic or navigation result describes one
 coherent in-memory project rather than a document parsed in isolation.
 
@@ -165,10 +166,10 @@ unreachable statement in each unreachable suite. Diagnostics are warnings on
 standard error and make the command exit unsuccessfully; a clean input produces
 no output. The command does not rewrite sources, generate C++, resolve packages,
 or create compilation artifacts. Syntax errors remain errors and suppress lint
-diagnostics for their invalid source unit. `compile` and `run` do not invoke the
+diagnostics for their invalid source file. `compile` and `run` do not invoke the
 lint implicitly.
 
-`module init` creates the optional `@Module.json` for a directory-module without
+`module init` creates the optional `@Module.json` for a namespace directory without
 changing any existing source. The plain form writes an empty manifest. With
 `--native`, it adds the portable `native.sources.cpp` configuration and creates
 `@Native/Module.cpp` only when that file does not already exist. Existing

@@ -1,10 +1,7 @@
 # IO
 
 ```sx
-use STD.IO.Reader
-use STD.IO.Writer
-use STD.IO.read_exact
-use STD.IO.write_all
+use STD.IO
 ```
 
 `STD.IO` defines synchronous binary stream contracts. They keep the concrete

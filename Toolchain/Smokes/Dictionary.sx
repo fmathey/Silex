@@ -1,12 +1,5 @@
 use STD.Collections.Dictionary as Dictionary
-use STD.Collections.hash_bool as hash_bool
-use STD.Collections.equal_bool as standard_equal_bool
-use STD.Collections.hash_int as standard_hash_int
-use STD.Collections.equal_int as standard_equal_int
-use STD.Collections.hash_uint as hash_uint
-use STD.Collections.equal_uint as standard_equal_uint
-use STD.Collections.hash_str as standard_hash_str
-use STD.Collections.equal_str as standard_equal_str
+use STD.Collections.Hashing
 
 func collide(value:@int) uint {
     return 0
@@ -63,7 +56,7 @@ func verify_captured_callbacks() {
 }
 
 func main() {
-    var values = Dictionary<int, str>.create(standard_hash_int, standard_equal_int, 2)
+    var values = Dictionary<int, str>.create(Hashing.hash_int, Hashing.equal_int, 2)
     assert(values.is_empty() && values.capacity() >= 2, "empty dictionary")
     assert(values.insert(1, "one") == null, "insert absent key")
     assert(values.insert(2, "two") == null, "insert second key")
@@ -109,14 +102,14 @@ func main() {
     assert(left.count() == 1 && left.contains_key(2), "dictionary copy remains independent")
     assert(right.count() == 1 && right.contains_key(3), "dictionary copy diverges")
 
-    var strings = Dictionary<str, int>.create(standard_hash_str, standard_equal_str)
+    var strings = Dictionary<str, int>.create(Hashing.hash_str, Hashing.equal_str)
     strings.insert("é", 1)
     strings.insert("hello", 2)
     assert(strings.contains_key("é") && strings.contains_key("hello"), "UTF-8 string hashing")
-    assert(standard_hash_str("stable") == 4567693929835203094, "deterministic string hash")
-    assert(standard_hash_str("é") == 775207407765167617, "string hash uses UTF-8 bytes")
-    assert(standard_equal_bool(true, true) && !standard_equal_bool(true, false), "bool callbacks")
-    assert(standard_equal_uint(4, 4) && hash_uint(4) == 4, "uint callbacks")
+    assert(Hashing.hash_str("stable") == 4567693929835203094, "deterministic string hash")
+    assert(Hashing.hash_str("é") == 775207407765167617, "string hash uses UTF-8 bytes")
+    assert(Hashing.equal_bool(true, true) && !Hashing.equal_bool(true, false), "bool callbacks")
+    assert(Hashing.equal_uint(4, 4) && Hashing.hash_uint(4) == 4, "uint callbacks")
 
     values.reserve(200)
     assert(values.capacity() >= 200, "dictionary reserve")

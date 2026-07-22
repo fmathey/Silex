@@ -1,24 +1,13 @@
-use STD.File.write_all as write_all
-use STD.FileSystem.Entry as FileSystemEntry
-use STD.FileSystem.Metadata as FileSystemMetadata
-use STD.FileSystem.metadata as metadata
-use STD.FileSystem.canonicalize as canonicalize
-use STD.FileSystem.list as list
-use STD.FileSystem.create_directory as create_directory
-use STD.FileSystem.create_directories as create_directories
-use STD.FileSystem.remove_file as remove_file
-use STD.FileSystem.remove_directory as remove_directory
-use STD.FileSystem.rename as rename
-use STD.FileSystem.copy_file as copy_file
-use STD.FileSystem.set_readonly as set_readonly
-use STD.Path.is_absolute as is_absolute
+use STD.File as Files
+use STD.FileSystem
+use STD.Path
 use STD.System.Error as Error
 
-func metadata_size(value:FileSystemMetadata) int {
+func metadata_size(value:FileSystem.Metadata) int {
     return value.size
 }
 
-func entry_name(value:FileSystemEntry) str {
+func entry_name(value:FileSystem.Entry) str {
     return value.name
 }
 
@@ -61,14 +50,14 @@ func expect_error(result:Result<void, Error>, expected:int) {
 }
 
 func ignore_remove_file(path:str) {
-    match remove_file(path) {
+    match FileSystem.remove_file(path) {
         success => {}
         failure(error) => {}
     }
 }
 
 func ignore_remove_directory(path:str) {
-    match remove_directory(path) {
+    match FileSystem.remove_directory(path) {
         success => {}
         failure(error) => {}
     }
@@ -94,18 +83,18 @@ func main() {
     ignore_remove_directory(z)
     ignore_remove_directory(root)
 
-    require_void(create_directory(root))
-    expect_error(create_directory(root), 2)
-    require_void(create_directories(c))
-    require_void(create_directories(c))
-    require_void(create_directory(z))
+    require_void(FileSystem.create_directory(root))
+    expect_error(FileSystem.create_directory(root), 2)
+    require_void(FileSystem.create_directories(c))
+    require_void(FileSystem.create_directories(c))
+    require_void(FileSystem.create_directory(z))
 
     let bytes:uint8[] = [1, 2, 3]
     let view = @bytes[0:bytes.count()]
-    require_void(write_all(a, view))
-    require_void(write_all(accented, view))
+    require_void(Files.write_all(a, view))
+    require_void(Files.write_all(accented, view))
 
-    match metadata(a) {
+    match FileSystem.metadata(a) {
         failure(error) => { panic("expected file metadata") }
         success(value) => {
             assert(metadata_size(value) == 3, "public metadata type")
@@ -116,7 +105,7 @@ func main() {
             assert(value.size == 3, "file metadata size")
         }
     }
-    match metadata(b) {
+    match FileSystem.metadata(b) {
         failure(error) => { panic("expected directory metadata") }
         success(value) => {
             match value.kind {
@@ -127,7 +116,7 @@ func main() {
         }
     }
 
-    match list(root) {
+    match FileSystem.list(root) {
         failure(error) => { panic("expected filesystem listing") }
         success(entries) => {
             assert(entries.count() == 4, "directory entry count")
@@ -147,40 +136,40 @@ func main() {
         }
     }
 
-    let canonical = required_path(canonicalize(c))
-    assert(required_bool(is_absolute(canonical)), "canonical path is absolute")
+    let canonical = required_path(FileSystem.canonicalize(c))
+    assert(required_bool(Path.is_absolute(canonical)), "canonical path is absolute")
 
-    require_void(copy_file(a, copied, false))
-    expect_error(copy_file(a, copied, false), 2)
-    require_void(copy_file(accented, copied, true))
-    require_void(rename(copied, renamed))
-    expect_error(rename(a, renamed), 2)
-    match metadata(renamed) {
+    require_void(FileSystem.copy_file(a, copied, false))
+    expect_error(FileSystem.copy_file(a, copied, false), 2)
+    require_void(FileSystem.copy_file(accented, copied, true))
+    require_void(FileSystem.rename(copied, renamed))
+    expect_error(FileSystem.rename(a, renamed), 2)
+    match FileSystem.metadata(renamed) {
         failure(error) => { panic("expected copied file metadata") }
         success(value) => { assert(value.size == 3, "copied file size") }
     }
 
-    require_void(set_readonly(renamed, true))
-    match metadata(renamed) {
+    require_void(FileSystem.set_readonly(renamed, true))
+    match FileSystem.metadata(renamed) {
         failure(error) => { panic("expected readonly metadata") }
         success(value) => { assert(value.readonly, "readonly enabled") }
     }
-    require_void(set_readonly(renamed, false))
-    match metadata(renamed) {
+    require_void(FileSystem.set_readonly(renamed, false))
+    match FileSystem.metadata(renamed) {
         failure(error) => { panic("expected writable metadata") }
         success(value) => { assert(!value.readonly, "readonly disabled") }
     }
 
-    expect_error(remove_file(b), 4)
-    expect_error(remove_directory(a), 3)
-    expect_error(remove_directory(root), 5)
-    expect_error(remove_file(missing), 1)
+    expect_error(FileSystem.remove_file(b), 4)
+    expect_error(FileSystem.remove_directory(a), 3)
+    expect_error(FileSystem.remove_directory(root), 5)
+    expect_error(FileSystem.remove_file(missing), 1)
 
-    require_void(remove_file(renamed))
-    require_void(remove_file(a))
-    require_void(remove_file(accented))
-    require_void(remove_directory(c))
-    require_void(remove_directory(b))
-    require_void(remove_directory(z))
-    require_void(remove_directory(root))
+    require_void(FileSystem.remove_file(renamed))
+    require_void(FileSystem.remove_file(a))
+    require_void(FileSystem.remove_file(accented))
+    require_void(FileSystem.remove_directory(c))
+    require_void(FileSystem.remove_directory(b))
+    require_void(FileSystem.remove_directory(z))
+    require_void(FileSystem.remove_directory(root))
 }

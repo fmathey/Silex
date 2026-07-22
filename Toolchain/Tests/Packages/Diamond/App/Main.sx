@@ -1,5 +1,5 @@
-use Left
-use Right
+use Left.Value as Left
+use Right.Value as Right
 
 func main() {
     print(Left.value() + Right.value())

@@ -1,7 +1,4 @@
-use STD.Environment.get as environment_get
-use STD.Environment.set as environment_set
-use STD.Environment.remove as environment_remove
-use STD.Environment.variables as environment_variables
+use STD.Environment
 use STD.System.Error as Error
 use STD.Text.UTF8.bytes as utf8_bytes
 
@@ -46,37 +43,37 @@ func bytes_before_or_equal(left:str, right:str) bool {
 
 func restore(name:str, value:str?) {
     if let present = value {
-        require_void(environment_set(name, present))
+        require_void(Environment.set(name, present))
     } else {
-        require_void(environment_remove(name))
+        require_void(Environment.remove(name))
     }
 }
 
 func main() {
     let upper = "SILEX_STD_ENVIRONMENT_SMOKE_7F3A"
     let lower = "silex_std_environment_smoke_7f3a"
-    let original_upper = required_optional(environment_get(upper))
-    let original_lower = required_optional(environment_get(lower))
+    let original_upper = required_optional(Environment.get(upper))
+    let original_lower = required_optional(Environment.get(lower))
 
-    require_void(environment_remove(upper))
-    require_void(environment_remove(lower))
-    assert(required_optional(environment_get(upper)) == null, "removed variable absent")
+    require_void(Environment.remove(upper))
+    require_void(Environment.remove(lower))
+    assert(required_optional(Environment.get(upper)) == null, "removed variable absent")
 
-    require_void(environment_set(upper, ""))
-    assert(required_optional(environment_get(upper)) == "", "empty value remains present")
-    require_void(environment_set(upper, "one"))
-    assert(required_optional(environment_get(upper)) == "one", "created variable")
+    require_void(Environment.set(upper, ""))
+    assert(required_optional(Environment.get(upper)) == "", "empty value remains present")
+    require_void(Environment.set(upper, "one"))
+    assert(required_optional(Environment.get(upper)) == "one", "created variable")
 
-    let folds_case = required_optional(environment_get(lower)) == "one"
-    require_void(environment_set(lower, "two"))
+    let folds_case = required_optional(Environment.get(lower)) == "one"
+    require_void(Environment.set(lower, "two"))
     if folds_case {
-        assert(required_optional(environment_get(upper)) == "two", "Windows name comparison")
+        assert(required_optional(Environment.get(upper)) == "two", "Windows name comparison")
     } else {
-        assert(required_optional(environment_get(upper)) == "one", "POSIX name comparison")
-        assert(required_optional(environment_get(lower)) == "two", "POSIX distinct case")
+        assert(required_optional(Environment.get(upper)) == "one", "POSIX name comparison")
+        assert(required_optional(Environment.get(lower)) == "two", "POSIX distinct case")
     }
 
-    match environment_variables() {
+    match Environment.variables() {
         failure(error) => { panic(error.detail) }
         success(values) => {
             var index = 1
@@ -90,12 +87,12 @@ func main() {
         }
     }
 
-    expect_invalid(environment_set("", "value"))
-    expect_invalid(environment_set("BAD=NAME", "value"))
-    expect_invalid(environment_set("BAD_VALUE", "bad\0value"))
+    expect_invalid(Environment.set("", "value"))
+    expect_invalid(Environment.set("BAD=NAME", "value"))
+    expect_invalid(Environment.set("BAD_VALUE", "bad\0value"))
 
-    require_void(environment_remove(upper))
-    require_void(environment_remove(lower))
+    require_void(Environment.remove(upper))
+    require_void(Environment.remove(lower))
     restore(upper, original_upper)
     restore(lower, original_lower)
 }

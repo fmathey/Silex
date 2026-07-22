@@ -1,4 +1,4 @@
-use Math.Vec3
+use Math.Vectors.Vec3
 
 public struct Ray {
     var origin:Vec3

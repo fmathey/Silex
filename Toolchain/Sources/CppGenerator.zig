@@ -1527,7 +1527,7 @@ pub fn generateWithSources(
         }
         if (structure.is_owner) try output.appendSlice(allocator, "    bool silexOwnsResource = true;\n");
         if ((structure.is_class and structure.constructors.len == 0 and structure.implicit_constructor_available) or
-            (structure.is_noncopyable and !structure.is_native_resource) or
+            (structure.is_noncopyable and !structure.is_native_resource and structure.constructors.len == 0) or
             (is_native_return and !structure.is_class and structure.constructors.len == 0))
         {
             try output.appendSlice(allocator, "\n    ");
@@ -4788,9 +4788,14 @@ fn generateExpression(allocator: Allocator, output: *std.ArrayList(u8), expressi
             try output.append(allocator, ')');
         },
         .class_initializer => |initializer| {
-            try output.appendSlice(allocator, "silexMake<");
-            try output.appendSlice(allocator, initializer.generated_name);
-            try output.appendSlice(allocator, ">(");
+            if (isClassType(expression.type)) {
+                try output.appendSlice(allocator, "silexMake<");
+                try output.appendSlice(allocator, initializer.generated_name);
+                try output.appendSlice(allocator, ">(");
+            } else {
+                try output.appendSlice(allocator, initializer.generated_name);
+                try output.append(allocator, '(');
+            }
             for (initializer.arguments, 0..) |argument, index| {
                 if (index != 0) try output.appendSlice(allocator, ", ");
                 try generateExpression(allocator, output, argument);

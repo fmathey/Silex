@@ -17,11 +17,12 @@ let origin = Position()
 let position = Position(x:10)
 ```
 
-An initializer uses parentheses and named fields in any order. A final comma is
-allowed, including in a multiline initializer, and a field value may itself be
-another initializer. `Position()` supplies no field explicitly. Omitted fields
-use an explicit default first, then the intrinsic value of their type. Unknown,
-repeated, and incompatible field values are rejected.
+Without a custom constructor, an initializer uses parentheses and named fields
+in any order. A final comma is allowed, including in a multiline initializer,
+and a field value may itself be another initializer. `Position()` supplies no
+field explicitly. Omitted fields use an explicit default first, then the
+intrinsic value of their type. Unknown, repeated, and incompatible field values
+are rejected.
 
 If a structure declares at least one private instance field, its complete
 named initializer is private too. Only methods and static methods declared
@@ -47,18 +48,68 @@ A private field remains part of the value's layout, copying, equality, and
 destruction. A private static field does not close the instance initializer.
 Extensions never gain private access, including inside the declaring module.
 
-Arguments are either all positional or all named. Positional arguments invoke a
-function or callable value and cannot initialize a structure; named fields
-select a structure and are not function arguments. For an empty invocation, a
-visible callable local has priority; otherwise the module declaration determines
-whether `Name()` is a function call or a structure initializer. The same rules
-apply to qualified names such as `Geometry.Position(x:10)`, without relying on
-letter case.
+Arguments are either all positional or all named. Positional arguments select a
+custom structure constructor when the type declares `init`; named fields select
+the aggregate initializer when it does not. They cannot be mixed. For an empty
+invocation, a visible callable local has priority; otherwise the module
+declaration determines whether `Name()` is a function call or a structure
+initializer. The same rules apply to qualified names such as
+`Geometry.Position(x:10)`, without relying on letter case.
 
 Explicit defaults are currently limited to primitive literals and structure
 initializers; they cannot refer to `self`, another field, a variable, or a
 function. Braces delimit declarations and blocks; `Position { x:10 }` is not an
 initializer.
+
+## Constructors
+
+`init` declares a structure constructor. It has no `func` prefix or return type
+and receives `self` implicitly. Constructors are overloadable by their
+positional parameter signature:
+
+```sx
+struct Position {
+    private let x:int
+    private let y:int
+
+    init(x:int, y:int) {
+        self.x = x
+        self.y = y
+    }
+
+    init(value:int) {
+        self.x = value
+        self.y = value
+    }
+}
+
+let point = Position(10, 5)
+let uniform = Position(1)
+```
+
+A structure constructor is public without a marker or with explicit `public`.
+`private init` reserves construction to methods and static methods declared
+directly in the structure, which can expose selected factories. `protected` and
+`: super(...)` are invalid because structures do not support inheritance.
+
+Declaring any `init` closes the named aggregate initializer completely. Every
+construction must then select a visible constructor; an unmatched call never
+falls back to fields, and `Position(x:10, y:5)` is rejected in the example
+above. A structure without `init` keeps its named initializer unchanged.
+
+Before the constructor body, every `var` field receives its declared default or
+its type's intrinsic value when one exists. A `var` field with neither must be
+assigned on every normal path. A `let` field with a declared default is already
+initialized and cannot be assigned in the body. A `let` field without a default
+starts uninitialized even when its type has an intrinsic value; every
+constructor must assign it exactly once on every normal path. An uninitialized
+field cannot be read, and `self` cannot escape or receive an instance-method
+call until every field is initialized.
+
+Custom construction does not change value semantics. A structure remains
+copyable and comparable under its ordinary recursive rules. Declaring `drop`
+continues to be the nominal operation that makes a structure a unique,
+noncopyable resource, independently of whether it declares `init`.
 
 ## Generic structures
 
@@ -281,7 +332,8 @@ public struct File {
 ```
 
 For a public owner structure, its fields and named aggregate initializer are
-visible only to source units in the declaring module. Its methods and static
+visible in the declaring file and in a same-package sibling file that directly
+uses its namespace. This access does not propagate to another file. Its methods and static
 methods retain the ordinary public visibility of structure methods, so an
 external caller constructs `File` through `File.open` and reads it through
 `get_path`. An extension has the same storage rights as an external caller,

@@ -2,8 +2,8 @@ use NK.Window
 
 public use NK.Window.Session as WindowSession
 public use NK.Window.Pair as WindowPair
-public use NK.Window.IntPair as WindowIntPair
-public use NK.Window.Integers as WindowIntegers
+public use Window.Pair<int> as WindowIntPair
+public use int[] as WindowIntegers
 public use NK.Window.Status as WindowStatus
 public use NK.Window.WireStatus as WindowWireStatus
 public use NK.Window.create_session as raw_create

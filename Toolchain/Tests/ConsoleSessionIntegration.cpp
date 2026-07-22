@@ -6,7 +6,7 @@
 #include <stdexcept>
 #include <string>
 
-struct SilexNative_STD_Console_NativeKeyEvent {
+struct SilexNative_STD_Console_Session_NativeKeyEvent {
     std::int64_t code;
     bool shift;
     bool control;
@@ -20,12 +20,12 @@ struct SilexNative_STD_Console_NativeKeyEvent {
 
 #include <windows.h>
 
-extern "C" std::int64_t silexNative_STD_Console_native_session_create();
-extern "C" void silexNative_STD_Console_native_session_close(std::int64_t handle);
-extern "C" bool silexNative_STD_Console_native_session_is_open(std::int64_t handle);
-extern "C" void silexNative_STD_Console_native_session_read(
+extern "C" std::int64_t silexNative_STD_Console_Session_native_session_create();
+extern "C" void silexNative_STD_Console_Session_native_session_close(std::int64_t handle);
+extern "C" bool silexNative_STD_Console_Session_native_session_is_open(std::int64_t handle);
+extern "C" void silexNative_STD_Console_Session_native_session_read(
     std::int64_t handle,
-    SilexNative_STD_Console_NativeKeyEvent* output
+    SilexNative_STD_Console_Session_NativeKeyEvent* output
 );
 extern "C" bool silexNative_STD_Console_read_line(
     char** outputBytes,
@@ -48,31 +48,31 @@ int main() {
     DWORD outputMode = 0;
     if (GetConsoleMode(input, &inputMode) == 0 ||
         GetConsoleMode(output, &outputMode) == 0) return 0;
-    const std::int64_t handle = silexNative_STD_Console_native_session_create();
+    const std::int64_t handle = silexNative_STD_Console_Session_native_session_create();
     DWORD rawInput = 0;
     bool valid = GetConsoleMode(input, &rawInput) != 0;
     valid = valid && (rawInput & (ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT |
         ENABLE_PROCESSED_INPUT)) == 0;
     valid = valid && failsWith("Console.Session.create", [] {
-        static_cast<void>(silexNative_STD_Console_native_session_create());
+        static_cast<void>(silexNative_STD_Console_Session_native_session_create());
     });
     valid = valid && failsWith("Console.read_line", [] {
         char* bytes = nullptr;
         std::int64_t length = 0;
         static_cast<void>(silexNative_STD_Console_read_line(&bytes, &length));
     });
-    silexNative_STD_Console_native_session_close(handle);
+    silexNative_STD_Console_Session_native_session_close(handle);
     DWORD restoredInput = 0;
     DWORD restoredOutput = 0;
     valid = valid && GetConsoleMode(input, &restoredInput) != 0 &&
         GetConsoleMode(output, &restoredOutput) != 0;
     valid = valid && restoredInput == inputMode && restoredOutput == outputMode;
-    valid = valid && !silexNative_STD_Console_native_session_is_open(handle);
+    valid = valid && !silexNative_STD_Console_Session_native_session_is_open(handle);
     valid = valid && failsWith("Console.Session.read_key", [handle] {
-        SilexNative_STD_Console_NativeKeyEvent output{};
-        silexNative_STD_Console_native_session_read(handle, &output);
+        SilexNative_STD_Console_Session_NativeKeyEvent output{};
+        silexNative_STD_Console_Session_native_session_read(handle, &output);
     });
-    silexNative_STD_Console_native_session_close(handle);
+    silexNative_STD_Console_Session_native_session_close(handle);
     return valid ? 0 : 10;
 }
 
@@ -96,14 +96,14 @@ namespace {
 
 // -----------------------------------------------------------------------------
 
-extern "C" std::int64_t silexNative_STD_Console_native_session_create();
-extern "C" void silexNative_STD_Console_native_session_close(std::int64_t handle);
-extern "C" bool silexNative_STD_Console_native_session_is_open(std::int64_t handle);
-extern "C" void silexNative_STD_Console_native_session_read(
+extern "C" std::int64_t silexNative_STD_Console_Session_native_session_create();
+extern "C" void silexNative_STD_Console_Session_native_session_close(std::int64_t handle);
+extern "C" bool silexNative_STD_Console_Session_native_session_is_open(std::int64_t handle);
+extern "C" void silexNative_STD_Console_Session_native_session_read(
     std::int64_t handle,
-    SilexNative_STD_Console_NativeKeyEvent* output
+    SilexNative_STD_Console_Session_NativeKeyEvent* output
 );
-extern "C" void silexNative_STD_Console_native_session_enter_alternate_screen(
+extern "C" void silexNative_STD_Console_Session_native_session_enter_alternate_screen(
     std::int64_t handle
 );
 extern "C" bool silexNative_STD_Console_read_line(
@@ -132,10 +132,10 @@ int testNativeContract() {
     const int savedOutput = dup(STDOUT_FILENO);
     if (savedInput < 0 || savedOutput < 0 || dup2(slave, STDIN_FILENO) < 0 ||
         dup2(slave, STDOUT_FILENO) < 0 || tcgetattr(slave, &original) != 0) return 21;
-    const std::int64_t handle = silexNative_STD_Console_native_session_create();
-    bool valid = silexNative_STD_Console_native_session_is_open(handle);
+    const std::int64_t handle = silexNative_STD_Console_Session_native_session_create();
+    bool valid = silexNative_STD_Console_Session_native_session_is_open(handle);
     const bool secondRejected = failsWith("Console.Session.create", [] {
-        static_cast<void>(silexNative_STD_Console_native_session_create());
+        static_cast<void>(silexNative_STD_Console_Session_native_session_create());
     });
     const bool lineRejected = failsWith("Console.read_line", [] {
         char* bytes = nullptr;
@@ -146,19 +146,19 @@ int testNativeContract() {
         silexNative_STD_Console_wait_for_enter();
     });
     valid = valid && secondRejected && lineRejected && waitRejected;
-    silexNative_STD_Console_native_session_close(handle);
-    valid = valid && !silexNative_STD_Console_native_session_is_open(handle);
+    silexNative_STD_Console_Session_native_session_close(handle);
+    valid = valid && !silexNative_STD_Console_Session_native_session_is_open(handle);
     const bool alternateRejected = failsWith(
         "Console.Session.enter_alternate_screen",
         [handle] {
-        silexNative_STD_Console_native_session_enter_alternate_screen(handle);
+        silexNative_STD_Console_Session_native_session_enter_alternate_screen(handle);
     });
     const bool readRejected = failsWith("Console.Session.read_key", [handle] {
-        SilexNative_STD_Console_NativeKeyEvent output{};
-        silexNative_STD_Console_native_session_read(handle, &output);
+        SilexNative_STD_Console_Session_NativeKeyEvent output{};
+        silexNative_STD_Console_Session_native_session_read(handle, &output);
     });
     valid = valid && alternateRejected && readRejected;
-    silexNative_STD_Console_native_session_close(handle);
+    silexNative_STD_Console_Session_native_session_close(handle);
     termios restored{};
     valid = valid && tcgetattr(slave, &restored) == 0 && sameMode(original, restored);
     const bool descriptorsRestored = dup2(savedInput, STDIN_FILENO) >= 0 &&

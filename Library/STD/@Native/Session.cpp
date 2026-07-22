@@ -25,7 +25,7 @@
 #include <SilexNative/STD.h>
 #endif
 
-struct SilexNative_STD_Console_NativeKeyEvent;
+struct SilexNative_STD_Console_Session_NativeKeyEvent;
 
 namespace {
 
@@ -41,38 +41,38 @@ struct NativeKeyEventOutput {
 
 #if defined(SILEX_NATIVE_TRANSPORT_SILEXNATIVE_STD_CONSOLE_NATIVEKEYEVENT)
 static_assert(
-    sizeof(NativeKeyEventOutput) == sizeof(SilexNative_STD_Console_NativeKeyEvent)
+    sizeof(NativeKeyEventOutput) == sizeof(SilexNative_STD_Console_Session_NativeKeyEvent)
 );
 static_assert(
-    alignof(NativeKeyEventOutput) == alignof(SilexNative_STD_Console_NativeKeyEvent)
+    alignof(NativeKeyEventOutput) == alignof(SilexNative_STD_Console_Session_NativeKeyEvent)
 );
 static_assert(
     offsetof(NativeKeyEventOutput, code) ==
-    offsetof(SilexNative_STD_Console_NativeKeyEvent, code)
+    offsetof(SilexNative_STD_Console_Session_NativeKeyEvent, code)
 );
 static_assert(
     offsetof(NativeKeyEventOutput, shift) ==
-    offsetof(SilexNative_STD_Console_NativeKeyEvent, shift)
+    offsetof(SilexNative_STD_Console_Session_NativeKeyEvent, shift)
 );
 static_assert(
     offsetof(NativeKeyEventOutput, control) ==
-    offsetof(SilexNative_STD_Console_NativeKeyEvent, control)
+    offsetof(SilexNative_STD_Console_Session_NativeKeyEvent, control)
 );
 static_assert(
     offsetof(NativeKeyEventOutput, alt) ==
-    offsetof(SilexNative_STD_Console_NativeKeyEvent, alt)
+    offsetof(SilexNative_STD_Console_Session_NativeKeyEvent, alt)
 );
 static_assert(
     offsetof(NativeKeyEventOutput, number) ==
-    offsetof(SilexNative_STD_Console_NativeKeyEvent, number)
+    offsetof(SilexNative_STD_Console_Session_NativeKeyEvent, number)
 );
 static_assert(
     offsetof(NativeKeyEventOutput, textBytes) ==
-    offsetof(SilexNative_STD_Console_NativeKeyEvent, text_bytes)
+    offsetof(SilexNative_STD_Console_Session_NativeKeyEvent, text_bytes)
 );
 static_assert(
     offsetof(NativeKeyEventOutput, textLength) ==
-    offsetof(SilexNative_STD_Console_NativeKeyEvent, text_length)
+    offsetof(SilexNative_STD_Console_Session_NativeKeyEvent, text_length)
 );
 #endif
 
@@ -702,22 +702,22 @@ extern "C" bool silexConsoleSessionIsActive() {
     return sessionActive.load();
 }
 
-extern "C" std::int64_t silexNative_STD_Console_native_session_create() {
+extern "C" std::int64_t silexNative_STD_Console_Session_native_session_create() {
     return createSession();
 }
 
-extern "C" void silexNative_STD_Console_native_session_close(std::int64_t handle) {
+extern "C" void silexNative_STD_Console_Session_native_session_close(std::int64_t handle) {
     if (!session.open || session.handle != handle) return;
     restoreSession();
 }
 
-extern "C" bool silexNative_STD_Console_native_session_is_open(std::int64_t handle) {
+extern "C" bool silexNative_STD_Console_Session_native_session_is_open(std::int64_t handle) {
     return session.open && session.handle == handle;
 }
 
-extern "C" void silexNative_STD_Console_native_session_read(
+extern "C" void silexNative_STD_Console_Session_native_session_read(
     std::int64_t handle,
-    SilexNative_STD_Console_NativeKeyEvent* output
+    SilexNative_STD_Console_Session_NativeKeyEvent* output
 ) {
     requireOpen(handle, "read_key");
 #if defined(_WIN32)
@@ -728,10 +728,10 @@ extern "C" void silexNative_STD_Console_native_session_read(
     writeEvent(event, "read_key", reinterpret_cast<NativeKeyEventOutput*>(output));
 }
 
-extern "C" bool silexNative_STD_Console_native_session_poll(
+extern "C" bool silexNative_STD_Console_Session_native_session_poll(
     std::int64_t handle,
     std::int64_t timeoutMilliseconds,
-    SilexNative_STD_Console_NativeKeyEvent* output
+    SilexNative_STD_Console_Session_NativeKeyEvent* output
 ) {
     requireOpen(handle, "poll_key");
     if (timeoutMilliseconds < 0) fail("poll_key", "timeout must be non-negative");
@@ -745,7 +745,7 @@ extern "C" bool silexNative_STD_Console_native_session_poll(
     return true;
 }
 
-extern "C" void silexNative_STD_Console_native_session_enter_alternate_screen(
+extern "C" void silexNative_STD_Console_Session_native_session_enter_alternate_screen(
     std::int64_t handle
 ) {
     requireOpen(handle, "enter_alternate_screen");
@@ -754,7 +754,7 @@ extern "C" void silexNative_STD_Console_native_session_enter_alternate_screen(
     session.alternateScreen = true;
 }
 
-extern "C" void silexNative_STD_Console_native_session_leave_alternate_screen(
+extern "C" void silexNative_STD_Console_Session_native_session_leave_alternate_screen(
     std::int64_t handle
 ) {
     requireOpen(handle, "leave_alternate_screen");

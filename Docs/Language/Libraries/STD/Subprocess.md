@@ -1,5 +1,14 @@
 # Subprocess
 
+```sx
+use STD.Subprocess
+use STD.System.Error as Error
+
+func execute(command:Subprocess.Command) Result<Subprocess.Output, Error> {
+    return Subprocess.run(command)
+}
+```
+
 `STD.Subprocess.run` launches the exact executable in `Command` without a shell
 and without searching `PATH`. Arguments are passed as literal strings; Windows
 uses quoting that round-trips through the platform command-line parser. A

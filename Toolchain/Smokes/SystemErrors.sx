@@ -1,33 +1,32 @@
-use STD.System.Error
-use STD.System.ErrorKind
+use STD.System
 
-func propagate(error:Error) Result<void, Error> {
-    try Result<void, Error>.failure(error)
-    return Result<void, Error>.success()
+func propagate(error:System.Error) Result<void, System.Error> {
+    try Result<void, System.Error>.failure(error)
+    return Result<void, System.Error>.success()
 }
 
 func main() {
     let kinds = [
-        ErrorKind.not_found(), ErrorKind.already_exists(),
-        ErrorKind.permission_denied(), ErrorKind.invalid_input(),
-        ErrorKind.invalid_data(), ErrorKind.name_too_long(),
-        ErrorKind.unexpected_end(), ErrorKind.limit_exceeded(),
-        ErrorKind.not_directory(), ErrorKind.is_directory(),
-        ErrorKind.directory_not_empty(), ErrorKind.resource_busy(),
-        ErrorKind.resource_exhausted(), ErrorKind.too_many_open_files(),
-        ErrorKind.read_only_file_system(), ErrorKind.cross_device(),
-        ErrorKind.interrupted(), ErrorKind.would_block(),
-        ErrorKind.timed_out(), ErrorKind.broken_pipe(),
-        ErrorKind.message_too_large(), ErrorKind.address_in_use(),
-        ErrorKind.address_unavailable(), ErrorKind.network_unreachable(),
-        ErrorKind.host_unreachable(), ErrorKind.connection_refused(),
-        ErrorKind.connection_aborted(), ErrorKind.connection_reset(),
-        ErrorKind.not_connected(), ErrorKind.unsupported(),
-        ErrorKind.other()
+        System.ErrorKind.not_found(), System.ErrorKind.already_exists(),
+        System.ErrorKind.permission_denied(), System.ErrorKind.invalid_input(),
+        System.ErrorKind.invalid_data(), System.ErrorKind.name_too_long(),
+        System.ErrorKind.unexpected_end(), System.ErrorKind.limit_exceeded(),
+        System.ErrorKind.not_directory(), System.ErrorKind.is_directory(),
+        System.ErrorKind.directory_not_empty(), System.ErrorKind.resource_busy(),
+        System.ErrorKind.resource_exhausted(), System.ErrorKind.too_many_open_files(),
+        System.ErrorKind.read_only_file_system(), System.ErrorKind.cross_device(),
+        System.ErrorKind.interrupted(), System.ErrorKind.would_block(),
+        System.ErrorKind.timed_out(), System.ErrorKind.broken_pipe(),
+        System.ErrorKind.message_too_large(), System.ErrorKind.address_in_use(),
+        System.ErrorKind.address_unavailable(), System.ErrorKind.network_unreachable(),
+        System.ErrorKind.host_unreachable(), System.ErrorKind.connection_refused(),
+        System.ErrorKind.connection_aborted(), System.ErrorKind.connection_reset(),
+        System.ErrorKind.not_connected(), System.ErrorKind.unsupported(),
+        System.ErrorKind.other()
     ]
     assert(kinds.count() == 31, "every System.ErrorKind is constructible")
-    let error = Error(
-        kind:ErrorKind.not_found(),
+    let error = System.Error(
+        kind:System.ErrorKind.not_found(),
         operation:"file.open",
         subject:"missing.sx",
         detail:"file not found"
@@ -48,8 +47,8 @@ func main() {
             }
         }
     }
-    let without_subject = Error(
-        kind:ErrorKind.other(),
+    let without_subject = System.Error(
+        kind:System.ErrorKind.other(),
         operation:"system.test",
         subject:null,
         detail:"unknown native error"

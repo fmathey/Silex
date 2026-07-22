@@ -35,13 +35,22 @@ const ManifestModule = struct {
 pub fn load(allocator: Allocator, io: Io, input_path: []const u8) !Project {
     if (std.mem.endsWith(u8, input_path, ".sx")) {
         const filename = std.fs.path.basename(input_path);
+        const namespace = filename[0 .. filename.len - 3];
+        if (!validModuleName(namespace)) {
+            std.debug.print("silex: source filename '{s}' does not form a valid namespace\n", .{filename});
+            return error.Reported;
+        }
+        var modules: std.ArrayList(Module) = .empty;
+        try appendModuleParents(allocator, &modules, namespace);
+        const target_module = modules.items.len;
+        try modules.append(allocator, .{
+            .name = namespace,
+            .sources = try allocator.dupe([]const u8, &.{input_path}),
+        });
         return .{
-            .program_name = filename[0 .. filename.len - 3],
-            .target_module = 0,
-            .modules = try allocator.dupe(Module, &.{.{
-                .name = filename[0 .. filename.len - 3],
-                .sources = try allocator.dupe([]const u8, &.{input_path}),
-            }}),
+            .program_name = lastSegment(namespace),
+            .target_module = target_module,
+            .modules = try modules.toOwnedSlice(allocator),
             .single_file = true,
         };
     }
@@ -68,40 +77,30 @@ pub fn load(allocator: Allocator, io: Io, input_path: []const u8) !Project {
     const manifest_dir = inputDirectory(input_path);
     var modules: std.ArrayList(Module) = .empty;
     var target_module: ?usize = null;
-    for (manifest.modules) |module| {
-        if (!validModuleName(module.name) or module.sources.len == 0) {
-            std.debug.print("silex: module '{s}' requires a valid name and at least one source\n", .{module.name});
+    for (manifest.modules) |module_group| {
+        if ((module_group.name.len != 0 and !validModuleName(module_group.name)) or module_group.sources.len == 0) {
+            std.debug.print("silex: module prefix '{s}' requires a valid name and at least one source\n", .{module_group.name});
             return error.Reported;
         }
-        if (isReservedModule(module.name)) {
-            std.debug.print("silex: module '{s}' is reserved for the distributed library\n", .{module.name});
-            return error.Reported;
-        }
-        if (findModule(modules.items, module.name)) |existing_index| {
-            if (modules.items[existing_index].sources.len != 0) {
-                std.debug.print("silex: module '{s}' has multiple providers\n", .{module.name});
-                return error.Reported;
-            }
-        }
-        var sources: std.ArrayList([]const u8) = .empty;
-        var unit_names: std.ArrayList([]const u8) = .empty;
-        for (module.sources) |relative_source| {
+        for (module_group.sources) |relative_source| {
             if (!std.mem.endsWith(u8, relative_source, ".sx")) {
                 std.debug.print("silex: module source '{s}' must use the .sx extension\n", .{relative_source});
                 return error.Reported;
             }
             const basename = std.fs.path.basename(relative_source);
-            const unit_name = basename[0 .. basename.len - ".sx".len];
-            for (unit_names.items) |existing_name| {
-                if (std.mem.eql(u8, existing_name, unit_name)) {
-                    std.debug.print("silex: module '{s}' has multiple source units named '{s}'\n", .{
-                        module.name,
-                        unit_name,
-                    });
-                    return error.Reported;
-                }
+            const stem = basename[0 .. basename.len - ".sx".len];
+            if (!validModuleName(stem)) {
+                std.debug.print("silex: source filename '{s}' does not form a valid namespace suffix\n", .{basename});
+                return error.Reported;
             }
-            try unit_names.append(allocator, unit_name);
+            const module_name = if (module_group.name.len == 0)
+                try allocator.dupe(u8, stem)
+            else
+                try std.fmt.allocPrint(allocator, "{s}.{s}", .{ module_group.name, stem });
+            if (isReservedModule(module_name)) {
+                std.debug.print("silex: module '{s}' is reserved for the distributed library\n", .{module_name});
+                return error.Reported;
+            }
             const source_path = try std.fs.path.join(allocator, &.{ manifest_dir, relative_source });
             for (modules.items) |existing| for (existing.sources) |existing_source| {
                 if (std.mem.eql(u8, existing_source, source_path)) {
@@ -109,33 +108,30 @@ pub fn load(allocator: Allocator, io: Io, input_path: []const u8) !Project {
                     return error.Reported;
                 }
             };
-            for (sources.items) |existing_source| {
-                if (std.mem.eql(u8, existing_source, source_path)) {
-                    std.debug.print("silex: source '{s}' is listed more than once\n", .{source_path});
+            try appendModuleParents(allocator, &modules, module_name);
+            const module_sources = try allocator.dupe([]const u8, &.{source_path});
+            const module_index = if (findModule(modules.items, module_name)) |existing_index| block: {
+                if (modules.items[existing_index].sources.len != 0) {
+                    std.debug.print("silex: namespace '{s}' has multiple source providers\n", .{module_name});
                     return error.Reported;
                 }
-            }
-            try sources.append(allocator, source_path);
+                modules.items[existing_index].sources = module_sources;
+                break :block existing_index;
+            } else block: {
+                const index = modules.items.len;
+                try modules.append(allocator, .{ .name = module_name, .sources = module_sources });
+                break :block index;
+            };
+            if (std.mem.eql(u8, module_name, manifest.target)) target_module = module_index;
         }
-        try appendModuleParents(allocator, &modules, module.name);
-        const module_sources = try sources.toOwnedSlice(allocator);
-        const module_index = if (findModule(modules.items, module.name)) |existing_index| block: {
-            modules.items[existing_index].sources = module_sources;
-            break :block existing_index;
-        } else block: {
-            const index = modules.items.len;
-            try modules.append(allocator, .{ .name = module.name, .sources = module_sources });
-            break :block index;
-        };
-        if (std.mem.eql(u8, module.name, manifest.target)) target_module = module_index;
     }
     if (target_module == null) {
         std.debug.print("silex: target module '{s}' has no provider\n", .{manifest.target});
         return error.Reported;
     }
-    const program_name = std.fs.path.extension(manifest.target);
+    const program_name = lastSegment(manifest.target);
     return .{
-        .program_name = if (program_name.len > 0) program_name[1..] else manifest.target,
+        .program_name = program_name,
         .target_module = target_module.?,
         .modules = try modules.toOwnedSlice(allocator),
         .single_file = false,
@@ -189,9 +185,17 @@ fn isReservedRoot(name: []const u8, root: []const u8) bool {
         (std.mem.startsWith(u8, name, root) and name.len > root.len and name[root.len] == '.');
 }
 
+fn lastSegment(path: []const u8) []const u8 {
+    const separator = std.mem.lastIndexOfScalar(u8, path, '.') orelse return path;
+    return path[separator + 1 ..];
+}
+
 test "validate logical module names" {
     try std.testing.expect(validModuleName("NK.Window"));
+    try std.testing.expect(validModuleName("Console.Session"));
     try std.testing.expect(!validModuleName("NK..Window"));
+    try std.testing.expect(!validModuleName("Console."));
+    try std.testing.expect(!validModuleName("@Native.Runtime"));
     try std.testing.expect(!validModuleName("2D.Window"));
 }
 
@@ -212,4 +216,29 @@ test "module parents are inferred from dotted manifest names" {
     try std.testing.expectEqualStrings("NK", modules.items[0].name);
     try std.testing.expectEqualStrings("NK.Rendering", modules.items[1].name);
     try std.testing.expectEqual(@as(usize, 0), modules.items[0].sources.len);
+}
+
+test "manifest prefixes append simple and dotted source stems" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "Main.sx", .data = "func main() {}\n" });
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "Console.Session.sx", .data = "" });
+    try temporary.dir.writeFile(std.testing.io, .{
+        .sub_path = "project.json",
+        .data =
+        \\{"target":"App.Main","modules":[
+        \\  {"name":"App","sources":["Main.sx"]},
+        \\  {"name":"Library","sources":["Console.Session.sx"]}
+        \\]}
+        ,
+    });
+    const manifest_path = try std.fs.path.join(allocator, &.{ ".zig-cache", "tmp", &temporary.sub_path, "project.json" });
+    const project = try load(allocator, std.testing.io, manifest_path);
+    try std.testing.expectEqualStrings("App.Main", project.modules[project.target_module].name);
+    try std.testing.expect(findModule(project.modules, "Library.Console") != null);
+    try std.testing.expect(findModule(project.modules, "Library.Console.Session") != null);
 }

@@ -1,23 +1,19 @@
-use STD.Network.Endpoint as Endpoint
-use STD.Network.IpAddress as IpAddress
-use STD.Network.TCP.close
-use STD.Network.TCP.listen
-use STD.Network.TCP as TCP
-use STD.Network.TCP.local_endpoint
+use STD.Network
+use STD.Network.TCP
 use STD.System.Error as Error
 
 func main() {
-    let endpoint = Endpoint(address:IpAddress.ipv4([127,0,0,1]),port:0,scope_id:0)
-    var listener = opened(listen(endpoint,8))
-    match local_endpoint(listener) {
+    let endpoint = Network.Endpoint(address:Network.IpAddress.ipv4([127,0,0,1]),port:0,scope_id:0)
+    var listener = opened(TCP.listen(endpoint,8))
+    match TCP.local_endpoint(listener) {
         failure(error) => { panic(error.detail) }
         success(local) => { assert(local.port > 0,"ephemeral TCP port") }
     }
-    match close(move listener) {
+    match TCP.close(move listener) {
         success => {}
         failure(error) => { panic(error.detail) }
     }
-    match listen(endpoint,0) {
+    match TCP.listen(endpoint,0) {
         success(value) => { panic("invalid backlog") }
         failure(error) => {}
     }

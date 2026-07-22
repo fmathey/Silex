@@ -1,7 +1,7 @@
 {
-  "target": "Lib",
+  "target": "Lib.Item",
   "modules": [
-    { "name": "Lib", "sources": ["First.sx"] },
-    { "name": "Lib", "sources": ["Second.sx"] }
+    { "name": "Lib", "sources": ["First/Item.sx"] },
+    { "name": "Lib", "sources": ["Second/Item.sx"] }
   ]
 }

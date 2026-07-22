@@ -1,9 +1,10 @@
 # Path
 
 ```sx
-use STD.Path.Path
-use STD.Path.normalize
-use STD.Path.join
+use STD.Path as Path
+
+let normalized = Path.normalize("project/./Sources")
+let source = Path.join("project", "Sources/Main.sx")
 ```
 
 `Path` is a transparent alias of `str`, not a distinct runtime value. Every

@@ -1,0 +1,3 @@
+public func Library() int {
+    return 40
+}

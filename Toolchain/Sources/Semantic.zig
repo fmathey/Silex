@@ -1305,8 +1305,13 @@ pub const Analyzer = struct {
                     try parameter_stored_values.append(self.allocator, stored);
                 }
                 for (constructors.items) |existing| {
-                    if (sameCallableShape(existing.parameter_types, parameter_types.items))
-                        return self.fail(ast_constructor.position, "constructor 'init' with this callable shape is already declared in this class");
+                    if (sameCallableShape(existing.parameter_types, parameter_types.items)) return self.fail(
+                        ast_constructor.position,
+                        if (ast_structure.is_class)
+                            "constructor 'init' with this callable shape is already declared in this class"
+                        else
+                            "constructor 'init' with this callable shape is already declared in this struct",
+                    );
                 }
                 try constructors.append(self.allocator, .{
                     .parameter_types = try parameter_types.toOwnedSlice(self.allocator),
@@ -1411,7 +1416,10 @@ pub const Analyzer = struct {
                 const message = try std.fmt.allocPrint(self.allocator, "type '{s}' is already declared", .{ast_structure.name});
                 return self.fail(ast_structure.name_position, message);
             }
-            const native_module_name = if (ast_structure.is_native_resource) moduleName(ast_structure.name) else null;
+            const native_module_name = if (ast_structure.is_native_resource)
+                ast_structure.module_name orelse moduleName(ast_structure.name)
+            else
+                null;
             if (ast_structure.is_native_resource) {
                 const module_name = native_module_name orelse return self.fail(
                     ast_structure.position,
@@ -1725,7 +1733,10 @@ pub const Analyzer = struct {
         for (ast_functions, 0..) |ast_function, index| {
             const is_main = std.mem.eql(u8, ast_function.name, "main");
             if (is_main) main_count += 1;
-            const native_module_name = if (ast_function.is_native) moduleName(ast_function.name) else null;
+            const native_module_name = if (ast_function.is_native)
+                ast_function.module_name orelse moduleName(ast_function.name)
+            else
+                null;
             const native_function_name = if (ast_function.is_native) lastNameSegment(ast_function.name) else null;
             if (ast_function.is_native) {
                 const module_name = native_module_name orelse return self.fail(
@@ -2450,7 +2461,11 @@ pub const Analyzer = struct {
         switch (expression_value.value) {
             .integer, .floating, .boolean, .null, .string, .cascade_target, .variable, .static_field_access, .optional_unwrap, .function_reference => {},
             .self, .owner_self => if (!allFieldsInitialized(initialized)) {
-                return self.fail(expression_value.position, "'self' cannot escape before every class field is initialized");
+                return self.fail(expression_value.position, try std.fmt.allocPrint(
+                    self.allocator,
+                    "'self' cannot escape before every {s} field is initialized",
+                    .{if (structure.is_class) "class" else "struct"},
+                ));
             },
             .string_length => |value| try self.validateConstructorExpression(structure, value, initialized),
             .sequence_literal => |values| for (values) |value| try self.validateConstructorExpression(structure, value, initialized),
@@ -2472,11 +2487,19 @@ pub const Analyzer = struct {
                 for (call.arguments) |argument| try self.validateConstructorExpression(structure, argument, initialized);
             },
             .lambda => |lambda| if (lambda.captures_self and !allFieldsInitialized(initialized)) {
-                return self.fail(expression_value.position, "a constructor lambda cannot capture 'self' before every class field is initialized");
+                return self.fail(expression_value.position, try std.fmt.allocPrint(
+                    self.allocator,
+                    "a constructor lambda cannot capture 'self' before every {s} field is initialized",
+                    .{if (structure.is_class) "class" else "struct"},
+                ));
             },
             .method_call => |call| {
                 if (call.object.value == .self) {
-                    if (!allFieldsInitialized(initialized)) return self.fail(call.position, "an instance method cannot be called before every class field is initialized");
+                    if (!allFieldsInitialized(initialized)) return self.fail(call.position, try std.fmt.allocPrint(
+                        self.allocator,
+                        "an instance method cannot be called before every {s} field is initialized",
+                        .{if (structure.is_class) "class" else "struct"},
+                    ));
                 } else try self.validateConstructorExpression(structure, call.object, initialized);
                 for (call.arguments) |argument| try self.validateConstructorExpression(structure, argument, initialized);
             },
@@ -2544,8 +2567,8 @@ pub const Analyzer = struct {
             if (field_initialized == .initialized) continue;
             const message = try std.fmt.allocPrint(
                 self.allocator,
-                "constructor of class '{s}' leaves field '{s}' without a value",
-                .{ structure.source_name, structure.fields[field_index].source_name },
+                "constructor of {s} '{s}' leaves field '{s}' without a value",
+                .{ if (structure.is_class) "class" else "struct", structure.source_name, structure.fields[field_index].source_name },
             );
             return self.fail(position, message);
         }
@@ -6025,11 +6048,11 @@ pub const Analyzer = struct {
                 return self.fail(initializer.name_position, message);
             }
         }
-        if (structure.is_class and structure.constructors.len != 0) {
+        if (structure.constructors.len != 0) {
             const message = try std.fmt.allocPrint(
                 self.allocator,
-                "class '{s}' declares custom constructors and cannot use a named field initializer",
-                .{structure.source_name},
+                "{s} '{s}' declares custom constructors and cannot use a named field initializer",
+                .{ if (structure.is_class) "class" else "struct", structure.source_name },
             );
             return self.fail(initializer.name_position, message);
         }
@@ -6132,13 +6155,16 @@ pub const Analyzer = struct {
         scope: *const Scope,
     ) AnalyzeError!*Expression {
         const structure = self.findStructure(initializer.name) orelse {
-            const message = try std.fmt.allocPrint(self.allocator, "unknown class '{s}'", .{initializer.name});
+            const message = try std.fmt.allocPrint(self.allocator, "unknown type '{s}'", .{initializer.name});
             return self.fail(initializer.name_position, message);
         };
-        if (!structure.is_class) unreachable;
         if (structure.constructors.len == 0) {
             if (initializer.arguments.len != 0) {
-                const message = try std.fmt.allocPrint(self.allocator, "class '{s}' requires named fields such as 'field:value'", .{structure.source_name});
+                const message = try std.fmt.allocPrint(
+                    self.allocator,
+                    "{s} '{s}' requires named fields such as 'field:value'",
+                    .{ if (structure.is_class) "class" else "struct", structure.source_name },
+                );
                 return self.fail(initializer.name_position, message);
             }
             return self.structureInitializerExpression(.{
@@ -6161,7 +6187,11 @@ pub const Analyzer = struct {
         if (candidates.items.len == 0) {
             const constructor_symbol = inaccessible.?;
             const message = switch (constructor_symbol.visibility) {
-                .private_access => try std.fmt.allocPrint(self.allocator, "constructor of class '{s}' is private", .{structure.source_name}),
+                .private_access => try std.fmt.allocPrint(
+                    self.allocator,
+                    "constructor of {s} '{s}' is private",
+                    .{ if (structure.is_class) "class" else "struct", structure.source_name },
+                ),
                 .subclass => try std.fmt.allocPrint(self.allocator, "constructor of class '{s}' is accessible only from that class and its descendants", .{structure.source_name}),
                 .public_access => unreachable,
             };

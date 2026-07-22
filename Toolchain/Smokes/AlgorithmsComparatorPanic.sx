@@ -1,4 +1,4 @@
-use STD.Algorithms.sort
+use STD.Algorithms.Sort.sort
 
 struct Token {
     let value:int

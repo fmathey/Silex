@@ -1,10 +1,10 @@
 {
-  "target": "ExtensionConformanceVisibility.App",
+  "target": "ExtensionConformanceVisibility.App.Main",
   "modules": [
-    { "name": "ExtensionConformanceVisibility.Core", "sources": ["Core.sx"] },
-    { "name": "ExtensionConformanceVisibility.Types", "sources": ["Types.sx"] },
-    { "name": "ExtensionConformanceVisibility.Conformance", "sources": ["Conformance.sx"] },
-    { "name": "ExtensionConformanceVisibility.Bridge", "sources": ["Bridge.sx"] },
+    { "name": "ExtensionConformanceVisibility", "sources": ["Core.sx"] },
+    { "name": "ExtensionConformanceVisibility", "sources": ["Types.sx"] },
+    { "name": "ExtensionConformanceVisibility", "sources": ["Conformance.sx"] },
+    { "name": "ExtensionConformanceVisibility", "sources": ["Bridge.sx"] },
     { "name": "ExtensionConformanceVisibility.App", "sources": ["Main.sx"] }
   ]
 }

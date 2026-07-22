@@ -1,4 +1,4 @@
-use STD.Algorithms
+use STD.Algorithms.Random
 use STD.Randomizer as Randomizer
 
 func main() {

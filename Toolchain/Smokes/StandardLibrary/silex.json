@@ -1,5 +1,5 @@
 {
-  "target": "StandardLibrary",
+  "target": "StandardLibrary.Main",
   "modules": [
     {
       "name": "StandardLibrary",

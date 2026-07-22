@@ -1,5 +1,6 @@
 use ExtensionChecks.Core as Core
-use ExtensionChecks.Extras as Extras
+use ExtensionChecks.Extras
+use ExtensionChecks.ExtrasHelper
 
 use Core.Counter
 use Core.Box
@@ -14,7 +15,7 @@ extend Randomizer {
 func main() {
     var counter = Counter.start(4)
     assert(counter.bump() == 5, "used mutating extension")
-    assert(Extras.advance(counter) == 6, "structure extension across module files")
+    assert(ExtrasHelper.advance(counter) == 6, "structure extension across module files")
     assert(counter.keep<int>(7) == 7, "used generic structure extension")
     assert(counter.keep<str>("ready") == "ready", "specialized generic extension twice")
 

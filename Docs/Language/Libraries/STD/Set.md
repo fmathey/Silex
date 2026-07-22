@@ -5,10 +5,9 @@
 
 ```sx
 use STD.Collections.Set as Set
-use STD.Collections.hash_int as hash_int
-use STD.Collections.equal_int as equal_int
+use STD.Collections.Hashing
 
-var selected = Set<int>.create(hash_int, equal_int)
+var selected = Set<int>.create(Hashing.hash_int, Hashing.equal_int)
 selected.insert(7)
 selected.insert(7)
 ```

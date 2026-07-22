@@ -1,8 +1,8 @@
 {
-  "target": "TryChecks.App",
+  "target": "TryChecks.App.Main",
   "modules": [
     {
-      "name": "TryChecks.Core",
+      "name": "TryChecks",
       "sources": ["Core.sx"]
     },
     {

@@ -1,0 +1,11 @@
+struct Value {
+    let number:int
+
+    init(assign:bool) {
+        if assign {
+            self.number = 1
+        }
+    }
+}
+
+func main() {}

@@ -1,7 +1,7 @@
 # STD
 
 Silex distributes the source of `STD` with the compiler. `STD` is a reserved
-root module: its modules and source units are compiled with the program when
+root namespace: its file namespaces are compiled with the program when
 explicitly selected with `use`. They are versioned with Silex itself, so a
 project must not list `STD` in its `@Module.json` dependencies.
 
@@ -16,8 +16,6 @@ func main() {
 
 ## APIs
 
-- [Algorithms](Algorithms.md) — bounded generic in-place algorithms over
-  mutable contiguous views.
 - [Randomizer](Randomizer.md) — reproducible pseudo-random values for games,
   simulations, tests, and the random collection algorithms.
 - [Algorithms](Algorithms.md) — generic in-place sorting, borrowed random

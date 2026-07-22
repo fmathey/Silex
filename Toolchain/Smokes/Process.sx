@@ -1,14 +1,7 @@
 use STD.File.write_all as write_all
-use STD.FileSystem.create_directory as create_directory
-use STD.FileSystem.metadata as metadata
-use STD.FileSystem.remove_directory as remove_directory
-use STD.FileSystem.remove_file as remove_file
-use STD.Path.is_absolute as is_absolute
-use STD.Process.arguments as process_arguments
-use STD.Process.current_directory as current_directory
-use STD.Process.set_current_directory as set_current_directory
-use STD.Process.executable_path as executable_path
-use STD.Process.id as process_id
+use STD.FileSystem
+use STD.Path
+use STD.Process
 use STD.System.Error as Error
 
 func require_void(result:Result<void, Error>) {
@@ -35,21 +28,21 @@ func required_bool(result:Result<bool, Error>) bool {
 }
 
 func ignore_file(path:str) {
-    match remove_file(path) {
+    match FileSystem.remove_file(path) {
         success => {}
         failure(error) => {}
     }
 }
 
 func ignore_directory(path:str) {
-    match remove_directory(path) {
+    match FileSystem.remove_directory(path) {
         success => {}
         failure(error) => {}
     }
 }
 
 func main() {
-    match process_arguments() {
+    match Process.arguments() {
         failure(error) => { panic(error.detail) }
         success(values) => {
             assert(values.count() == 4, "process argument count")
@@ -60,31 +53,31 @@ func main() {
         }
     }
 
-    let original = required_path(current_directory())
+    let original = required_path(Process.current_directory())
     let root = ".silex/process-current-directory-smoke"
     let file = ".silex/process-current-directory-smoke/relative.bin"
     ignore_file(file)
     ignore_directory(root)
-    require_void(create_directory(root))
-    require_void(set_current_directory(root))
-    let changed = required_path(current_directory())
+    require_void(FileSystem.create_directory(root))
+    require_void(Process.set_current_directory(root))
+    let changed = required_path(Process.current_directory())
     assert(changed != original, "current directory changed")
     let bytes:uint8[] = [0, 1, 2]
     let view = @bytes[0:bytes.count()]
     require_void(write_all("relative.bin", view))
-    require_void(set_current_directory(original))
-    match metadata(file) {
+    require_void(Process.set_current_directory(original))
+    match FileSystem.metadata(file) {
         failure(error) => { panic(error.detail) }
         success(value) => { assert(value.size == 3, "relative resolution changed immediately") }
     }
-    require_void(remove_file(file))
-    require_void(remove_directory(root))
+    require_void(FileSystem.remove_file(file))
+    require_void(FileSystem.remove_directory(root))
 
-    let image = required_path(executable_path())
-    assert(required_bool(is_absolute(image)), "executable path is absolute")
-    match metadata(image) {
+    let image = required_path(Process.executable_path())
+    assert(required_bool(Path.is_absolute(image)), "executable path is absolute")
+    match FileSystem.metadata(image) {
         failure(error) => { panic(error.detail) }
         success(value) => { assert(value.size > 0, "executable image exists") }
     }
-    assert(process_id() > 0, "process identifier is nonzero")
+    assert(Process.id() > 0, "process identifier is nonzero")
 }

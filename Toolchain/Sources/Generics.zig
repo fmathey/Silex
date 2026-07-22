@@ -723,11 +723,25 @@ pub const Specializer = struct {
                     .operations = try operations.toOwnedSlice(self.allocator),
                 } };
             },
-            .class_initializer => |initializer| .{ .class_initializer = .{
-                .name = initializer.name,
-                .name_position = initializer.name_position,
-                .arguments = try self.rewriteExpressions(initializer.arguments, bindings),
-            } },
+            .class_initializer => |initializer| initializer_expression: {
+                const arguments = try self.rewriteTypes(initializer.type_arguments, bindings, initializer.name_position);
+                const name = if (arguments.len != 0)
+                    try self.instantiate(initializer.name, arguments, initializer.name_position)
+                else if (self.findTemplate(initializer.name)) |template| {
+                    const message = try std.fmt.allocPrint(
+                        self.allocator,
+                        "generic struct '{s}' requires {d} type argument{s}",
+                        .{ initializer.name, template.type_parameters.len, if (template.type_parameters.len == 1) "" else "s" },
+                    );
+                    return self.fail(initializer.name_position, message);
+                } else initializer.name;
+                break :initializer_expression .{ .class_initializer = .{
+                    .name = name,
+                    .name_position = initializer.name_position,
+                    .type_arguments = &.{},
+                    .arguments = try self.rewriteExpressions(initializer.arguments, bindings),
+                } };
+            },
             .structure_initializer => |initializer| initializer_expression: {
                 const arguments = try self.rewriteTypes(initializer.type_arguments, bindings, initializer.name_position);
                 const name = if (arguments.len != 0)

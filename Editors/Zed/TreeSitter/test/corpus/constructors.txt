@@ -1,6 +1,6 @@
 ==================
-Class constructors
-==================
+Struct and class constructors
+=============================
 
 class Session {
     var token:str
@@ -11,6 +11,14 @@ class Session {
 
     protected init() {
         self.token = ""
+    }
+}
+
+struct Value {
+    private let number:int
+
+    init(number:int) {
+        self.number = number
     }
 }
 
@@ -46,4 +54,24 @@ class Session {
               (self_expression)
               (identifier))
             (expression
-              (string_literal))))))))
+              (string_literal)))))))
+  (structure_definition
+    (identifier)
+    (structure_field
+      (identifier)
+      (type
+        (builtin_type)))
+    (constructor_definition
+      (parameter_list
+        (parameter
+          (identifier)
+          (type
+            (builtin_type))))
+      (block
+        (statement
+          (assignment_statement
+            (member_expression
+              (self_expression)
+              (identifier))
+            (expression
+              (identifier))))))))

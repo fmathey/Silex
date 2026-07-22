@@ -3,8 +3,8 @@ use TryChecks.Core.read
 use TryChecks.Core.call_count
 use TryChecks.Core.save
 
-use ReadError as SourceError
-use ReadError as TargetError
+use TryChecks.Core.ReadError as SourceError
+use TryChecks.Core.ReadError as TargetError
 
 class ScopeProbe {
     let label:str

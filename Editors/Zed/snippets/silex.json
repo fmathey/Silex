@@ -24,7 +24,7 @@
       "use ${1:Module.Name.Declaration}",
       "$0"
     ],
-    "description": "Select a module, source unit, declaration, or complete type"
+    "description": "Select a file namespace, declaration, or complete type"
   },
   "Type alias": {
     "prefix": "usetype",
@@ -572,14 +572,23 @@
     ],
     "description": "Expose storage shared by a class type"
   },
-  "Public class constructor": {
+  "Public type constructor": {
     "prefix": "publicinit",
     "body": [
       "public init(${1}) {",
       "    $0",
       "}"
     ],
-    "description": "Declare a public class constructor"
+    "description": "Declare a public struct or class constructor"
+  },
+  "Private type constructor": {
+    "prefix": "privateinit",
+    "body": [
+      "private init(${1}) {",
+      "    $0",
+      "}"
+    ],
+    "description": "Declare a private struct or class constructor"
   },
   "Public class constructor with base": {
     "prefix": "initsuper",

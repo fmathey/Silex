@@ -1,8 +1,5 @@
 use STD.Collections.Set as Set
-use STD.Collections.hash_int as hash_int
-use STD.Collections.equal_int as equal_int
-use STD.Collections.hash_str as hash_str
-use STD.Collections.equal_str as equal_str
+use STD.Collections.Hashing
 
 struct Token {
     let id:int
@@ -62,7 +59,7 @@ func main() {
     }
     assert(!flags.replace(1, true) && flags.take_last(), "bool list mutation")
 
-    var values = Set<int>.create(hash_int, equal_int, 2)
+    var values = Set<int>.create(Hashing.hash_int, Hashing.equal_int, 2)
     assert(values.is_empty() && values.capacity() >= 2, "empty set")
     assert(values.insert(1), "first insertion")
     assert(!values.insert(1), "duplicate insertion")
@@ -75,7 +72,7 @@ func main() {
     let stored = required_token(representatives.take(Token(id:7, spelling:"query")))
     assert(stored.spelling == "first", "take returns first representative")
 
-    var collisions = Set<int>.create(collide, equal_int)
+    var collisions = Set<int>.create(collide, Hashing.equal_int)
     var index = 0
     while index < 100 {
         assert(collisions.insert(index), "colliding insertion")
@@ -94,7 +91,7 @@ func main() {
     assert(left.contains(0) && !left.contains(100), "set copy stays independent")
     assert(!right.contains(0) && right.contains(100), "set copy diverges")
 
-    var strings = Set<str>.create(hash_str, equal_str)
+    var strings = Set<str>.create(Hashing.hash_str, Hashing.equal_str)
     strings.insert("é")
     strings.insert("hello")
     assert(strings.contains("é") && strings.contains("hello"), "standard string callbacks")

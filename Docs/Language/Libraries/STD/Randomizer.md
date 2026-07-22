@@ -3,7 +3,7 @@
 `STD.Randomizer` is a pseudo-random generator for games, simulations, and
 tests. It is not cryptographically secure.
 
-Select the `Randomizer` source unit and its public homonymous class directly:
+Select its file namespace and principal class directly:
 
 ```sx
 use STD.Randomizer as Randomizer
@@ -47,9 +47,9 @@ The deterministic transition is implemented in Silex. Only the seed used by
 
 ## Collections
 
-Random selection and in-place shuffling belong to `STD.Algorithms`, while this
+Random selection and in-place shuffling belong to `STD.Algorithms.Random`, while this
 class remains responsible for generator state and primitive draws. Select the
-aggregated algorithms module with `use STD.Algorithms`, then call
+algorithm namespace with `use STD.Algorithms.Random as Algorithms`, then call
 `Algorithms.choose<T>` or `Algorithms.shuffle<T>` with a `Randomizer` instance.
 The same `use` activates the equivalent façades
 `randomizer.choose<T>(view)` and `randomizer.shuffle<T>(view)`; both delegate to

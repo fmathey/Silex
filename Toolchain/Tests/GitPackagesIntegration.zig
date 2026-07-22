@@ -116,7 +116,7 @@ pub fn main(init: std.process.Init) !void {
 fn createUtility(allocator: Allocator, io: Io, repository: []const u8) !void {
     try initializeRepository(allocator, io, repository);
     try writeFile(allocator, io, repository, "@Module.json", "{\n  \"name\": \"Utility\",\n  \"version\": \"1.0.0\"\n}\n");
-    try writeFile(allocator, io, repository, "Utility.sx", "public func base() int { return 40 }\n");
+    try writeFile(allocator, io, repository, "Base.sx", "public func base() int { return 40 }\n");
     try commitRepository(allocator, io, repository, "initial");
 }
 
@@ -138,11 +138,11 @@ fn createFoundation(
     );
     const source = try std.fmt.allocPrint(
         allocator,
-        "use Utility\n\npublic func answer() int {{ return Utility.base() + {d} }}\n",
+        "use Utility.Base as Utility\n\npublic func answer() int {{ return Utility.base() + {d} }}\n",
         .{increment},
     );
     try writeFile(allocator, io, repository, "@Module.json", manifest);
-    try writeFile(allocator, io, repository, "Foundation.sx", source);
+    try writeFile(allocator, io, repository, "API.sx", source);
     try commitRepository(allocator, io, repository, message);
 }
 
@@ -182,7 +182,7 @@ fn createApp(
     );
     try writeFile(allocator, io, directory, "@Module.json", manifest);
     const source = if (std.mem.eql(u8, dependency_name, "Foundation"))
-        "use Foundation\n\nfunc main() void { print(Foundation.answer()) }\n"
+        "use Foundation.API as Foundation\n\nfunc main() void { print(Foundation.answer()) }\n"
     else
         "func main() void {}\n";
     try writeFile(allocator, io, directory, "Main.sx", source);

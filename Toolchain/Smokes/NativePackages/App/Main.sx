@@ -1,4 +1,4 @@
-use Foundation
+use Foundation.API as Foundation
 
 func main() {
     print(Foundation.answer())

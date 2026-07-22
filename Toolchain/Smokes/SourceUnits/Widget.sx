@@ -2,9 +2,9 @@ use Internal
 use WidgetExtensions
 
 public struct Widget {
-    var value:int
+    public var value:int
 
     static func create() Widget {
-        return Widget(value:internal_value())
+        return Widget(value:Internal.internal_value())
     }
 }

@@ -103,7 +103,7 @@ unambiguous.
 
 An unmarked method takes the target's default member visibility. A structure
 extension method is therefore public and becomes active in a source file that
-directly selects its declaring module or source unit. A class extension method
+selects its declaring file namespace through an explicit dependency closure. A class extension method
 remains private to that module unless it uses `public`. The explicit marker
 remains accepted for structure extensions even though it is redundant there:
 
@@ -115,13 +115,11 @@ func sample(randomizer:Randomizer) uint {
 }
 ```
 
-That module `use` activates all public extension methods and conformances it
-declares. A `use` selecting a unit or declaration activates those supplied
-by its same-module unit closure; a `use` selecting a module activates all its
-direct units. Merely compiling another module or package reached beyond that
-closure does not activate its extensions. Each consuming source file names the
-module, unit, or declaration it wants directly, following the ordinary
-file-scoped dependency rules.
+That namespace `use` activates all public extension methods and conformances it
+declares. A `use` selecting a file namespace or one of its declarations also
+activates those supplied by its transitive `use` closure. Neighboring files
+outside that closure remain inactive. Each consuming source file therefore
+names the namespace or declaration that establishes the required dependency.
 
 An extension has the access rights of an outside caller. Its body can use only
 the target's `public` members, never private or `protected` members, even when the

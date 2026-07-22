@@ -9,6 +9,7 @@ pub const File = struct {
     module_index: usize,
     unit_name: []const u8 = "",
     program: Ast.Program,
+    dependency_modules: []const usize = &.{},
     activated_files: []const usize = &.{},
     load_only_uses: []const Source.Position = &.{},
 };
@@ -88,7 +89,7 @@ pub const Resolver = struct {
             try self.collectModuleUses(module_index);
         }
         try self.validateTypeAliases();
-        try self.validatePublicModuleCollisions();
+        try self.validateNamespaceCollisions();
 
         var enums: std.ArrayList(Ast.Enum) = .empty;
         var protocols: std.ArrayList(Ast.Protocol) = .empty;
@@ -228,21 +229,32 @@ pub const Resolver = struct {
                 const canonical = if (self.project.single_file or
                     (file.module_index == self.project.target_module and std.mem.eql(u8, function.name, "main")))
                     function.name
+                else if (std.mem.eql(u8, function.name, lastSegment(module_name)))
+                    module_name
                 else
                     try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ module_name, function.name });
                 try self.addDeclarationWithCanonical(file.module_index, function.name, canonical, .function, function.is_public, function.name_position);
             }
             for (file.program.uses) |use_value| switch (use_value.target) {
                 .declaration => {},
-                .type => |aliased_type| try self.declarations.append(self.allocator, .{
-                    .module_index = file.module_index,
-                    .source_name = use_value.alias.?,
-                    .canonical_name = use_value.alias.?,
-                    .kind = .type_alias,
-                    .is_public = use_value.is_public,
-                    .position = use_value.position,
-                    .aliased_type = aliased_type,
-                }),
+                .type => |aliased_type| {
+                    const source_name = use_value.alias.?;
+                    const canonical = if (self.project.single_file)
+                        source_name
+                    else if (std.mem.eql(u8, source_name, lastSegment(module_name)))
+                        module_name
+                    else
+                        try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ module_name, source_name });
+                    try self.declarations.append(self.allocator, .{
+                        .module_index = file.module_index,
+                        .source_name = source_name,
+                        .canonical_name = canonical,
+                        .kind = .type_alias,
+                        .is_public = use_value.is_public,
+                        .position = use_value.position,
+                        .aliased_type = aliased_type,
+                    });
+                },
             };
         }
         for (self.declarations.items) |*declaration| {
@@ -261,6 +273,8 @@ pub const Resolver = struct {
     ) !void {
         const canonical = if (self.project.single_file)
             source_name
+        else if (std.mem.eql(u8, source_name, lastSegment(module_name)))
+            module_name
         else
             try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ module_name, source_name });
         try self.addDeclarationWithCanonical(module_index, source_name, canonical, kind, is_public, position);
@@ -311,7 +325,8 @@ pub const Resolver = struct {
                     .declaration => |value| value,
                     .type => continue,
                 };
-                const module_index = try self.moduleIndexFromUsePath(module_bindings.items, path) orelse continue;
+                const module_index = (try self.moduleIndexFromUsePath(module_bindings.items, path)) orelse
+                    self.siblingModuleIndex(file.module_index, path) orelse continue;
                 if (use_value.is_public) {
                     const message = try std.fmt.allocPrint(
                         self.allocator,
@@ -363,6 +378,20 @@ pub const Resolver = struct {
                 try infos[file_index].dependencies.append(self.allocator, .{
                     .module_index = binding.module_index,
                     .position = binding.position,
+                });
+            }
+            for (file.dependency_modules) |module_index| {
+                if (module_index == file.module_index) continue;
+                var present = false;
+                for (infos[file_index].dependencies.items) |dependency| {
+                    if (dependency.module_index == module_index) {
+                        present = true;
+                        break;
+                    }
+                }
+                if (!present) try infos[file_index].dependencies.append(self.allocator, .{
+                    .module_index = module_index,
+                    .position = .{ .file = file_index, .line = 1, .column = 1 },
                 });
             }
             for (file.program.uses) |use_value| {
@@ -462,6 +491,12 @@ pub const Resolver = struct {
         for (self.file_infos) |file| if (file.module_index == module_index) {
             for (file.dependencies.items) |dependency| {
                 if (dependency.module_index != module_index) {
+                    if (self.project.modules[dependency.module_index].package_index ==
+                        self.project.modules[module_index].package_index and
+                        sameModuleParent(
+                            self.project.modules[dependency.module_index].name,
+                            self.project.modules[module_index].name,
+                        )) continue;
                     try self.visitModule(dependency.module_index, states, stack, result);
                 }
             }
@@ -513,7 +548,32 @@ pub const Resolver = struct {
                     .declaration => |value| value,
                     .type => continue,
                 };
-                if (moduleUseAt(file, use_value.position)) continue;
+                if (moduleUseAt(file, use_value.position)) {
+                    if (is_public) continue;
+                    const binding = moduleBindingAt(file, use_value.position) orelse unreachable;
+                    const module_name = self.project.modules[binding.module_index].name;
+                    const principal_name = lastSegment(module_name);
+                    var principals: std.ArrayList(*const Declaration) = .empty;
+                    for (self.declarations.items) |*declaration| {
+                        if (declaration.module_index == binding.module_index and
+                            declaration.is_public and
+                            std.mem.eql(u8, declaration.source_name, principal_name) and
+                            std.mem.eql(u8, declaration.canonical_name, module_name))
+                        {
+                            try principals.append(self.allocator, declaration);
+                        }
+                    }
+                    if (principals.items.len != 0) {
+                        const local_name = use_value.alias orelse lastSegment(path);
+                        try self.validateIntroducedName(file, local_name, use_value.position);
+                        for (principals.items) |declaration| try file.uses.append(self.allocator, .{
+                            .local_name = local_name,
+                            .declaration = declaration,
+                            .position = use_value.position,
+                        });
+                    }
+                    continue;
+                }
                 const declarations = try self.resolveUses(file, path, use_value.position);
                 const local_name = use_value.alias orelse lastSegment(path);
                 try self.validateLocalBinding(file, local_name, use_value.position);
@@ -569,16 +629,57 @@ pub const Resolver = struct {
         });
     }
 
-    fn validatePublicModuleCollisions(self: *Resolver) !void {
-        for (self.exports.items) |export_value| {
-            const path = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{
-                self.project.modules[export_value.module_index].name, export_value.public_name,
-            });
-            if (self.findModule(path) != null) {
-                const message = try std.fmt.allocPrint(self.allocator, "public symbol '{s}' collides with module '{s}'", .{ path, path });
-                return self.fail(export_value.position, message);
+    fn validateNamespaceCollisions(self: *Resolver) !void {
+        for (self.declarations.items) |declaration| {
+            if (std.mem.eql(u8, declaration.canonical_name, self.project.modules[declaration.module_index].name)) continue;
+            if (self.findModule(declaration.canonical_name) == null) continue;
+            const message = try std.fmt.allocPrint(
+                self.allocator,
+                "declaration '{s}' collides with namespace '{s}'",
+                .{ declaration.canonical_name, declaration.canonical_name },
+            );
+            return self.fail(declaration.position, message);
+        }
+        for (self.file_infos) |file| {
+            const module_name = self.project.modules[file.module_index].name;
+            const principal_name = lastSegment(module_name);
+            for (file.program.enums) |enum_value| {
+                if (!std.mem.eql(u8, enum_value.name, principal_name)) continue;
+                for (enum_value.variants) |variant| {
+                    try self.validatePrincipalMemberCollision(
+                        file.module_index,
+                        module_name,
+                        variant.name,
+                        variant.position,
+                    );
+                }
+            }
+            for (file.program.structures) |structure| {
+                if (!std.mem.eql(u8, structure.name, principal_name)) continue;
+                for (structure.fields) |field| {
+                    if (field.is_static) try self.validatePrincipalMemberCollision(file.module_index, module_name, field.name, field.position);
+                }
+                for (structure.methods) |method| {
+                    if (method.is_static) try self.validatePrincipalMemberCollision(file.module_index, module_name, method.name, method.name_position);
+                }
             }
         }
+    }
+
+    fn validatePrincipalMemberCollision(
+        self: *Resolver,
+        module_index: usize,
+        module_name: []const u8,
+        member_name: []const u8,
+        position: Source.Position,
+    ) !void {
+        const path = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ module_name, member_name });
+        if (self.findModule(path) == null and self.findDirect(module_index, member_name, null) == null) return;
+        return self.fail(position, try std.fmt.allocPrint(
+            self.allocator,
+            "static member '{s}' of principal declaration '{s}' collides with namespace or declaration '{s}'",
+            .{ member_name, module_name, path },
+        ));
     }
 
     fn transformStructure(self: *Resolver, structure: Ast.Structure) !Ast.Structure {
@@ -617,9 +718,10 @@ pub const Resolver = struct {
         }
         var result = structure;
         result.name = declaration.canonical_name;
+        result.module_name = self.project.modules[declaration.module_index].name;
         var module_files: std.ArrayList(usize) = .empty;
         for (self.file_infos) |file| {
-            if (file.module_index == declaration.module_index) {
+            if (self.internalAccess(&file, declaration.module_index)) {
                 try module_files.append(self.allocator, file.file_index);
             }
         }
@@ -701,6 +803,7 @@ pub const Resolver = struct {
         defer self.current_type_parameters = previous_type_parameters;
         const declaration = self.findDirectByPosition(function.name_position, .function).?;
         var result = try self.transformFunctionBody(function, declaration.canonical_name);
+        result.module_name = self.project.modules[declaration.module_index].name;
         result.type_parameters = try self.transformTypeParameters(function.type_parameters);
         return result;
     }
@@ -1130,11 +1233,12 @@ pub const Resolver = struct {
                 }
                 if ((try self.visibleDeclarationKind(expression.position.file, call.name)) == .structure) {
                     const declaration = try self.resolveName(expression.position.file, call.name, .structure, call.name_position);
-                    if (self.declarationIsClass(declaration)) {
-                        if (type_arguments.len != 0) return self.fail(call.name_position, "generic classes are not supported");
+                    if (self.declarationIsClass(declaration) or self.declarationHasConstructors(declaration)) {
+                        if (self.declarationIsClass(declaration) and type_arguments.len != 0) return self.fail(call.name_position, "generic classes are not supported");
                         break :call .{ .class_initializer = .{
                             .name = declaration.canonical_name,
                             .name_position = call.name_position,
+                            .type_arguments = type_arguments,
                             .arguments = arguments,
                         } };
                     }
@@ -1191,23 +1295,56 @@ pub const Resolver = struct {
             .class_initializer => |initializer| .{ .class_initializer = .{
                 .name = (try self.resolveName(expression.position.file, initializer.name, .structure, initializer.name_position)).canonical_name,
                 .name_position = initializer.name_position,
+                .type_arguments = try self.transformTypeArguments(initializer.type_arguments, initializer.name_position),
                 .arguments = try self.transformExpressions(initializer.arguments),
             } },
             .method_call => |call| method: {
                 const type_arguments = try self.transformTypeArguments(call.type_arguments, call.name_position);
                 if (try self.expressionPath(call.object)) |prefix| {
-                    if (try self.staticOwnerType(expression.position.file, prefix, call.name_position)) |owner| {
-                        if (call.named_fields != null) return self.fail(call.name_position, "static methods do not accept named arguments");
-                        if (type_arguments.len != 0) return self.fail(call.name_position, "generic methods are not supported");
-                        break :method .{ .static_method_call = .{
-                            .owner = owner,
-                            .owner_position = call.object.position,
-                            .name = call.name,
+                    const path = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ prefix, call.name });
+                    const qualified_kind = if (self.looksQualified(expression.position.file, path))
+                        try self.visibleDeclarationKind(expression.position.file, path)
+                    else
+                        null;
+                    if (qualified_kind == .function) {
+                        if (call.named_fields != null) {
+                            const message = try std.fmt.allocPrint(
+                                self.allocator,
+                                "function '{s}' does not accept named arguments; named fields initialize a struct",
+                                .{path},
+                            );
+                            return self.fail(call.name_position, message);
+                        }
+                        const declarations = try self.visibleFunctionDeclarations(
+                            expression.position.file,
+                            path,
+                            call.name_position,
+                        );
+                        break :method .{ .call = .{
+                            .name = declarations[0].canonical_name,
                             .name_position = call.name_position,
+                            .type_arguments = type_arguments,
                             .arguments = try self.transformExpressions(call.arguments),
+                            .visible_declarations = try declarationPositions(self.allocator, declarations),
                         } };
                     }
-                    const path = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ prefix, call.name });
+                    if (qualified_kind == null) {
+                        if (try self.staticOwnerType(
+                            expression.position.file,
+                            prefix,
+                            call.name_position,
+                        )) |owner| {
+                            if (call.named_fields != null) return self.fail(call.name_position, "static methods do not accept named arguments");
+                            if (type_arguments.len != 0) return self.fail(call.name_position, "generic methods are not supported");
+                            break :method .{ .static_method_call = .{
+                                .owner = owner,
+                                .owner_position = call.object.position,
+                                .name = call.name,
+                                .name_position = call.name_position,
+                                .arguments = try self.transformExpressions(call.arguments),
+                            } };
+                        }
+                    }
                     if (self.looksQualified(expression.position.file, path)) {
                         if (try self.visibleTypeAlias(expression.position.file, path)) |alias| {
                             break :method try self.transformAliasInvocation(alias, path, call.name_position, type_arguments, call.arguments, call.named_fields);
@@ -1227,11 +1364,12 @@ pub const Resolver = struct {
                         }
                         if ((try self.visibleDeclarationKind(expression.position.file, path)) == .structure) {
                             const declaration = try self.resolveName(expression.position.file, path, .structure, call.name_position);
-                            if (self.declarationIsClass(declaration)) {
-                                if (type_arguments.len != 0) return self.fail(call.name_position, "generic classes are not supported");
+                            if (self.declarationIsClass(declaration) or self.declarationHasConstructors(declaration)) {
+                                if (self.declarationIsClass(declaration) and type_arguments.len != 0) return self.fail(call.name_position, "generic classes are not supported");
                                 break :method .{ .class_initializer = .{
                                     .name = declaration.canonical_name,
                                     .name_position = call.name_position,
+                                    .type_arguments = type_arguments,
                                     .arguments = try self.transformExpressions(call.arguments),
                                 } };
                             }
@@ -1432,6 +1570,15 @@ pub const Resolver = struct {
         const resolved = try self.resolveAliasType(alias);
         return switch (resolved) {
             .generic_structure => |generic| generic_initializer: {
+                const declaration = self.findDeclarationByCanonicalName(generic.name, .structure).?;
+                if (self.declarationHasConstructors(declaration) and named_fields == null) {
+                    break :generic_initializer .{ .class_initializer = .{
+                        .name = generic.name,
+                        .name_position = position,
+                        .type_arguments = generic.arguments,
+                        .arguments = try self.transformExpressions(arguments),
+                    } };
+                }
                 if (arguments.len != 0) {
                     const message = try std.fmt.allocPrint(self.allocator, "struct alias '{s}' requires named fields such as 'field:value'", .{display_name});
                     return self.fail(position, message);
@@ -1452,7 +1599,7 @@ pub const Resolver = struct {
                     } };
                 }
                 const declaration = self.findDeclarationByCanonicalName(name, .structure).?;
-                if (self.declarationIsClass(declaration)) {
+                if (self.declarationIsClass(declaration) or self.declarationHasConstructors(declaration)) {
                     break :structure_initializer .{ .class_initializer = .{
                         .name = name,
                         .name_position = position,
@@ -1498,9 +1645,17 @@ pub const Resolver = struct {
             return self.fail(position, message);
         };
         const is_current = target.module_index == file.module_index;
-        const declarations = try self.declarationsNamed(target.module_index, target.public_name, null, !is_current);
+        const internal_access = self.internalAccess(file, target.module_index);
+        const declarations = try self.declarationsNamed(
+            target.module_index,
+            target.public_name,
+            null,
+            !is_current and !internal_access,
+        );
         if (declarations.len != 0) return declarations;
-        if (!is_current and (try self.declarationsNamed(target.module_index, target.public_name, null, false)).len != 0) {
+        if (!is_current and !internal_access and
+            (try self.declarationsNamed(target.module_index, target.public_name, null, false)).len != 0)
+        {
             const message = try std.fmt.allocPrint(self.allocator, "declaration '{s}' is private in module '{s}'", .{
                 target.public_name, self.project.modules[target.module_index].name,
             });
@@ -1581,12 +1736,12 @@ pub const Resolver = struct {
         }
 
         if (try self.qualifiedExpressionTarget(file, name)) |target| {
-            const is_current = target.module_index == file.module_index;
+            const private_access = self.internalAccess(file, target.module_index);
             const declarations = try self.declarationsNamed(
                 target.module_index,
                 target.public_name,
                 .function,
-                !is_current,
+                !private_access,
             );
             if (declarations.len != 0) return declarations;
         }
@@ -1635,7 +1790,8 @@ pub const Resolver = struct {
                     try std.fmt.allocPrint(self.allocator, "unknown qualified path '{s}'", .{path}),
                 );
             }
-            if (target.module_index == file.module_index) {
+            const internal_access = self.internalAccess(file, target.module_index);
+            if (target.module_index == file.module_index or internal_access) {
                 if (self.findDirect(target.module_index, target.public_name, kind)) |declaration| return declaration;
             } else if (self.findExport(target.module_index, target.public_name, kind)) |export_value| {
                 return export_value.declaration;
@@ -1672,6 +1828,21 @@ pub const Resolver = struct {
         return self.findModule(path);
     }
 
+    fn siblingModuleIndex(self: *const Resolver, current_module_index: usize, name: []const u8) ?usize {
+        if (std.mem.indexOfScalar(u8, name, '.') != null) return null;
+        const parent = parentModuleName(self.project.modules[current_module_index].name) orelse return null;
+        for (self.project.modules, 0..) |module, index| {
+            if (!sameModuleParent(module.name, self.project.modules[current_module_index].name)) continue;
+            if (std.mem.eql(u8, lastSegment(module.name), name) and
+                module.package_index == self.project.modules[current_module_index].package_index)
+            {
+                _ = parent;
+                return index;
+            }
+        }
+        return null;
+    }
+
     fn qualifiedUseTarget(self: *Resolver, file: *const FileInfo, path: []const u8) !?QualifiedTarget {
         if (try self.canonicalPathFromBindings(file.module_bindings, path)) |canonical| {
             if (self.longestModuleTarget(canonical)) |target| return target;
@@ -1680,12 +1851,12 @@ pub const Resolver = struct {
     }
 
     fn qualifiedExpressionTarget(self: *Resolver, file: *const FileInfo, path: []const u8) !?QualifiedTarget {
+        if (try self.canonicalPathFromBindings(file.module_bindings, path)) |canonical| {
+            return self.longestModuleTarget(canonical);
+        }
         const current_name = self.project.modules[file.module_index].name;
         if (pathHasQualifier(path, current_name)) {
             if (self.longestModuleTarget(path)) |target| return target;
-        }
-        if (try self.canonicalPathFromBindings(file.module_bindings, path)) |canonical| {
-            return self.longestModuleTarget(canonical);
         }
         return null;
     }
@@ -1709,6 +1880,19 @@ pub const Resolver = struct {
     }
 
     fn longestModuleTarget(self: *const Resolver, canonical_path: []const u8) ?QualifiedTarget {
+        for (self.project.modules, 0..) |module, module_index| {
+            if (!std.mem.eql(u8, canonical_path, module.name)) continue;
+            const principal_name = lastSegment(module.name);
+            for (self.declarations.items) |declaration| {
+                if (declaration.module_index == module_index and
+                    std.mem.eql(u8, declaration.source_name, principal_name) and
+                    std.mem.eql(u8, declaration.canonical_name, module.name))
+                {
+                    return .{ .module_index = module_index, .public_name = principal_name };
+                }
+            }
+            return null;
+        }
         var matched_index: ?usize = null;
         for (self.project.modules, 0..) |module, module_index| {
             if (!pathHasQualifier(canonical_path, module.name)) continue;
@@ -1727,6 +1911,17 @@ pub const Resolver = struct {
     fn findModule(self: *const Resolver, name: []const u8) ?usize {
         for (self.project.modules, 0..) |module, index| if (std.mem.eql(u8, module.name, name)) return index;
         return null;
+    }
+
+    fn internalAccess(self: *const Resolver, file: *const FileInfo, target_module_index: usize) bool {
+        if (target_module_index == file.module_index) return true;
+        const source = self.project.modules[file.module_index];
+        const target = self.project.modules[target_module_index];
+        if (source.package_index != target.package_index or !sameModuleParent(source.name, target.name)) return false;
+        for (file.dependencies.items) |dependency| {
+            if (dependency.module_index == target_module_index) return true;
+        }
+        return false;
     }
 
     fn declarationsNamed(
@@ -1785,6 +1980,21 @@ pub const Resolver = struct {
                     structure.name_position.column == declaration.position.column)
                 {
                     return structure.is_class;
+                }
+            }
+        }
+        return false;
+    }
+
+    fn declarationHasConstructors(self: *const Resolver, declaration: *const Declaration) bool {
+        if (declaration.kind != .structure) return false;
+        for (self.files) |file| {
+            for (file.program.structures) |structure| {
+                if (structure.name_position.file == declaration.position.file and
+                    structure.name_position.line == declaration.position.line and
+                    structure.name_position.column == declaration.position.column)
+                {
+                    return structure.constructors.len != 0;
                 }
             }
         }
@@ -1876,12 +2086,27 @@ fn lastSegment(path: []const u8) []const u8 {
     return path[index + 1 ..];
 }
 
+fn parentModuleName(path: []const u8) ?[]const u8 {
+    const index = std.mem.lastIndexOfScalar(u8, path, '.') orelse return null;
+    return path[0..index];
+}
+
+fn sameModuleParent(left: []const u8, right: []const u8) bool {
+    const left_parent = parentModuleName(left) orelse return false;
+    const right_parent = parentModuleName(right) orelse return false;
+    return std.mem.eql(u8, left_parent, right_parent);
+}
+
 fn moduleUseAt(file: *const FileInfo, position: Source.Position) bool {
+    return moduleBindingAt(file, position) != null;
+}
+
+fn moduleBindingAt(file: *const FileInfo, position: Source.Position) ?ModuleBinding {
     for (file.module_bindings) |binding| {
         if (binding.position.file == position.file and binding.position.line == position.line and
-            binding.position.column == position.column) return true;
+            binding.position.column == position.column) return binding;
     }
-    return false;
+    return null;
 }
 
 fn loadOnlyUseAt(file: File, position: Source.Position) bool {

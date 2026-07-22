@@ -1,13 +1,7 @@
-use STD.Environment.set as environment_set
-use STD.Environment.remove as environment_remove
-use STD.Process.arguments as process_arguments
-use STD.Process.current_directory as process_current_directory
-use STD.Path.is_absolute as path_is_absolute
-use STD.Path.join as path_join
-use STD.Subprocess.Command as SubprocessCommand
-use STD.Subprocess.EnvironmentChange as EnvironmentChange
-use STD.Subprocess.Output as SubprocessOutput
-use STD.Subprocess.run as subprocess_run
+use STD.Environment
+use STD.Process
+use STD.Path
+use STD.Subprocess
 use STD.System.Error as Error
 
 func require_void(result:Result<void, Error>) {
@@ -18,7 +12,7 @@ func require_void(result:Result<void, Error>) {
 }
 
 func executable_argument() str {
-    match process_arguments() {
+    match Process.arguments() {
         failure(error) => { panic(error.detail) }
         success(values) => {
             assert(values.count() == 2, "subprocess smoke arguments")
@@ -29,12 +23,12 @@ func executable_argument() str {
 }
 
 func absolute_path(path:str) str {
-    match path_is_absolute(path) {
+    match Path.is_absolute(path) {
         failure(error) => { panic(error.detail) }
         success(absolute) => {
             if absolute{return path}
-            let directory=required_path(process_current_directory())
-            return required_path(path_join(directory,path))
+            let directory=required_path(Process.current_directory())
+            return required_path(Path.join(directory,path))
         }
     }
     return path
@@ -48,7 +42,7 @@ func required_path(result:Result<str,Error>) str {
     return ""
 }
 
-func required_output(result:Result<SubprocessOutput, Error>) SubprocessOutput {
+func required_output(result:Result<Subprocess.Output, Error>) Subprocess.Output {
     match result {
         success(value) => { return value }
         failure(error) => { panic(error.detail) }
@@ -56,18 +50,18 @@ func required_output(result:Result<SubprocessOutput, Error>) SubprocessOutput {
     panic("missing subprocess output")
 }
 
-func command(executable:str, mode:str, maximum:int) SubprocessCommand {
+func command(executable:str, mode:str, maximum:int) Subprocess.Command {
     var arguments:str[] = [mode]
     var input:uint8[] = []
     if mode == "success" {
         arguments = ["success", "space value", "", "été"]
         input = [0, 1, 2]
     }
-    let changes:EnvironmentChange[] = [
-        EnvironmentChange.set("SILEX_SUBPROCESS_ADDED", "yes"),
-        EnvironmentChange.remove("SILEX_SUBPROCESS_REMOVED")
+    let changes:Subprocess.EnvironmentChange[] = [
+        Subprocess.EnvironmentChange.set("SILEX_SUBPROCESS_ADDED", "yes"),
+        Subprocess.EnvironmentChange.remove("SILEX_SUBPROCESS_REMOVED")
     ]
-    return SubprocessCommand(
+    return Subprocess.Command(
         executable:executable,
         arguments:arguments,
         current_directory:".silex",
@@ -80,9 +74,9 @@ func command(executable:str, mode:str, maximum:int) SubprocessCommand {
 
 func main() {
     let executable = executable_argument()
-    require_void(environment_set("SILEX_SUBPROCESS_REMOVED", "parent"))
+    require_void(Environment.set("SILEX_SUBPROCESS_REMOVED", "parent"))
 
-    let output = required_output(subprocess_run(command(executable, "success", 140000)))
+    let output = required_output(Subprocess.run(command(executable, "success", 140000)))
     match output.status {
         exited(code) => { assert(code == 0, "successful child exit") }
         signaled(signal) => { panic("successful child was signaled") }
@@ -92,19 +86,19 @@ func main() {
     assert(output.standard_output[0] == 79, "stdout bytes")
     assert(output.standard_error[0] == 69, "stderr bytes")
 
-    let exited = required_output(subprocess_run(command(executable, "exit", 0)))
+    let exited = required_output(Subprocess.run(command(executable, "exit", 0)))
     match exited.status {
         exited(code) => { assert(code == 23, "nonzero exit is output") }
         signaled(signal) => { panic("exit child was signaled") }
     }
 
-    let signaled = required_output(subprocess_run(command(executable, "signal", 0)))
+    let signaled = required_output(Subprocess.run(command(executable, "signal", 0)))
     match signaled.status {
         signaled(signal) => { assert(signal > 0, "POSIX signal status") }
         exited(code) => { assert(code == 23, "Windows signal mode exit") }
     }
 
-    match subprocess_run(command(executable, "success", 10)) {
+    match Subprocess.run(command(executable, "success", 10)) {
         success(value) => { panic("expected output limit failure") }
         failure(error) => {
             match error.kind {
@@ -114,7 +108,7 @@ func main() {
         }
     }
 
-    match subprocess_run(command(".silex/definitely-missing-subprocess", "exit", 0)) {
+    match Subprocess.run(command(".silex/definitely-missing-subprocess", "exit", 0)) {
         success(value) => { panic("expected missing executable failure") }
         failure(error) => {
             match error.kind {
@@ -123,5 +117,5 @@ func main() {
             }
         }
     }
-    require_void(environment_remove("SILEX_SUBPROCESS_REMOVED"))
+    require_void(Environment.remove("SILEX_SUBPROCESS_REMOVED"))
 }

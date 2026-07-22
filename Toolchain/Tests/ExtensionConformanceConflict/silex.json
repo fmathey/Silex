@@ -1,12 +1,12 @@
 {
-  "target": "ExtensionConformanceConflict.App",
+  "target": "ExtensionConformanceConflict.App.Main",
   "modules": [
-    { "name": "ExtensionConformanceConflict.Core", "sources": ["Core.sx"] },
-    { "name": "ExtensionConformanceConflict.Types", "sources": ["Types.sx"] },
-    { "name": "ExtensionConformanceConflict.First", "sources": ["First.sx"] },
-    { "name": "ExtensionConformanceConflict.Second", "sources": ["Second.sx"] },
-    { "name": "ExtensionConformanceConflict.FirstBridge", "sources": ["FirstBridge.sx"] },
-    { "name": "ExtensionConformanceConflict.SecondBridge", "sources": ["SecondBridge.sx"] },
+    { "name": "ExtensionConformanceConflict", "sources": ["Core.sx"] },
+    { "name": "ExtensionConformanceConflict", "sources": ["Types.sx"] },
+    { "name": "ExtensionConformanceConflict", "sources": ["First.sx"] },
+    { "name": "ExtensionConformanceConflict", "sources": ["Second.sx"] },
+    { "name": "ExtensionConformanceConflict", "sources": ["FirstBridge.sx"] },
+    { "name": "ExtensionConformanceConflict", "sources": ["SecondBridge.sx"] },
     { "name": "ExtensionConformanceConflict.App", "sources": ["Main.sx"] }
   ]
 }

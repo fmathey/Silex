@@ -1,6 +1,6 @@
 use STD.Collections.Set as Set
-use STD.Collections.hash_int as hash_int
-use STD.Collections.equal_int as equal_int
+use STD.Collections.Hashing.hash_int as hash_int
+use STD.Collections.Hashing.equal_int as equal_int
 
 func main() {
     var values = Set<int>.create(hash_int, equal_int)

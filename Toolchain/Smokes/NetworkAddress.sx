@@ -1,35 +1,31 @@
-use STD.Network.Family as Family
-use STD.Network.IpAddress as IpAddress
-use STD.Network.ResolveOptions as ResolveOptions
-use STD.Network.Transport as Transport
-use STD.Network.format_endpoint
-use STD.Network.format_ip
-use STD.Network.parse_ip
-use STD.Network.resolve
+use STD.Network
 use STD.System.Error as Error
 
-func required_ip(result:Result<IpAddress, Error>) IpAddress {
+func required_ip(result:Result<Network.IpAddress, Error>) Network.IpAddress {
     match result {
         success(value) => { return value }
         failure(error) => { panic(error.detail) }
     }
-    return IpAddress.ipv4([0,0,0,0])
+    return Network.IpAddress.ipv4([0,0,0,0])
 }
 func main() {
-    let ipv4 = required_ip(parse_ip("192.0.2.1"))
-    assert(format_ip(ipv4) == "192.0.2.1", "IPv4 format")
-    let ipv6 = required_ip(parse_ip("2001:0db8:0:0:0:0:0:1"))
-    assert(format_ip(ipv6) == "2001:db8::1", "RFC 5952 format")
-    assert(format_ip(required_ip(parse_ip("::ffff:192.0.2.1"))) == "::ffff:192.0.2.1", "embedded IPv4")
-    match parse_ip("192.168.01.1") {
+    let ipv4 = required_ip(Network.parse_ip("192.0.2.1"))
+    assert(Network.format_ip(ipv4) == "192.0.2.1", "IPv4 format")
+    let ipv6 = required_ip(Network.parse_ip("2001:0db8:0:0:0:0:0:1"))
+    assert(Network.format_ip(ipv6) == "2001:db8::1", "RFC 5952 format")
+    assert(Network.format_ip(required_ip(Network.parse_ip("::ffff:192.0.2.1"))) == "::ffff:192.0.2.1", "embedded IPv4")
+    match Network.parse_ip("192.168.01.1") {
         success(value) => { panic("leading zero accepted") }
         failure(error) => {}
     }
-    match resolve("localhost", 80, ResolveOptions(family:Family.any(),transport:Transport.stream())) {
+    match Network.resolve("localhost", 80, Network.ResolveOptions(
+        family:Network.Family.any(),
+        transport:Network.Transport.stream()
+    )) {
         failure(error) => { panic(error.detail) }
         success(endpoints) => {
             assert(endpoints.count() > 0, "localhost resolution")
-            for endpoint in endpoints { assert(format_endpoint(endpoint) != "", "resolved endpoint") }
+            for endpoint in endpoints { assert(Network.format_endpoint(endpoint) != "", "resolved endpoint") }
         }
     }
 }

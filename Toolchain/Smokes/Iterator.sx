@@ -1,11 +1,9 @@
 use STD.Iteration.Iterator as Iterator
-use STD.Iteration.iterate as iterate
 use STD.Collections.Queue as Queue
 use STD.Collections.Stack as Stack
 use STD.Collections.Dictionary as Dictionary
 use STD.Collections.Set as Set
-use STD.Collections.hash_int as hash_int
-use STD.Collections.equal_int as equal_int
+use STD.Collections.Hashing
 
 class Tracker {
     public var dropped:int[]
@@ -99,7 +97,7 @@ func main() {
     stack.pop()
     assert_sequence(stack_iterator, [3, 2, 1])
 
-    var dictionary = Dictionary<int, int>.create(hash_int, equal_int)
+    var dictionary = Dictionary<int, int>.create(Hashing.hash_int, Hashing.equal_int)
     dictionary.insert(1, 10)
     dictionary.insert(2, 20)
     var dictionary_iterator = dictionary.iterator()
@@ -110,7 +108,7 @@ func main() {
     }
     assert(dictionary_total == 33, "dictionary entry snapshot")
 
-    var set = Set<int>.create(hash_int, equal_int)
+    var set = Set<int>.create(Hashing.hash_int, Hashing.equal_int)
     set.insert(5)
     set.insert(6)
     var set_iterator = set.iterator()
@@ -122,14 +120,14 @@ func main() {
     assert(set_total == 11, "set element snapshot")
 
     var list:int[] = [7, 8, 9]
-    var list_iterator = iterate<int>(list)
+    var list_iterator = Iterator.iterate<int>(list)
     list[0] = 70
     assert_sequence(list_iterator, [7, 8, 9])
     var fixed:int[3] = [10, 11, 12]
     var view_iterator = Iterator<int>.empty()
     if true {
         let fixed_view = @fixed[0:fixed.count()]
-        view_iterator = iterate<int>(fixed_view)
+        view_iterator = Iterator.iterate<int>(fixed_view)
     }
     fixed[0] = 100
     assert_sequence(view_iterator, [10, 11, 12])

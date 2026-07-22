@@ -1,17 +1,9 @@
-use STD.File.read_all
-use STD.File.write_all
-use STD.JSON.Format as JSONFormat
-use STD.JSON.BuildError as JSONBuildError
-use STD.JSON.Member as JSONMember
-use STD.JSON.ParseError as JSONParseError
-use STD.JSON.Value as JSONValue
-use STD.JSON.parse as parse_json
-use STD.JSON.stringify as stringify_json
+use STD.File as Files
+use STD.JSON
 use STD.System.Error as SystemError
-use STD.Text.UTF8.bytes as utf8_bytes
-use STD.Text.UTF8.decode as utf8_decode
+use STD.Text.UTF8
 
-func required_value(result:Result<JSONValue, JSONParseError>) JSONValue {
+func required_value(result:Result<JSON.Value, JSON.ParseError>) JSON.Value {
     match result {
         success(var value) => { return value }
         failure(error) => { panic(error.detail) }
@@ -19,7 +11,7 @@ func required_value(result:Result<JSONValue, JSONParseError>) JSONValue {
     panic("missing JSON value")
 }
 
-func required_built(result:Result<JSONValue, JSONBuildError>) JSONValue {
+func required_built(result:Result<JSON.Value, JSON.BuildError>) JSON.Value {
     match result {
         success(var value) => { return value }
         failure(error) => { panic("JSON construction failed") }
@@ -36,14 +28,14 @@ func require_void(result:Result<void, SystemError>) {
 
 func main() {
     let source = "{\"name\":\"été\",\"exact\":12345678901234567890,\"items\":[true,null,\"\\uD83D\\uDE00\"]}"
-    var value = required_value(parse_json(source))
-    let compact = stringify_json(value, JSONFormat.compact())
+    var value = required_value(JSON.parse(source))
+    let compact = JSON.stringify(value, JSON.Format.compact())
     assert(compact == "{\"name\":\"été\",\"exact\":12345678901234567890,\"items\":[true,null,\"😀\"]}", "compact JSON")
-    assert(stringify_json(required_value(parse_json(compact)), JSONFormat.compact()) == compact, "stable round trip")
-    let pretty = stringify_json(value, JSONFormat.pretty())
+    assert(JSON.stringify(required_value(JSON.parse(compact)), JSON.Format.compact()) == compact, "stable round trip")
+    let pretty = JSON.stringify(value, JSON.Format.pretty())
     assert(pretty != compact, "pretty JSON")
 
-    match parse_json("{\"a\":1,\"a\":2}") {
+    match JSON.parse("{\"a\":1,\"a\":2}") {
         success(var ignored) => { panic("duplicate JSON member accepted") }
         failure(error) => {
             match error.kind {
@@ -52,7 +44,7 @@ func main() {
             }
         }
     }
-    match parse_json("[[[]]]", 2) {
+    match JSON.parse("[[[]]]", 2) {
         success(var ignored) => { panic("JSON depth limit ignored") }
         failure(error) => {
             match error.kind {
@@ -62,21 +54,21 @@ func main() {
         }
     }
 
-    var response = required_built(JSONValue.object([
-        JSONMember(name:"ok", value:JSONValue.boolean(true)),
-        JSONMember(name:"value", value:JSONValue.number(42))
+    var response = required_built(JSON.Value.object([
+        JSON.Member(name:"ok", value:JSON.Value.boolean(true)),
+        JSON.Member(name:"value", value:JSON.Value.number(42))
     ]))
     let path = ".silex/json-smoke.json"
-    let encoded = utf8_bytes(stringify_json(response, JSONFormat.pretty()))
+    let encoded = UTF8.bytes(JSON.stringify(response, JSON.Format.pretty()))
     let encoded_view = @encoded[0:encoded.count()]
-    require_void(write_all(path, encoded_view))
-    match read_all(path, 4096) {
+    require_void(Files.write_all(path, encoded_view))
+    match Files.read_all(path, 4096) {
         failure(error) => { panic(error.detail) }
         success(bytes) => {
             let view = @bytes[0:bytes.count()]
-            match utf8_decode(view) {
+            match UTF8.decode(view) {
                 failure(error) => { panic("JSON file UTF-8") }
-                success(text) => { var reread = required_value(parse_json(text)) }
+                success(text) => { var reread = required_value(JSON.parse(text)) }
             }
         }
     }

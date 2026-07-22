@@ -287,6 +287,7 @@ pub const Expression = struct {
     pub const ClassInitializer = struct {
         name: []const u8,
         name_position: Source.Position,
+        type_arguments: []const TypeName = &.{},
         arguments: []const *Expression,
     };
 
@@ -531,6 +532,7 @@ pub const Structure = struct {
     position: Source.Position,
     name: []const u8,
     name_position: Source.Position,
+    module_name: ?[]const u8 = null,
     module_files: []const usize = &.{},
     type_parameters: []const TypeParameter = &.{},
     base: ?BaseClass = null,
@@ -602,6 +604,7 @@ pub const Function = struct {
     position: Source.Position,
     name: []const u8,
     name_position: Source.Position,
+    module_name: ?[]const u8 = null,
     type_parameters: []const TypeParameter = &.{},
     return_type: ReturnType,
     parameters: []const Parameter,

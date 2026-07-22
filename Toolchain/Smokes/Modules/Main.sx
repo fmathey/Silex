@@ -1,5 +1,6 @@
 use NK
 use Prefix
+use Example.App.Message
 
 use NK.Plugins as Plugins
 use NK.Window as Window
@@ -51,5 +52,5 @@ func main() {
     let status = Status.ready("enum module")
     print(match status { idle => "idle"; ready(message) => message })
     print(WireStatus.ready().raw_value)
-    print(message())
+    print(Message.message())
 }

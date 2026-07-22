@@ -1,13 +1,12 @@
 use Math
 use Groups as Group
 
-use Group.Numbers as Numbers
-use Math.Geometry.Ray
-use Math.Vec2
-use Math.Vec3
-use Math.Vec4
-use Math.dimensions
-use Numbers.nested
+use Math.Geometry.Shapes.Ray
+use Math.Vectors.Vec2
+use Math.Vectors.Vec3
+use Math.Vectors.Vec4
+use Math.Constants.dimensions
+use Group.Numbers.Value.nested
 
 func main() {
     let two:Vec2 = Vec2(x:1.0, y:2.0)

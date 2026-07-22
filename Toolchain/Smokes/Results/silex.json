@@ -1,8 +1,8 @@
 {
-  "target": "ResultChecks.App",
+  "target": "ResultChecks.App.Main",
   "modules": [
     {
-      "name": "ResultChecks.Core",
+      "name": "ResultChecks",
       "sources": ["Core.sx"]
     },
     {

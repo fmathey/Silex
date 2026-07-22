@@ -1,0 +1,11 @@
+struct Secret {
+    private let value:int
+
+    private init(value:int) {
+        self.value = value
+    }
+}
+
+func main() {
+    let secret = Secret(1)
+}

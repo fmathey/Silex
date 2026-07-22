@@ -1,0 +1,78 @@
+struct Vec3 {
+    private let x:float
+    private let y:float
+    private let z:float
+
+    public init(x:float, y:float, z:float) {
+        self.x = x
+        self.y = y
+        self.z = z
+    }
+
+    init(value:float) {
+        self.x = value
+        self.y = value
+        self.z = value
+    }
+
+    func sum() float {
+        return self.x + self.y + self.z
+    }
+}
+
+struct Secret {
+    private let value:int
+
+    private init(value:int) {
+        self.value = value
+    }
+
+    static func create(value:int) Secret {
+        return Secret(value)
+    }
+
+    func read() int {
+        return self.value
+    }
+}
+
+struct Box<T> {
+    let value:T
+
+    init(value:T) {
+        self.value = value
+    }
+}
+
+struct Owner {
+    let label:str
+
+    init(label:str) {
+        self.label = label
+    }
+
+    drop {
+        print(self.label)
+    }
+}
+
+func verify_owner() {
+    let owner = Owner("owner")
+}
+
+func main() {
+    let position = Vec3(10.0, 5.0, 2.0)
+    let uniform = Vec3(1.0)
+    let copy = position
+    assert(position.sum() == 17.0 && uniform.sum() == 3.0, "struct constructors overload by signature")
+    assert(copy.sum() == 17.0, "a custom constructor preserves value copying")
+
+    let secret = Secret.create(42)
+    assert(secret.read() == 42, "a static factory can call a private struct constructor")
+
+    let boxed = Box<int>(7)
+    assert(boxed.value == 7, "generic struct constructors specialize their parameter types")
+
+    verify_owner()
+    print("struct constructors")
+}

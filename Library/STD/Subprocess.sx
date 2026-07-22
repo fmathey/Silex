@@ -1,0 +1,167 @@
+use STD.Path as Path
+use STD.System.Error as Error
+use STD.System.ErrorKind as ErrorKind
+
+public enum EnvironmentChange {
+    set(str, str)
+    remove(str)
+}
+
+public enum ExitStatus {
+    exited(int)
+    signaled(int)
+}
+
+public struct Command {
+    let executable:Path
+    let arguments:str[]
+    let current_directory:Path?
+    let inherit_environment:bool
+    let environment:EnvironmentChange[]
+    let standard_input:uint8[]
+    let maximum_output_bytes:int
+}
+
+public struct Output {
+    let status:ExitStatus
+    let standard_output:uint8[]
+    let standard_error:uint8[]
+}
+
+native resource NativeCommand { drop discard_command }
+native resource NativeOutput { drop discard_output }
+
+struct NativeFailure { let kind:int; let detail:str }
+
+native func native_create(
+    executable:Path,
+    has_current_directory:bool,
+    current_directory:Path,
+    inherit_environment:bool,
+    maximum_output_bytes:int
+) Result<NativeCommand, NativeFailure>
+native func native_add_argument(command:&NativeCommand, value:str) Result<void, NativeFailure>
+native func native_set_environment(command:&NativeCommand, name:str, value:str) Result<void, NativeFailure>
+native func native_remove_environment(command:&NativeCommand, name:str) Result<void, NativeFailure>
+native func native_set_input(command:&NativeCommand, value:@uint8[..]) Result<void, NativeFailure>
+native func native_run(command:NativeCommand) Result<NativeOutput, NativeFailure>
+native func native_status_kind(output:&NativeOutput) int
+native func native_status_code(output:&NativeOutput) int
+native func native_visit_bytes(output:&NativeOutput, stream:int, visitor:func(int)) void
+
+public func run(command:Command) Result<Output, Error> {
+    if command.maximum_output_bytes < 0 {
+        return Result<Output, Error>.failure(Error(
+            kind:ErrorKind.invalid_input(),
+            operation:"subprocess.run",
+            subject:command.executable,
+            detail:"maximum_output_bytes must be non-negative"
+        ))
+    }
+    var has_current_directory = false
+    var current_directory = ""
+    if let directory = command.current_directory {
+        has_current_directory = true
+        current_directory = directory
+    }
+    var native:NativeCommand
+    match native_create(
+        command.executable,
+        has_current_directory,
+        current_directory,
+        command.inherit_environment,
+        command.maximum_output_bytes
+    ) {
+        failure(error) => { return failure(command.executable, error) }
+        success(var value) => { native = move value }
+    }
+    for argument in command.arguments {
+        match native_add_argument(native, argument) {
+            failure(error) => { return failure(command.executable, error) }
+            success => {}
+        }
+    }
+    for change in command.environment {
+        match change {
+            set(name, value) => {
+                match native_set_environment(native, name, value) {
+                    failure(error) => { return failure(command.executable, error) }
+                    success => {}
+                }
+            }
+            remove(name) => {
+                match native_remove_environment(native, name) {
+                    failure(error) => { return failure(command.executable, error) }
+                    success => {}
+                }
+            }
+        }
+    }
+    let input = @command.standard_input[0:command.standard_input.count()]
+    match native_set_input(native, input) {
+        failure(error) => { return failure(command.executable, error) }
+        success => {}
+    }
+    var output:NativeOutput
+    match native_run(move native) {
+        failure(error) => { return failure(command.executable, error) }
+        success(var value) => { output = move value }
+    }
+    var standard_output:uint8[] = []
+    var standard_error:uint8[] = []
+    native_visit_bytes(output, 1, func(byte:int) { standard_output.append(byte as uint8) })
+    native_visit_bytes(output, 2, func(byte:int) { standard_error.append(byte as uint8) })
+    let code = native_status_code(output)
+    var status = ExitStatus.exited(code)
+    if native_status_kind(output) != 1 {
+        status = ExitStatus.signaled(code)
+    }
+    return Result<Output, Error>.success(Output(
+        status:status,
+        standard_output:standard_output,
+        standard_error:standard_error
+    ))
+}
+
+func failure(executable:Path, native:NativeFailure) Result<Output, Error> {
+    return Result<Output, Error>.failure(Error(
+        kind:error_kind(native.kind),
+        operation:"subprocess.run",
+        subject:executable,
+        detail:native.detail
+    ))
+}
+
+func error_kind(kind:int) ErrorKind {
+    if kind == 0 { return ErrorKind.not_found() }
+    if kind == 1 { return ErrorKind.already_exists() }
+    if kind == 2 { return ErrorKind.permission_denied() }
+    if kind == 3 { return ErrorKind.invalid_input() }
+    if kind == 4 { return ErrorKind.invalid_data() }
+    if kind == 5 { return ErrorKind.name_too_long() }
+    if kind == 6 { return ErrorKind.unexpected_end() }
+    if kind == 7 { return ErrorKind.limit_exceeded() }
+    if kind == 8 { return ErrorKind.not_directory() }
+    if kind == 9 { return ErrorKind.is_directory() }
+    if kind == 10 { return ErrorKind.directory_not_empty() }
+    if kind == 11 { return ErrorKind.resource_busy() }
+    if kind == 12 { return ErrorKind.resource_exhausted() }
+    if kind == 13 { return ErrorKind.too_many_open_files() }
+    if kind == 14 { return ErrorKind.read_only_file_system() }
+    if kind == 15 { return ErrorKind.cross_device() }
+    if kind == 16 { return ErrorKind.interrupted() }
+    if kind == 17 { return ErrorKind.would_block() }
+    if kind == 18 { return ErrorKind.timed_out() }
+    if kind == 19 { return ErrorKind.broken_pipe() }
+    if kind == 20 { return ErrorKind.message_too_large() }
+    if kind == 21 { return ErrorKind.address_in_use() }
+    if kind == 22 { return ErrorKind.address_unavailable() }
+    if kind == 23 { return ErrorKind.network_unreachable() }
+    if kind == 24 { return ErrorKind.host_unreachable() }
+    if kind == 25 { return ErrorKind.connection_refused() }
+    if kind == 26 { return ErrorKind.connection_aborted() }
+    if kind == 27 { return ErrorKind.connection_reset() }
+    if kind == 28 { return ErrorKind.not_connected() }
+    if kind == 29 { return ErrorKind.unsupported() }
+    return ErrorKind.other()
+}

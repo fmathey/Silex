@@ -1,0 +1,132 @@
+use STD.Path as Path
+use STD.System.Error as Error
+use STD.System.ErrorKind as ErrorKind
+use STD.Text.UTF8.decode as decode_utf8
+
+struct NativeOperationResult {
+    let succeeded:bool
+    let error_kind:int
+    let detail:str
+}
+
+struct NativePathResult {
+    let succeeded:bool
+    let error_kind:int
+    let path:str
+    let detail:str
+}
+
+native func native_visit_arguments(visitor:func(int, int)) NativeOperationResult
+native func native_current_directory() NativePathResult
+native func native_set_current_directory(path:Path) NativeOperationResult
+native func native_executable_path() NativePathResult
+native func native_id() uint
+
+public func arguments() Result<str[], Error> {
+    var result:str[] = []
+    var remaining = 0
+    var bytes:uint8[] = []
+    let native = native_visit_arguments(func(first:int, second:int) {
+        if first == 1 {
+            remaining = second
+            bytes = []
+            if remaining == 0 {
+                result.append("")
+            }
+        } else {
+            bytes.append(second as uint8)
+            remaining--
+            if remaining == 0 {
+                let view = @bytes[0:bytes.count()]
+                match decode_utf8(view) {
+                    failure(error) => { panic("native process argument is not valid UTF-8") }
+                    success(text) => { result.append(text) }
+                }
+            }
+        }
+    })
+    if !native.succeeded {
+        return Result<str[], Error>.failure(system_error(
+            "process.arguments", null, native.error_kind, native.detail
+        ))
+    }
+    return Result<str[], Error>.success(result)
+}
+
+public func current_directory() Result<Path, Error> {
+    return path_result(native_current_directory(), "process.current_directory", null)
+}
+
+public func set_current_directory(path:Path) Result<void, Error> {
+    let native = native_set_current_directory(path)
+    if !native.succeeded {
+        return Result<void, Error>.failure(system_error(
+            "process.set_current_directory", path, native.error_kind, native.detail
+        ))
+    }
+    return Result<void, Error>.success()
+}
+
+public func executable_path() Result<Path, Error> {
+    return path_result(native_executable_path(), "process.executable_path", null)
+}
+
+public func id() uint {
+    return native_id()
+}
+
+func path_result(
+    native:NativePathResult,
+    operation:str,
+    subject:str?
+) Result<Path, Error> {
+    if !native.succeeded {
+        return Result<Path, Error>.failure(system_error(
+            operation, subject, native.error_kind, native.detail
+        ))
+    }
+    return Result<Path, Error>.success(native.path)
+}
+
+func system_error(operation:str, subject:str?, kind:int, detail:str) Error {
+    return Error(
+        kind:error_kind(kind),
+        operation:operation,
+        subject:subject,
+        detail:detail
+    )
+}
+
+func error_kind(kind:int) ErrorKind {
+    if kind == 0 { return ErrorKind.not_found() }
+    if kind == 1 { return ErrorKind.already_exists() }
+    if kind == 2 { return ErrorKind.permission_denied() }
+    if kind == 3 { return ErrorKind.invalid_input() }
+    if kind == 4 { return ErrorKind.invalid_data() }
+    if kind == 5 { return ErrorKind.name_too_long() }
+    if kind == 6 { return ErrorKind.unexpected_end() }
+    if kind == 7 { return ErrorKind.limit_exceeded() }
+    if kind == 8 { return ErrorKind.not_directory() }
+    if kind == 9 { return ErrorKind.is_directory() }
+    if kind == 10 { return ErrorKind.directory_not_empty() }
+    if kind == 11 { return ErrorKind.resource_busy() }
+    if kind == 12 { return ErrorKind.resource_exhausted() }
+    if kind == 13 { return ErrorKind.too_many_open_files() }
+    if kind == 14 { return ErrorKind.read_only_file_system() }
+    if kind == 15 { return ErrorKind.cross_device() }
+    if kind == 16 { return ErrorKind.interrupted() }
+    if kind == 17 { return ErrorKind.would_block() }
+    if kind == 18 { return ErrorKind.timed_out() }
+    if kind == 19 { return ErrorKind.broken_pipe() }
+    if kind == 20 { return ErrorKind.message_too_large() }
+    if kind == 21 { return ErrorKind.address_in_use() }
+    if kind == 22 { return ErrorKind.address_unavailable() }
+    if kind == 23 { return ErrorKind.network_unreachable() }
+    if kind == 24 { return ErrorKind.host_unreachable() }
+    if kind == 25 { return ErrorKind.connection_refused() }
+    if kind == 26 { return ErrorKind.connection_aborted() }
+    if kind == 27 { return ErrorKind.connection_reset() }
+    if kind == 28 { return ErrorKind.not_connected() }
+    if kind == 29 { return ErrorKind.unsupported() }
+    return ErrorKind.other()
+}

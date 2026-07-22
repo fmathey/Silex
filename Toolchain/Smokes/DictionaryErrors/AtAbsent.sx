@@ -1,13 +1,12 @@
 use STD.Collections.Dictionary as Dictionary
-use STD.Collections.hash_int as hash_int
-use STD.Collections.equal_int as equal_int
+use STD.Collections.Hashing
 
 func consume(value:@int) {
     print(value == 1)
 }
 
 func main() {
-    var values = Dictionary<int, int>.create(hash_int, equal_int)
+    var values = Dictionary<int, int>.create(Hashing.hash_int, Hashing.equal_int)
     let missing:@int = values.at(1)
     consume(missing)
 }
