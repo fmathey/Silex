@@ -1,6 +1,6 @@
 id = "silex"
 name = "Silex"
-version = "0.29.0"
+version = "0.30.0"
 schema_version = 1
 authors = ["François Mathey"]
 description = "Silex language support"

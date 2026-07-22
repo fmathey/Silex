@@ -1,5 +1,5 @@
 const std = @import("std");
-const silex_version = "0.29.0";
+const silex_version = "0.30.0";
 
 pub fn build(b: *std.Build) void {
     // A Silex run can itself launch several native compiler processes. Keep the
@@ -376,7 +376,7 @@ pub fn build(b: *std.Build) void {
     });
     lsp_protocol_command.expectStdOutEqual(
         "Content-Length: 574\r\n\r\n" ++
-            "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"capabilities\":{\"positionEncoding\":\"utf-8\",\"textDocumentSync\":1,\"documentFormattingProvider\":true,\"completionProvider\":{\"triggerCharacters\":[\".\"]},\"signatureHelpProvider\":{\"triggerCharacters\":[\"(\",\",\"]},\"definitionProvider\":true,\"referencesProvider\":true,\"renameProvider\":{\"prepareProvider\":true},\"hoverProvider\":true,\"semanticTokensProvider\":{\"legend\":{\"tokenTypes\":[\"namespace\",\"type\",\"enumMember\",\"function\",\"method\",\"property\",\"parameter\",\"variable\"],\"tokenModifiers\":[]},\"full\":true}},\"serverInfo\":{\"name\":\"Silex\",\"version\":\"0.29.0\"}}}" ++
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"capabilities\":{\"positionEncoding\":\"utf-8\",\"textDocumentSync\":1,\"documentFormattingProvider\":true,\"completionProvider\":{\"triggerCharacters\":[\".\"]},\"signatureHelpProvider\":{\"triggerCharacters\":[\"(\",\",\"]},\"definitionProvider\":true,\"referencesProvider\":true,\"renameProvider\":{\"prepareProvider\":true},\"hoverProvider\":true,\"semanticTokensProvider\":{\"legend\":{\"tokenTypes\":[\"namespace\",\"type\",\"enumMember\",\"function\",\"method\",\"property\",\"parameter\",\"variable\"],\"tokenModifiers\":[]},\"full\":true}},\"serverInfo\":{\"name\":\"Silex\",\"version\":\"0.30.0\"}}}" ++
             "Content-Length: 136\r\n\r\n" ++
             "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":\"file:///private/tmp/FormattingMemory.sx\",\"diagnostics\":[]}}" ++
             "Content-Length: 157\r\n\r\n" ++
