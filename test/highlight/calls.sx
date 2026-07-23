@@ -1,3 +1,29 @@
+native resource Image {
+// <- keyword
+//     ^^^^^^^^ keyword
+//              ^^^^^ type.definition
+    drop release_image
+//  ^^^^ keyword
+//       ^^^^^^^^^^^^^ function.definition
+}
+
+class Catalog {
+// <- keyword
+//    ^^^^^^^ type.definition
+    public func identity<T>(value:T) T {
+//  ^^^^^^ keyword
+//         ^^^^ keyword
+//              ^^^^^^^^ function.definition
+        return value
+    }
+}
+
+internal class Handle {
+// <- keyword
+    internal func join() {}
+//  ^^^^^^^^ keyword
+}
+
 func inspect(value:Vec3) {
     Configuration(strict:true)
     // <- function.call
@@ -18,6 +44,9 @@ func inspect(value:Vec3) {
 
     value.method()
     //    ^^^^^^ function.method.call
+
+    Catalog().identity<int>(42)
+    //        ^^^^^^^^ function.method.call
 
     value?.method()
     //     ^^^^^^ function.method.call

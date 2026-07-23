@@ -41,6 +41,7 @@ module.exports = grammar({
           $.native_function_declaration,
           $.native_resource_declaration,
           $.public_declaration,
+          $.internal_declaration,
         ),
       ),
 
@@ -65,6 +66,19 @@ module.exports = grammar({
     public_declaration: ($) =>
       seq(
         "public",
+        choice(
+          $.enum_definition,
+          $.protocol_definition,
+          $.structure_definition,
+          $.function_definition,
+          $.native_function_declaration,
+          $.native_resource_declaration,
+        ),
+      ),
+
+    internal_declaration: ($) =>
+      seq(
+        "internal",
         choice(
           $.enum_definition,
           $.protocol_definition,
@@ -107,7 +121,7 @@ module.exports = grammar({
         "{",
         repeat(
           seq(
-            optional(field("visibility", "public")),
+            optional(field("visibility", choice("internal", "public"))),
             optional(field("static", "static")),
             $.function_definition,
           ),
@@ -148,7 +162,7 @@ module.exports = grammar({
 
     structure_definition: ($) =>
       seq(
-        choice("struct", "class"),
+        choice("struct", seq(optional(field("static", "static")), "class")),
         field("name", $.identifier),
         optional(field("type_parameters", $.type_parameter_list)),
         optional(
@@ -164,15 +178,15 @@ module.exports = grammar({
         repeat(
           choice(
             seq(
-              optional(field("visibility", choice("private", "protected", "public"))),
+              optional(field("visibility", choice("private", "internal", "protected", "public"))),
               optional(field("static", "static")),
               $.structure_field,
             ),
-            seq(optional(field("visibility", choice("private", "protected", "public"))), $.constructor_definition),
+            seq(optional(field("visibility", choice("private", "internal", "protected", "public"))), $.constructor_definition),
             $.drop_definition,
             seq(
               optional(field("override", "override")),
-              optional(field("visibility", choice("private", "protected", "public"))),
+              optional(field("visibility", choice("private", "internal", "protected", "public"))),
               optional(field("static", "static")),
               $.function_definition,
             ),
@@ -216,6 +230,7 @@ module.exports = grammar({
         field("native", alias("native", $.identifier)),
         "func",
         field("name", $.identifier),
+        optional(field("type_parameters", $.type_parameter_list)),
         $.parameter_list,
         field("return_type", choice($.void_type, $.borrowed_return_type, $.type)),
         choice(";", $._automatic_semicolon),
@@ -298,7 +313,7 @@ module.exports = grammar({
       choice(alias(choice($.identifier, $.qualified_name), $.type_identifier), $.generic_type),
     function_type: ($) =>
       seq(
-        optional(field("deferred", "deferred")),
+        optional(choice(field("deferred", "deferred"), field("isolated", "isolated"))),
         "func",
         "(",
         optional(seq($.function_type_parameter, repeat(seq(",", $.function_type_parameter)))),
@@ -593,7 +608,7 @@ module.exports = grammar({
 
     lambda_expression: ($) =>
       seq(
-        optional(field("deferred", "deferred")),
+        optional(choice(field("deferred", "deferred"), field("isolated", "isolated"))),
         "func",
         $.parameter_list,
         optional(field("return_type", choice($.void_type, $.type))),

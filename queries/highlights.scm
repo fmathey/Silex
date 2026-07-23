@@ -73,13 +73,22 @@
 (constructor_definition "init" @function.definition)
 (drop_definition "drop" @function.definition)
 
+(native_resource_declaration
+  native: (identifier) @keyword
+  resource: (identifier) @keyword
+  name: (identifier) @type.definition
+  "drop" @keyword
+  destructor: (identifier) @function.definition)
+
 (super_method_expression
   method: (identifier) @function.method.call)
 
 (lambda_expression "func" @keyword)
 (lambda_expression deferred: "deferred" @keyword)
+(lambda_expression isolated: "isolated" @keyword)
 (function_type "func" @type.builtin)
 (function_type deferred: "deferred" @keyword)
+(function_type isolated: "isolated" @keyword)
 (function_type_parameter mutable_reference: "&" @type)
 (function_type_parameter read_reference: "@" @type)
 
@@ -156,6 +165,7 @@
 [
   "use"
   "private"
+  "internal"
   "public"
   "protected"
   "as"
@@ -172,6 +182,7 @@
   "try"
   "move"
   "deferred"
+  "isolated"
   "struct"
   "protocol"
   "extend"

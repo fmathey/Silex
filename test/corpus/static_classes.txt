@@ -1,0 +1,74 @@
+========================================
+Static classes and generic static calls
+========================================
+
+public static class TaskManager {
+    static var count:int
+
+    public static func submit<T>(task:T) T {
+        return task
+    }
+}
+
+func main() {
+    let inferred = TaskManager.submit(1)
+    let explicit = TaskManager.submit<int>(2)
+}
+
+---
+
+(source_file
+  (public_declaration
+    (structure_definition
+      (identifier)
+      (structure_field
+        (identifier)
+        (type
+          (builtin_type)))
+      (function_definition
+        (identifier)
+        (type_parameter_list
+          (type_parameter
+            (identifier)))
+        (parameter_list
+          (parameter
+            (identifier)
+            (type
+              (named_type
+                (type_identifier)))))
+        (type
+          (named_type
+            (type_identifier)))
+        (block
+          (statement
+            (return_statement
+              (expression
+                (identifier))))))))
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (block
+      (statement
+        (variable_declaration
+          (identifier)
+          (expression
+            (invocation_expression
+              (member_expression
+                (identifier)
+                (identifier))
+              (expression
+                (integer_literal))))))
+      (statement
+        (variable_declaration
+          (identifier)
+          (expression
+            (invocation_expression
+              (generic_type
+                (type_identifier
+                  (identifier)
+                  (identifier))
+                (type_argument_list
+                  (type
+                    (builtin_type))))
+              (expression
+                (integer_literal)))))))))

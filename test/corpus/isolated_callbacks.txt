@@ -1,0 +1,76 @@
+==================
+Isolated callback types and literals
+==================
+
+public native resource Operation {
+    drop destroy_operation
+}
+
+native func start(callback:isolated func()) Operation
+
+func main() {
+    let operation = start(isolated func() {})
+}
+
+---
+
+(source_file
+  (public_declaration
+    (native_resource_declaration
+      (identifier)
+      (identifier)
+      (identifier)
+      (identifier)))
+  (native_function_declaration
+    (identifier)
+    (identifier)
+    (parameter_list
+      (parameter
+        (identifier)
+        (type
+          (function_type))))
+    (type
+      (named_type
+        (type_identifier))))
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (block
+      (statement
+        (variable_declaration
+          (identifier)
+          (expression
+            (invocation_expression
+              (identifier)
+              (expression
+                (lambda_expression
+                  (parameter_list)
+                  (block))))))))))
+
+==================
+Generic erased callback declarations
+==================
+
+internal native func produce<T>(callback:isolated func() T) Operation
+
+---
+
+(source_file
+  (internal_declaration
+    (native_function_declaration
+      (identifier)
+      (identifier)
+      (type_parameter_list
+        (type_parameter
+          (identifier)))
+      (parameter_list
+        (parameter
+          (identifier)
+          (type
+            (function_type
+              (type
+                (named_type
+                  (type_identifier)))))))
+      (type
+        (named_type
+          (type_identifier))))))

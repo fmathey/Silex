@@ -18,6 +18,16 @@ public func create() Window.Session {
     return Window.Session()
 }
 
+internal class Handle {
+  internal var state: int
+  public init() {}
+  internal func join() {}
+}
+
+internal func make_handle() Handle {
+  return Handle()
+}
+
 ---
 
 (source_file
@@ -73,4 +83,31 @@ public func create() Window.Session {
               (invocation_expression
                 target: (member_expression
                   object: (identifier)
-                  field: (identifier))))))))))
+                  field: (identifier)))))))))
+  (internal_declaration
+    (structure_definition
+      name: (identifier)
+      (structure_field
+        name: (identifier)
+        type: (type
+          (builtin_type)))
+      (constructor_definition
+        (parameter_list)
+        body: (block))
+      (function_definition
+        name: (identifier)
+        (parameter_list)
+        body: (block))))
+  (internal_declaration
+    (function_definition
+      name: (identifier)
+      (parameter_list)
+      return_type: (type
+        (named_type
+          (type_identifier)))
+      body: (block
+        (statement
+          (return_statement
+            value: (expression
+              (invocation_expression
+                target: (identifier)))))))))

@@ -1218,6 +1218,10 @@
         "required": false,
         "types": [
           {
+            "type": "internal",
+            "named": false
+          },
+          {
             "type": "public",
             "named": false
           }
@@ -1394,6 +1398,16 @@
         "types": [
           {
             "type": "deferred",
+            "named": false
+          }
+        ]
+      },
+      "isolated": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "isolated",
             "named": false
           }
         ]
@@ -1666,6 +1680,41 @@
     }
   },
   {
+    "type": "internal_declaration",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "enum_definition",
+          "named": true
+        },
+        {
+          "type": "function_definition",
+          "named": true
+        },
+        {
+          "type": "native_function_declaration",
+          "named": true
+        },
+        {
+          "type": "native_resource_declaration",
+          "named": true
+        },
+        {
+          "type": "protocol_definition",
+          "named": true
+        },
+        {
+          "type": "structure_definition",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "invocation_expression",
     "named": true,
     "fields": {
@@ -1743,6 +1792,16 @@
         "types": [
           {
             "type": "deferred",
+            "named": false
+          }
+        ]
+      },
+      "isolated": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "isolated",
             "named": false
           }
         ]
@@ -2139,6 +2198,16 @@
           },
           {
             "type": "void_type",
+            "named": true
+          }
+        ]
+      },
+      "type_parameters": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "type_parameter_list",
             "named": true
           }
         ]
@@ -2762,6 +2831,10 @@
           "named": true
         },
         {
+          "type": "internal_declaration",
+          "named": true
+        },
+        {
           "type": "native_function_declaration",
           "named": true
         },
@@ -2932,6 +3005,10 @@
         "multiple": true,
         "required": false,
         "types": [
+          {
+            "type": "internal",
+            "named": false
+          },
           {
             "type": "private",
             "named": false
@@ -3771,6 +3848,14 @@
   },
   {
     "type": "int8",
+    "named": false
+  },
+  {
+    "type": "internal",
+    "named": false
+  },
+  {
+    "type": "isolated",
     "named": false
   },
   {
