@@ -26,6 +26,7 @@ module.exports = grammar({
     [$.generic_type, $.expression],
     [$.generic_type, $.named_type],
     [$.generic_type, $._cascade_assignment_value],
+    [$.generic_type_segment, $.qualified_generic_type],
   ],
 
   rules: {
@@ -179,6 +180,10 @@ module.exports = grammar({
           choice(
             seq(
               optional(field("visibility", choice("private", "internal", "protected", "public"))),
+              $.structure_definition,
+            ),
+            seq(
+              optional(field("visibility", choice("private", "internal", "protected", "public"))),
               optional(field("static", "static")),
               $.structure_field,
             ),
@@ -294,12 +299,57 @@ module.exports = grammar({
           field("arguments", $.type_argument_list),
         ),
       ),
+    generic_type_segment: ($) =>
+      seq(
+        field("name", alias($.identifier, $.type_identifier)),
+        field("arguments", $.type_argument_list),
+      ),
+    qualified_generic_type: ($) =>
+      prec.left(
+        PREC.member + 2,
+        seq(
+          field("owner", $.generic_type),
+          repeat1(
+            seq(
+              ".",
+              field("member", choice(alias($.identifier, $.type_identifier), $.generic_type_segment)),
+            ),
+          ),
+        ),
+      ),
     _expression_generic_type: ($) =>
       prec(
         PREC.member + 1,
         seq(
           field("name", alias(choice($.identifier, $.qualified_name), $.type_identifier)),
           field("arguments", alias($._expression_type_argument_list, $.type_argument_list)),
+        ),
+      ),
+    _expression_generic_type_segment: ($) =>
+      prec(
+        PREC.member + 1,
+        seq(
+          field("name", alias($.identifier, $.type_identifier)),
+          field("arguments", alias($._expression_type_argument_list, $.type_argument_list)),
+        ),
+      ),
+    _expression_qualified_generic_type: ($) =>
+      prec.left(
+        PREC.member + 3,
+        seq(
+          field("owner", alias($._expression_generic_type, $.generic_type)),
+          repeat1(
+            seq(
+              ".",
+              field(
+                "member",
+                choice(
+                  alias($.identifier, $.type_identifier),
+                  alias($._expression_generic_type_segment, $.generic_type_segment),
+                ),
+              ),
+            ),
+          ),
         ),
       ),
     _expression_type_argument_list: ($) =>
@@ -310,7 +360,11 @@ module.exports = grammar({
         ">",
       ),
     named_type: ($) =>
-      choice(alias(choice($.identifier, $.qualified_name), $.type_identifier), $.generic_type),
+      choice(
+        alias(choice($.identifier, $.qualified_name), $.type_identifier),
+        $.generic_type,
+        $.qualified_generic_type,
+      ),
     function_type: ($) =>
       seq(
         optional(choice(field("deferred", "deferred"), field("isolated", "isolated"))),
@@ -819,6 +873,14 @@ module.exports = grammar({
     member_expression: ($) =>
       choice(
         prec(
+          PREC.member + 2,
+          seq(
+            field("object", alias($._expression_qualified_generic_type, $.qualified_generic_type)),
+            ".",
+            field("field", $.identifier),
+          ),
+        ),
+        prec(
           PREC.member + 1,
           seq(
             field("object", alias($._expression_generic_type, $.generic_type)),
@@ -884,6 +946,15 @@ module.exports = grammar({
 
     invocation_expression: ($) =>
       choice(
+        prec(
+          PREC.member + 2,
+          seq(
+            field("target", alias($._expression_qualified_generic_type, $.qualified_generic_type)),
+            "(",
+            optional($._invocation_arguments),
+            ")",
+          ),
+        ),
         prec(
           PREC.member + 1,
           seq(

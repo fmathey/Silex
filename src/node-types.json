@@ -1495,6 +1495,32 @@
     }
   },
   {
+    "type": "generic_type_segment",
+    "named": true,
+    "fields": {
+      "arguments": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type_argument_list",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type_identifier",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "grouped_type",
     "named": true,
     "fields": {
@@ -1744,6 +1770,10 @@
           },
           {
             "type": "parenthesized_expression",
+            "named": true
+          },
+          {
+            "type": "qualified_generic_type",
             "named": true
           },
           {
@@ -2012,6 +2042,10 @@
             "named": true
           },
           {
+            "type": "qualified_generic_type",
+            "named": true
+          },
+          {
             "type": "safe_member_expression",
             "named": true
           },
@@ -2151,6 +2185,10 @@
       "types": [
         {
           "type": "generic_type",
+          "named": true
+        },
+        {
+          "type": "qualified_generic_type",
           "named": true
         },
         {
@@ -2537,6 +2575,36 @@
           "named": true
         }
       ]
+    }
+  },
+  {
+    "type": "qualified_generic_type",
+    "named": true,
+    "fields": {
+      "member": {
+        "multiple": true,
+        "required": true,
+        "types": [
+          {
+            "type": "generic_type_segment",
+            "named": true
+          },
+          {
+            "type": "type_identifier",
+            "named": true
+          }
+        ]
+      },
+      "owner": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "generic_type",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {
@@ -3038,6 +3106,10 @@
         },
         {
           "type": "function_definition",
+          "named": true
+        },
+        {
+          "type": "structure_definition",
           "named": true
         },
         {

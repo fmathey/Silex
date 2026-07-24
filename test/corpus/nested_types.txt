@@ -1,0 +1,56 @@
+========================================
+Nested types
+========================================
+
+class Foo {
+    public class Bar {}
+    private static class Tools {}
+}
+
+class GenericChild : Family<int>.Parent<str> {}
+
+func main() {
+    let bar:Foo.Bar = Foo.Bar()
+}
+
+---
+
+(source_file
+  (structure_definition
+    (identifier)
+    (structure_definition
+      (identifier))
+    (structure_definition
+      (identifier)))
+  (structure_definition
+    (identifier)
+    (named_type
+      (qualified_generic_type
+        (generic_type
+          (type_identifier)
+          (type_argument_list
+            (type
+              (builtin_type))))
+        (generic_type_segment
+          (type_identifier)
+          (type_argument_list
+            (type
+              (builtin_type)))))))
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (block
+      (statement
+        (variable_declaration
+          (identifier)
+          (type_annotation
+            (type
+              (named_type
+                (type_identifier
+                  (identifier)
+                  (identifier)))))
+          (expression
+            (invocation_expression
+              (member_expression
+                (identifier)
+                (identifier)))))))))
