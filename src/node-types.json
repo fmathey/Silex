@@ -2176,6 +2176,22 @@
     }
   },
   {
+    "type": "mutex_statement",
+    "named": true,
+    "fields": {
+      "body": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "block",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "named_type",
     "named": true,
     "fields": {},
@@ -2374,6 +2390,16 @@
     "type": "parameter",
     "named": true,
     "fields": {
+      "default": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "expression",
+            "named": true
+          }
+        ]
+      },
       "mutable_reference": {
         "multiple": false,
         "required": false,
@@ -2967,6 +2993,10 @@
         },
         {
           "type": "match_expression",
+          "named": true
+        },
+        {
+          "type": "mutex_statement",
           "named": true
         },
         {
@@ -3940,6 +3970,10 @@
   },
   {
     "type": "move",
+    "named": false
+  },
+  {
+    "type": "mutex",
     "named": false
   },
   {

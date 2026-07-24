@@ -60,3 +60,10 @@ func inspect(value:Vec3) {
     panic("failure")
     // <- function.call
 }
+
+func synchronize() {
+    mutex {
+//  ^^^^^ keyword
+        print("locked")
+    }
+}

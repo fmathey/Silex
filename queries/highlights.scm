@@ -175,6 +175,7 @@
   "elif"
   "else"
   "while"
+  "mutex"
   "for"
   "range"
   "in"

@@ -1,0 +1,25 @@
+=============================
+Critical section
+=============================
+
+func main() {
+    mutex {
+        print("protected")
+    }
+}
+
+---
+
+(source_file
+  (function_definition
+    (identifier)
+    (parameter_list)
+    (block
+      (statement
+        (mutex_statement
+          (block
+            (statement
+              (print_statement
+                (identifier)
+                (expression
+                  (string_literal))))))))))

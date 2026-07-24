@@ -427,6 +427,7 @@ module.exports = grammar({
         ":",
         optional(choice(field("read_reference", "@"), field("mutable_reference", "&"))),
         field("type", $.type),
+        optional(seq("=", field("default", $.expression))),
       ),
 
     block: ($) => seq("{", repeat($.statement), "}"),
@@ -450,6 +451,7 @@ module.exports = grammar({
         ),
         $.if_statement,
         $.while_statement,
+        $.mutex_statement,
         $.for_statement,
         $.match_expression,
       ),
@@ -546,6 +548,8 @@ module.exports = grammar({
         field("condition", $._condition_header),
         field("body", $.block),
       ),
+
+    mutex_statement: ($) => seq("mutex", field("body", $.block)),
 
     _condition_header: ($) =>
       choice($.expression, $.conditional_binding, seq("(", $.conditional_binding, ")")),

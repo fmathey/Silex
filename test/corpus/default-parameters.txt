@@ -1,0 +1,57 @@
+==================
+Default parameters
+==================
+
+func greet(message:str = "Hello", count:int = 1) {}
+
+struct Box {
+    init(value:int = 42) {}
+    func read(offset:int = 0) int { return offset }
+}
+
+---
+
+(source_file
+  (function_definition
+    name: (identifier)
+    (parameter_list
+      (parameter
+        name: (identifier)
+        type: (type
+          (builtin_type))
+        default: (expression
+          (string_literal)))
+      (parameter
+        name: (identifier)
+        type: (type
+          (builtin_type))
+        default: (expression
+          (integer_literal))))
+    body: (block))
+  (structure_definition
+    name: (identifier)
+    (constructor_definition
+      (parameter_list
+        (parameter
+          name: (identifier)
+          type: (type
+            (builtin_type))
+          default: (expression
+            (integer_literal))))
+      body: (block))
+    (function_definition
+      name: (identifier)
+      (parameter_list
+        (parameter
+          name: (identifier)
+          type: (type
+            (builtin_type))
+          default: (expression
+            (integer_literal))))
+      return_type: (type
+        (builtin_type))
+      body: (block
+        (statement
+          (return_statement
+            value: (expression
+              (identifier))))))))
